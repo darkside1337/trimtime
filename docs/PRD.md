@@ -1,0 +1,484 @@
+# Trimtime — Product Requirements Document
+
+**Status:** Confirmed interview baseline; unresolved matters are explicitly identified. This document describes the target product, not verified implementation.
+
+**Date:** 2026-10-14
+
+**Authority:** The original user brief and the user's explicit answers to Q1–Q61. The complete interview was available when this document was prepared. Accepted proposals are decisions; unaccepted proposals are not. Later explicit decisions supersede earlier conflicting statements. The final assistant recap is not an independent source of approval.
+
+**Traceability:** “Brief” means the original user-authored idea, workflows, edge cases, and system workflows. Q references identify the interview answers. FR identifies functional requirements, BR business rules, NFR non-functional requirements, AC acceptance criteria, EC edge cases, and OQ unresolved matters. These identifiers are stable: future revisions must not renumber or reuse them for unrelated requirements. Requirements below are confirmed unless explicitly marked as an unresolved measurement or definition. Section 11 must not be treated as permission to select a default.
+
+## 1. Product overview and problem statement
+
+Trimtime is a web booking platform designed around independently operated barber shops. Its primary product problem is the coordination work required to arrange and change appointments through calls and messages. Customers should be able to choose a service, an eligible barber, and an available time and receive confirmation without creating an account. The original experience goal is confirmation in under one minute; the measurement conditions have not been defined.
+
+The v1 project is a publicly accessible **portfolio demonstration**, not a production business launch. It uses fictional shop and barber data, targets the USA market, and uses English and USD. Real Resend email delivery and a restricted Meta WhatsApp Cloud API test integration are part of the demonstration goals. WhatsApp production sender onboarding is excluded.
+
+Each owner has one shop and manages multiple barber profiles. Each barber has independent availability; different barbers may take simultaneous appointments. The owner is the only staff user and must maintain the authoritative schedule, including externally arranged appointments and walk-ins. A shop receives its own unique subdomain, such as sharpcuts.trimtime.com.
+
+The shared fictional demo shop is controlled by the project owner's Google account. Visitors can book against it without accounts. Other visitors may use Google sign-in to create a separate, isolated demo shop and exercise the owner journey. All shops remain clearly labelled as demonstrations.
+
+The initial exclusion of multi-staff scheduling was explicitly superseded by barber-specific scheduling in Q1. Staff accounts and invitations remain excluded. Reduced coordination remains the primary product goal; no-show outcomes are secondary. A small pilot before scope expansion was accepted, but its participants, measurement method, and targets remain unspecified.
+
+## 2. Goals and non-goals
+
+### 2.1 Confirmed goals
+
+1. Provide fast, account-free customer booking with instant appointment confirmation and an immediately available manage link.
+2. Replace appointment coordination through calls/messages with an accurate shop schedule maintained by the owner.
+3. Support multiple barber calendars without introducing staff logins or invitations.
+4. Demonstrate owner onboarding, shop-specific subdomains, independently enforced authorization, and shop data isolation.
+5. Demonstrate actual email confirmations, appointment updates, automated reminders, failure handling, and bounded retries.
+6. Demonstrate actual WhatsApp booking confirmation, update, and reminder templates for verified Meta test recipients. Unsupported test capabilities must be reported as a limitation, not substituted with a generic message or called complete.
+7. Provide an honest public demo: fictional business data, accurate notification statuses, bot protection, rate limits, a bounded messaging budget, and automatic historical-data cleanup.
+8. Record attendance manually for secondary no-show observation; do not infer attendance automatically.
+9. Validate the core workflows with a small pilot before expanding scope, using participants able to maintain the whole schedule. No pilot or business-outcome result is claimed by this PRD.
+
+### 2.2 Explicitly excluded from v1
+
+- Online payments, subscription billing, tax calculations, tips, and discounts.
+- Customer accounts, staff accounts, invitations, and independent barber access.
+- Multiple shops per owner, multi-service appointments, pending owner approval, and automatic barber assignment.
+- Custom domains and non-barber business types.
+- SMS, marketing campaigns, complex messaging infrastructure, and production WhatsApp sender onboarding.
+- Owner-configurable public booking windows or cancellation cutoffs; v1 uses the fixed rules in Section 6.
+- Separately configurable preparation/cleanup buffers; service duration includes the full reservation.
+- Overnight shifts and appointments crossing midnight.
+- Creation of fully ended historical appointments.
+- Calendar drag-and-drop, appointment resizing, and dedicated barber-column layouts instead of the accepted combined calendar.
+- Subdomain changes and temporary redirects from old subdomains.
+- Time-zone migration after the first appointment.
+- Public booking lookup and additional email-code checks before booking or customer management actions.
+- Automatically inferring attendance, reactivating appointments through attendance correction, or sending attendance-status notifications.
+- Promises of exactly-once notification delivery or strict delivery ordering.
+- Automatic next-day replay of notifications skipped because of the messaging budget.
+- Full demo resets that erase future appointments, or indefinite retention of past bookings/logs.
+
+Barber-specific scheduling, dated availability overrides, email integration, and restricted WhatsApp integration are explicitly **in scope** despite the lean v1 boundary.
+
+## 3. Target users, roles, and permissions
+
+| Role | Target user and permitted activity | Boundaries |
+| --- | --- | --- |
+| Shop owner | A Google-authenticated owner with one shop; creates/configures the shop, services, barber profiles, availability, appointments, publication, and contact details; views the calendar/activity; records attendance and resends booking messages. | Access is limited to their own shop. Authentication and authorization are independent of the request hostname. |
+| Shared demo shop owner | The project owner's Google account, operating the shared fictional shop. | This is an owner-controlled shop, not a public shared administration account or a new general administrator role. |
+| Barber profile | A scheduling resource with availability and service eligibility, managed by the owner. | No login, staff dashboard, invitation, or independent access to customer information. |
+| Public customer/demo visitor | Browses a published fictional shop and creates a booking without an account. | Public views do not grant owner access. Entered email is not verified identity. |
+| Manage-link holder | Views the one linked booking and can cancel/reschedule when its state and cutoff permit. | Possession is sufficient authority for that booking, including a forwarded link. It grants no access to other appointments or owner functions. |
+| Scheduled notification process | Processes authorized due reminder work and bounded retries. | Requires the secret-header check and must respect current booking state, eligibility, budget, and suppression rules. |
+
+Target shop operations require the owner to record every phone booking, walk-in, and barber absence. A database conflict rule cannot protect against an appointment never entered into Trimtime. Staff-operated calendars and an external calendar as the authoritative source were not selected.
+
+## 4. User journeys and user stories
+
+These journeys combine confirmed steps and dependencies; they do not prescribe a new onboarding wizard, page layout, or implementation sequence.
+
+### 4.1 Owner signs in and prepares a shop
+
+1. Enter through the Trimtime site and sign in with Google OAuth; no email/password or GitHub path.
+2. Create the owner's single shop with its name, address, contact details, IANA time zone, and available non-reserved subdomain.
+3. Configure services, eligible barber profiles, recurring shop/barber hours, breaks, and days off. Individual schedules initially copy shop hours.
+4. Keep the shop unpublished until the accepted minimum setup is complete.
+5. Publish the shop and obtain its booking-page link and QR code to share.
+6. Use the owner's own-shop dashboard at the application host, illustrated by app.trimtime.com in the original brief.
+
+**Story:** As an owner, I can prepare a bookable shop without staff accounts and share one shop-specific booking address.
+
+### 4.2 Owner manages the day
+
+1. Open today's own-shop schedule, initially showing all barbers.
+2. Switch between day/week views or select a barber in the filter dropdown.
+3. Open an appointment to inspect its recorded customer contact details, service, barber, and schedule.
+4. Use explicit forms to add a walk-in/phone appointment, move/cancel a booking, or block time.
+5. Adjust availability explicitly before scheduling outside normal hours; resolve conflicting appointments before invalidating their availability.
+6. After scheduled end, mark completed/no-show or correct either attendance marking. Past unmarked appointments remain visibly unmarked.
+7. Review upcoming bookings, recent activity, and reminder/message status.
+
+**Story:** As an owner, I can keep the authoritative calendar accurate for all barbers and see changes made by customers while I was away.
+
+### 4.3 Customer creates a booking
+
+1. Open a published, clearly labelled fictional shop from its link, QR code, or social bio.
+2. Select a service, then explicitly select an eligible barber.
+3. Select a date and offered 15-minute-grid start in the displayed shop time zone.
+4. Enter name and email. Enter a phone number if opting into WhatsApp and provide explicit consent; non-test recipients are informed that WhatsApp is unavailable in the demo.
+5. Pass bot protection and submit within the public rate limits.
+6. Receive an instantly confirmed booking and its manage link on screen. Messaging availability does not determine whether the booking is confirmed.
+7. Receive real email when delivery is available and additional WhatsApp only when consent/test eligibility permit. If delivery is unavailable, see an accurate disclosure rather than a claimed send.
+
+**Story:** As a customer, I can reserve a specific barber without an account or email-code step and retain access even when messaging fails.
+
+### 4.4 Customer manages a booking
+
+1. Open the secure link from the confirmation page, email, or eligible WhatsApp message.
+2. View current booking information, shop name/address, time zone, and applicable saved service details.
+3. If confirmed and at least 12 elapsed hours from its existing start, explicitly confirm cancellation or select a replacement service, barber, and time.
+4. Follow the public notice/horizon and availability rules for the replacement. Review new-service details before confirming and receive a disclosure if the replacement immediately enters the cutoff window.
+5. Retain the original appointment if replacement fails, including a newly taken slot.
+6. Inside cutoff, use displayed shop contact information instead. Cancelled/past bookings are view-only while their link remains valid.
+
+**Story:** As a link holder, I can change the linked booking without gaining access to anyone else's appointment.
+
+### 4.5 Owner fixes a cancellation or contact mistake
+
+1. Restore a future cancelled appointment only if its original interval remains valid and unoccupied and its barber remains active/eligible.
+2. Correct contact details when necessary; invalidate previous links, issue a new one, and clear WhatsApp consent if the phone changes.
+3. Resend a booking confirmation/manage link within the same messaging budget; there is no public recovery lookup.
+4. Observe accurate failure/skipped status without reverting the appointment or address change.
+
+**Story:** As an owner, I can recover a valid booking and assist a customer without displacing another booking or exposing a public lookup endpoint.
+
+### 4.6 System reminders and cleanup
+
+1. Authorize the protected ten-minute job using its secret header.
+2. Claim due reminder work for confirmed, still-future appointments whose current schedule was eligible and has not already been reminded.
+3. Respect consent, test-recipient availability, budget, current booking information, and obsolete-message suppression.
+4. Attempt eligible channels, accurately record outcomes, and retry transient failures within the three-attempt limit.
+5. Never send a reminder after appointment start; never automatically replay budget-skipped messages the following day.
+6. Delete bookings and related activity/message logs 30 days after scheduled end, preserving future appointments, shop configurations, and permanent time-zone locking.
+
+**Story:** As an owner/customer, I can rely on truthful reminder status and bounded demo history without mistaking API acceptance for delivery.
+
+## 5. Functional requirements grouped by feature
+
+### 5.1 Owner access and shop configuration
+
+| ID | Confirmed requirement | Source |
+| --- | --- | --- |
+| FR-001 | Provide Google OAuth as the only owner sign-in method. Do not include email/password signup, a separate password/email-verification journey, or GitHub sign-in. | Q4 |
+| FR-002 | Allow one owner to create and manage one shop, containing multiple barber profiles with independent calendars. | Q1, Q5 |
+| FR-003 | Restrict administration of the shared fictional demo shop to the project owner's Google account; allow other Google users to create separately isolated shops. | Q31 |
+| FR-004 | Enforce own-shop access for owner operations and shop-scoped access for all shop-specific database operations, independently of hostname routing. | Brief, Q31, Q36 |
+| FR-005 | Collect/configure shop name, subdomain, IANA time zone, contact details, and address. Allow later name/contact/address edits subject to the separate subdomain/time-zone rules. | Brief, Q39, Q42–Q43 |
+| FR-006 | Check subdomain availability and reserved-name restrictions when choosing the unique permanent shop subdomain. Warn that it cannot be renamed in v1. | Brief, Q36, Q42 |
+| FR-007 | Resolve public shops from their request hostname and return a clean 404 for unknown or invalid shop subdomains. System names including app, www, api, and admin cannot be assigned to shops. | Brief, Q36 |
+| FR-008 | Support shop-specific subdomains through wildcard-domain routing on Vercel in v1; custom domains are excluded. | Q36 |
+| FR-009 | Keep a new shop unpublished until it has a name, address, public contact method, time zone, and at least one active service offered by an active barber with usable working hours. | Q39 |
+| FR-010 | Allow owner-controlled publication/unpublication. Unpublishing stops new public bookings, preserves existing appointments/manage links, and does not stop their scheduled notifications. | Q39 |
+| FR-011 | Provide the shop booking-page link and a shareable QR code after setup. | Brief |
+| FR-012 | Allow time-zone edits only before any appointment has ever been created. Permanently lock afterward, regardless of appointment status or historical cleanup. | Q43, Q49 |
+
+### 5.2 Services and barber profiles
+
+| ID | Confirmed requirement | Source |
+| --- | --- | --- |
+| FR-013 | Let the owner create/edit services with name, shared shop-wide price, and shared shop-wide duration. Enforce the minimum duration and price constraints in Section 6. | Brief, Q7, Q15, Q61 |
+| FR-014 | Let the owner manage barber profiles and select the services each barber offers. Barber profiles have no authentication or independent permissions. | Q5, Q7 |
+| FR-015 | Before archiving a barber or removing a service assignment, reject the change if affected future confirmed appointments exist and require the owner to move/cancel them first. | Q40 |
+| FR-016 | Archive rather than delete records needed by booking history. Hiding a service from public booking preserves existing appointments and their saved service details. | Q21, Q40 |
+| FR-017 | Permit an existing booking to retain its original hidden service during rescheduling/restoration when the selected barber is active/eligible and the interval is valid. Different replacement services must currently be offered. | Q41 |
+
+### 5.3 Availability
+
+| ID | Confirmed requirement | Source |
+| --- | --- | --- |
+| FR-018 | Support recurring weekly shop hours and breaks and individual recurring barber schedules initially copied from shop hours. | Brief, Q8 |
+| FR-019 | Support barber days off, shop closures, and owner-created time blocks. A shop closure makes all barbers unavailable. | Brief, Q8, Q17, Q20 |
+| FR-020 | Support shop-level and barber-level dated schedule overrides replacing that date's recurring schedule. Barber availability remains within shop availability. | Q46 |
+| FR-021 | Reject hours, break, closure, block, or override changes that would invalidate affected upcoming appointments; show conflicts so the owner can resolve them explicitly. | Q17, Q22, Q46 |
+| FR-022 | Offer only eligible service/barber slots whose full appointment duration fits availability and does not conflict with another booking or time block. Apply public notice/horizon rules consistently in queries and booking creation. | Q7, Q15–Q17, Q20, Q55, Q59 |
+| FR-023 | Display schedules and slots in the shop's clearly identified IANA time zone. Exclude nonexistent DST times and distinguish repeated local times as separate instants labelled with UTC offsets. | Q43, Q47 |
+
+### 5.4 Public booking
+
+| ID | Confirmed requirement | Source |
+| --- | --- | --- |
+| FR-024 | Provide the sequence service → explicit eligible barber → date/available start → customer details/consent → bot check → confirmation. Do not offer automatic or “any available” barber assignment in v1. | Brief, Q6 |
+| FR-025 | Collect customer name and required email for public booking. Validate email format without ownership verification. Require phone when WhatsApp opt-in is selected; otherwise phone is optional. | Brief, Q11, Q52 |
+| FR-026 | Collect explicit WhatsApp opt-in and disclose that WhatsApp is unavailable in the demo for recipients outside the verified test-recipient restriction. | Q11, Q30 |
+| FR-027 | Enforce server-side public booking limits and bot protection before accepting a booking. Multiple bookings may share an email within those limits. | Q30, Q50, Q52 |
+| FR-028 | Instantly confirm a successful one-service/one-barber/one-customer booking and immediately display its details and management link, irrespective of messaging availability. | Q13, Q29, Q30, Q50 |
+| FR-029 | When a chosen slot is no longer available, reject the conflicting booking with a friendly request to choose another time. Never accept overlapping appointments for the same barber. | Brief, Q15, Q17, Q20 |
+| FR-030 | Before confirmation, disclose when the selected appointment falls inside the customer change cutoff; after confirmation, clearly disclose unavailable email delivery when applicable. | Q18, Q25, Q50 |
+
+### 5.5 Owner calendar and appointment operations
+
+| ID | Confirmed requirement | Source |
+| --- | --- | --- |
+| FR-031 | Open the owner's dashboard on today's own-shop schedule. Support day/week views, all barbers by default, an individual-barber dropdown filter, and barber names on appointments. | Brief, Q48 |
+| FR-032 | Show recorded customer details and service when the owner opens an appointment; support the accepted appointment/contact operations through explicit forms. No drag-and-drop or resizing. | Brief, Q48, Q51 |
+| FR-033 | Let the owner add walk-in/phone appointments at exact whole-minute starts, for future or currently ongoing appointments. Require name; allow absent contact details and identify when no notification channel is available. | Q27, Q33, Q38 |
+| FR-034 | Let the owner cancel/move appointments, bypassing public notice, horizon, and customer cutoff while still enforcing availability and same-barber conflict rules. | Brief, Q18, Q20 |
+| FR-035 | Restore only a future cancelled appointment into its original still-valid unoccupied interval with an active/eligible barber. Preserve its original booking details and notify the customer through available agreed channels. | Q23, Q40–Q41 |
+| FR-036 | Let the owner mark completed/no-show only after scheduled end. Keep past unmarked appointments visibly “past, unmarked”; do not automatically infer attendance. | Q26 |
+| FR-037 | Allow owner corrections between completed/no-show and classification of past unmarked appointments. Record corrections in activity, send no customer messages, and do not reactivate appointments through attendance correction. | Q57 |
+| FR-038 | Provide a lightweight activity view of upcoming bookings, recent booking changes, and reminder/message status; record owner appointment actions and accepted contact/attendance corrections. | Brief, Q37, Q51, Q57 |
+| FR-039 | Let owners correct booking contact information, revoke previous manage links, and issue a new link. A phone change clears WhatsApp consent until fresh consent is recorded. | Q51 |
+| FR-040 | Let owners resend booking confirmations/manage links within the same messaging budget and endpoint protections. Do not provide public lookup/recovery by email. | Q51, Q54 |
+
+### 5.6 Customer management links
+
+| ID | Confirmed requirement | Source |
+| --- | --- | --- |
+| FR-041 | Let a valid link holder view only its linked booking, including appointment details and the current shop name/address. Link possession is sufficient; no additional account or email code. | Brief, Q32, Q44, Q56 |
+| FR-042 | Permit customer cancellation only for an eligible confirmed booking at least 12 hours before its existing start. Use a POST action with explicit confirmation; opening the link does not cancel. | Brief, Q18, Q32 |
+| FR-043 | Permit eligible customers to change service, barber, and time. Check the cutoff against the existing appointment and public notice/horizon/availability against the replacement. Show replacement-service details before confirmation. | Q19, Q24–Q25, Q55, Q59 |
+| FR-044 | Commit a replacement only when valid and available; otherwise retain the original booking intact, including after a competing request takes the replacement slot. | Q19, Q24 |
+| FR-045 | Keep links stable through ordinary rescheduling/cancellation/restoration, expiring seven days after current scheduled end. For cancelled bookings, use retained scheduled end. Contact correction is the explicit revocation exception. | Q44, Q51 |
+| FR-046 | Keep cancelled/past bookings view-only while their link is valid. Inside the change cutoff, display shop contact details instead of permitting customer changes. Handle invalid/expired links without granting booking access. | Brief, Q18, Q44 |
+
+### 5.7 Notifications and automation
+
+| ID | Confirmed requirement | Source |
+| --- | --- | --- |
+| FR-047 | Use Resend email for customer booking confirmations, updates, and reminders whenever an email exists; send additional Meta WhatsApp Cloud API messages only with explicit opt-in and verified test-recipient eligibility. | Q11–Q12, Q27, Q30 |
+| FR-048 | Notify customers on creation, rescheduling, cancellation, restoration, and owner-initiated appointment changes through available agreed channels. Attendance changes are excluded. | Brief, Q23, Q29, Q37, Q57 |
+| FR-049 | Email the owner for customer-created bookings and customer-initiated changes only. Record owner actions in activity rather than sending self-alerts. | Q37 |
+| FR-050 | Notify customers with future confirmed bookings when the shop address changes. Name/contact-only shop edits do not trigger mass notifications. Failed delivery does not roll back the address change. | Q56 |
+| FR-051 | Schedule a new reminder due exactly 24 actual elapsed hours before start only when more than 24 hours remain at creation/rescheduling/restoration. At 24 hours or less, send confirmation/update only. The ten-minute job/retries can delay attempts beyond the due instant. | Q28, Q34, Q60 |
+| FR-052 | Maintain one reminder per appointment schedule. Rescheduling replaces pending old reminders and can schedule a new reminder even if the previous schedule was already reminded. | Q34 |
+| FR-053 | Run the protected reminder/retry job every ten minutes, with cron-job.org as the caller named in the original system workflow. Verify its secret header and claim eligible due reminder work: confirmed appointment, not already reminded for the current schedule, due time reached, and appointment still in the future. | Brief, Q35 |
+| FR-054 | Attempt confirmations/updates promptly and retry transient channel failures up to three total provider-send attempts per notification/channel, including the initial attempt. Stop permanent failures immediately and never send reminders after appointment start. | Q35 |
+| FR-055 | Suppress obsolete unsent notifications after booking changes. Use best-effort delivery; in-flight messages can arrive late/out of order and uncertain outcomes can cause duplicates. Ordinary stable links open current details; revoked links remain invalid. | Q53 |
+| FR-056 | Log actual notification attempts, results, skips, and failure/skip reasons. Clearly distinguish provider acceptance from confirmed delivery and expose reminder/message problems to the owner. Never claim skipped or failed messages were sent/delivered. | Brief, Q11, Q29, Q30, Q35, Q50, Q53–Q54 |
+| FR-057 | Keep successful booking, rescheduling, cancellation, restoration, and address changes committed when notifications fail. Show the booking/manage link on confirmation rather than making access depend on message delivery. | Q29, Q50, Q56 |
+| FR-058 | Enforce one shared daily outbound budget of 100 provider-send attempts across the demo, including channels, retries, and owner alerts. Owner-initiated resends remain subject to it. | Q50, Q54 |
+| FR-059 | At budget exhaustion, continue accepting otherwise valid public bookings, display confirmation/manage link immediately, disclose unavailable email delivery, and record skipped delivery. Existing appointments remain manageable. | Q50 |
+| FR-060 | Do not automatically replay budget-skipped notifications when the budget resets. Permit protected, budget-bound owner-initiated resending. | Q54 |
+| FR-061 | Require successful tests of actual WhatsApp booking confirmation, update, and reminder templates with booking payloads/manage links before marking that integration complete. If the Meta test environment cannot support them, explicitly report the limitation; do not substitute generic messages or expand into production sender onboarding. | Q58 |
+
+### 5.8 Public demo protection and retention
+
+| ID | Confirmed requirement | Source |
+| --- | --- | --- |
+| FR-062 | Keep fictional demo booking creation, rescheduling, and cancellation publicly accessible without customer accounts, with clear demo labels and real email when available. Do not expose shared owner administration to visitors. | Q30–Q31 |
+| FR-063 | Enforce public creation limits of five attempts/IP/hour and three attempts/email/shop/hour, and customer-change limits of ten attempts/manage link/hour. Add server-side bot protection, invalid-link IP protection, and strict messaging-endpoint limits. Unspecified thresholds are open in OQ-003. | Q30, Q50 |
+| FR-064 | Delete demo bookings and their associated activity/message logs 30 days after scheduled end, including past unmarked bookings. Preserve future appointments and shop configurations; do not perform full resets deleting active bookings. | Q49 |
+
+## 6. Business rules, constraints, and invariants
+
+| ID | Confirmed rule/invariant | Source |
+| --- | --- | --- |
+| BR-001 | One owner has one shop; a shop can have multiple independently scheduled barber profiles. Barber profiles have no login or staff permissions. | Q1, Q5 |
+| BR-002 | Each booking reserves exactly one service, one barber, and one customer; successful creation is confirmed immediately, without owner approval/pending status. | Q13 |
+| BR-003 | Service price/duration are shared across eligible barbers; service eligibility is explicitly selected per barber. | Q7 |
+| BR-004 | Duration is a whole number of minutes, at least 30, and reserves all service/preparation/cleanup time. There is no separate buffer. | Q14–Q15 |
+| BR-005 | Prices are USD, at least zero, and support no more than two decimal places. Price display/snapshots do not introduce payments, taxes, tips, or discounts. | Q9, Q61 |
+| BR-006 | Customer-selected starts follow a fixed 15-minute grid; durations need not be multiples of 15. Offer a start only when the full duration fits. | Q15 |
+| BR-007 | Owner entry uses exact whole-minute starts and may represent future or ongoing appointments, but not creation of already-ended appointments. | Q33, Q38 |
+| BR-008 | Working hours and appointments cannot cross local midnight. No overnight shifts. | Q45 |
+| BR-009 | Every appointment must fit selected-barber availability, including shop limits, working hours, breaks, days off, closures, and time blocks. Owners must explicitly adjust availability before scheduling outside it. | Q8, Q20, Q46 |
+| BR-010 | A public appointment/replacement must start at least one actual elapsed hour after the server's current time; equality is permitted. | Q16, Q55, Q59 |
+| BR-011 | Public horizon uses the shop's local date, with today as day 0. The entire date 30 days ahead is included, yielding today plus the next 30 calendar dates. Apply the same date rule to availability, creation, and customer rescheduling. | Q55, Q59 |
+| BR-012 | Customer cancellation/rescheduling requires the existing appointment to be confirmed and at least 12 actual elapsed hours from its start; exactly 12 hours is allowed. | Q18, Q25 |
+| BR-013 | The cutoff is checked against the original appointment, not the replacement. A replacement needs only public notice/horizon eligibility and may immediately fall inside the cutoff; disclose that before confirmation. | Q25 |
+| BR-014 | Owners bypass public notice/horizon and customer cutoff. They do not bypass availability or overlap prevention. There are no owner-configurable booking-window/cutoff values. | Q16, Q18, Q20 |
+| BR-015 | Same-barber appointments and time blocks must not overlap each other. Reject conflicts without force overrides or automatic displacement/cancellation. A cancelled reservation can be replaced; restoration must recheck its original slot. | Q17, Q23 |
+| BR-016 | Different barbers can have simultaneous appointments. Adjacent appointments are allowed when the earlier one ends exactly when the next begins. | Q1, Q14, Q17 |
+| BR-017 | An email address is contact information, not verified customer identity. Multiple bookings may share it within rate limits; no email-code step precedes booking or link-authorized changes. | Q32, Q52 |
+| BR-018 | If replacement validation or reservation fails, the original appointment remains intact. A competing request cannot cause loss of the original booking. | Q19, Q24 |
+| BR-019 | Existing bookings retain saved service name, price, and duration after catalog edits/hiding. Same-service rescheduling preserves the snapshot; different-service selection uses current details shown before confirmation. | Q21, Q24 |
+| BR-020 | A hidden original service may be retained for that existing booking's rescheduling/restoration with an active/eligible barber and valid slot. Different replacement services must be offered. | Q41 |
+| BR-021 | Barber archival or eligibility removal cannot strand affected future confirmed bookings; move/cancel them first. History-bearing records are archived, not deleted. | Q40 |
+| BR-022 | Hours, breaks, closures, blocks, and overrides cannot invalidate upcoming booked intervals. Conflicts require explicit owner resolution. | Q17, Q22, Q46 |
+| BR-023 | Individual schedules initially copy shop hours. A dated schedule override replaces recurring hours for that date; shop availability still constrains all barbers, and closures affect everyone. | Q8, Q46 |
+| BR-024 | Once any appointment has been created, shop time zone remains permanently locked even if the appointment is cancelled, otherwise reclassified, or later deleted by cleanup. | Q43, Q49 |
+| BR-025 | Store appointment instants in UTC; use IANA shop time zone for local availability/display. Service durations, notice/cutoff intervals, and reminder timing measure actual elapsed time. The public horizon specifically uses local dates. | Q43, Q47, Q55, Q59 |
+| BR-026 | Repeated local times represent distinct eligible instants labelled by UTC offset; nonexistent local times are never offered. | Q47 |
+| BR-027 | Link possession grants authority for one booking only. Reading/opening the link cannot mutate it; management mutations require explicit confirmation, and cancellation is a POST action. | Brief, Q32 |
+| BR-028 | Ordinary rescheduling/cancellation/restoration preserve the link. Expiry is seven days after current scheduled end, or retained scheduled end when cancelled. Contact corrections revoke previous links and issue a new one. Deadline day arithmetic remains open in OQ-009. | Q44, Q51 |
+| BR-029 | Cancelled/past bookings are view-only while links remain valid. Cutoff-ineligible customers receive shop contact information; invalid/expired links cannot authorize changes. | Brief, Q18, Q44 |
+| BR-030 | Restoration is owner-only, for future cancelled appointments at their original still-valid unoccupied interval. It cannot displace a booking or use an inactive/ineligible barber. Original hidden-service exception still applies. | Q23, Q40–Q41 |
+| BR-031 | Booking states are confirmed, cancelled, completed, and no-show. “Past, unmarked” is a visible condition of an unclassified past booking, not automatically inferred attendance. | Q26 |
+| BR-032 | Completed/no-show marking occurs only after scheduled end. Owner corrections and classification of unmarked past bookings are logged, produce no customer notifications, and do not reactivate appointments through attendance correction. | Q57 |
+| BR-033 | Public bookings require name/email. Manual bookings require name but may omit contact details. WhatsApp opt-in requires phone; phone changes clear consent until fresh consent is recorded. | Brief, Q11, Q27, Q51 |
+| BR-034 | Email is always an agreed customer channel when an email exists; opted-in WhatsApp is additional, not a replacement/fallback coordinator. WhatsApp is restricted to verified Meta test recipients. No contact channel means no claimed notification. | Q11–Q12, Q27, Q30 |
+| BR-035 | Owner emails cover customer-created bookings and customer-initiated changes only. Owner actions are recorded rather than self-alerted. | Q37 |
+| BR-036 | Shop address changes notify future confirmed customers. Shop name/contact-only changes update current details without mass notification. Address edit is not rolled back on delivery failure. | Q56 |
+| BR-037 | Create a new reminder due exactly 24 actual hours before start only when more than 24 actual hours remain at creation/rescheduling/restoration. At exactly 24 hours or less, confirmation/update only. Previously eligible due reminders can still be processed/retried. | Q60 |
+| BR-038 | One reminder is associated with each schedule, not the booking's entire lifetime. Rescheduling replaces pending old reminder work and may qualify the new schedule even after an earlier reminder was sent. | Q34 |
+| BR-039 | A due reminder requires a confirmed, still-future appointment, due time reached, and no reminder already processed for the current schedule. No reminder is sent at/after appointment start. | Brief, Q35 |
+| BR-040 | A notification/channel has at most three automatic provider-send attempts including initial attempt; retry transient errors only, stop permanent errors, and obey budget/obsolete-message rules. | Q35, Q50, Q53 |
+| BR-041 | Unsent obsolete messages are suppressed. In-flight delivery can be late/out of order and uncertain outcomes can duplicate messages; no exactly-once/strict-ordering guarantee is made. | Q53 |
+| BR-042 | Messaging failure does not reverse a committed booking, reschedule, cancellation, restoration, or address change. The booking/manage link remains available independently. | Q29, Q50, Q56 |
+| BR-043 | The demo has 100 provider-send attempts daily, shared across channels/shops, initial sends, retries, owner alerts, and owner resends. Budget-skipped notifications have no actual send to claim. Reset boundary is open in OQ-003. | Q50, Q54 |
+| BR-044 | Budget exhaustion does not disable otherwise valid public bookings or existing management. Skips are recorded/disclosed and are not automatically replayed next day; owner resending remains budget-bound. | Q50, Q54 |
+| BR-045 | Public creation is limited to five attempts/IP/hour and three/email/shop/hour. Customer changes are limited to ten attempts/manage link/hour, with additional IP and messaging-endpoint protection. Further timing/threshold details remain open. | Q50 |
+| BR-046 | Delete demo bookings and associated activity/message logs 30 days after scheduled end, including past unmarked records. Preserve future appointments, shop configuration, and permanent time-zone lock. Day arithmetic remains open in OQ-009. | Q49 |
+| BR-047 | New shops remain unpublished until the accepted minimum setup is complete. Unpublication stops new public creation, not existing manage-link operation, appointments, or notifications. | Q39 |
+| BR-048 | Shop subdomains are unique, reserved-name-safe, and permanent in v1. Unknown/invalid shop hosts return a clean 404; routing alone grants no authorization. | Brief, Q36, Q42 |
+| BR-049 | WhatsApp completeness requires actual booking confirmation/update/reminder template tests in the restricted test environment. Unsupported capability is an explicit limitation, not successful delivery or permission for production onboarding. | Q58 |
+
+## 7. Edge cases and agreed behavior
+
+| ID | Situation | Agreed behavior | References |
+| --- | --- | --- | --- |
+| EC-001 | Two requests choose the same barber's overlapping interval. | At most one conflicting appointment is accepted. Reject the other with a friendly choose-another-time response. Database protection remains effective despite stale availability. | FR-029; BR-015 |
+| EC-002 | Two barbers receive simultaneous bookings. | Permit both when individually valid; do not impose shop-wide single capacity. | BR-001, BR-016 |
+| EC-003 | Replacement slot is taken during rescheduling. | Reject the replacement and preserve the original appointment intact. | FR-044; BR-018 |
+| EC-004 | Existing appointment is exactly 12 hours away or less than 12 hours away. | Equality allows customer changes; below it, show shop contact details instead. Replacement eligibility uses one-hour notice/local horizon, not a second 12-hour cutoff. | BR-012–BR-013 |
+| EC-005 | Customer selects a replacement two hours away. | Permit if all public rules pass; disclose that it immediately enters the change cutoff. | FR-030, FR-043; BR-013 |
+| EC-006 | Last bookable date crosses a DST change or current time is near midnight. | Use the shop's current local date, day 0 through the whole date +30; still enforce actual one-hour notice. Do not substitute 720 hours. | BR-010–BR-011, BR-025 |
+| EC-007 | Nonexistent/repeated local clock time. | Exclude nonexistent times; offer valid repeated instants distinctly with UTC offsets. Use actual elapsed service/reminder time. | FR-023; BR-025–BR-026 |
+| EC-008 | A service does not fit a break, closing time, or local midnight. | Do not offer/accept that start. Owner status does not override availability or the no-overnight rule. | BR-004, BR-008–BR-009 |
+| EC-009 | Owner wants overtime on one date. | Explicitly adjust dated shop/barber availability as needed, then book. Replacement date schedules cannot invalidate appointments. | FR-020–FR-021; BR-009, BR-023 |
+| EC-010 | Owner changes Friday closing time while later appointments exist. | Reject the change and show conflicts; require explicit moving/cancelling first. No automatic cancellations or silent exceptions. | FR-021; BR-022 |
+| EC-011 | Catalog price/duration/name changes after booking. | Existing saved details remain. Same-service rescheduling keeps them; different-service selection uses current details shown before confirmation. Stale checkout quote policy is OQ-006. | BR-019 |
+| EC-012 | Original booked service is hidden from public catalog. | Keep existing booking; allow its original service during rescheduling/restoration with active/eligible barber and valid interval. | FR-017; BR-020 |
+| EC-013 | Barber retirement/eligibility removal affects a future confirmed appointment. | Block the edit until affected appointments are explicitly resolved. Preserve history through archival. | FR-015–FR-016; BR-021 |
+| EC-014 | A cancelled slot has been rebooked or its original barber is inactive/ineligible. | Restoration fails without displacing the replacement. Past cancellations cannot be restored. | FR-035; BR-030 |
+| EC-015 | Link is forwarded, invalid, expired, cancelled, or for a past appointment. | Forwarded valid possession authorizes only that booking. Invalid/expired links grant no access. Cancelled/past bookings are view-only during the agreed valid lifetime. Inside cutoff, show contact details. Exact expired/deleted presentation is OQ-010. | FR-041, FR-045–FR-046; BR-027–BR-029 |
+| EC-016 | Owner corrects email/phone after earlier messages existed. | Revoke old links and issue a new one; clear WhatsApp consent on phone change. Old in-flight messages cannot be recalled, and their revoked links stay invalid. | FR-039, FR-055; BR-028, BR-033 |
+| EC-017 | Appointment is created/rescheduled/restored at exactly 24 hours or less ahead. | Send confirmation/update only, with no newly scheduled reminder. Already-eligible reminders due from an earlier schedule follow current-state/retry rules. | FR-051; BR-037–BR-039 |
+| EC-018 | Prior schedule was reminded, then booking moves several days later. | Suppress pending obsolete work and qualify a new reminder for the replacement schedule if more than 24 hours remain. | FR-052, FR-055; BR-038 |
+| EC-019 | Email/WhatsApp request fails, is merely accepted, or delivery confirmation arrives later. | Preserve the committed change; accurately distinguish failure/acceptance/delivery. Retry only eligible transient failures within the limit. Do not claim delivery from acceptance. | FR-054, FR-056–FR-057 |
+| EC-020 | Daily budget is exhausted. | Continue valid bookings and existing management; immediately show confirmation/link, disclose unavailable email, record skips, and do not automatically replay next day. | FR-058–FR-060; BR-043–BR-044 |
+| EC-021 | Manual booking has no contact channel, or public visitor is not a WhatsApp test recipient. | Record the manual appointment without claiming notification; identify missing channel. For non-test visitors, show WhatsApp unavailable while preserving eligible email behavior. | FR-026, FR-033, FR-047; BR-033–BR-034 |
+| EC-022 | Owner changes address but messages fail or budget is empty. | Keep the new address; notify eligible future confirmed customers where possible and expose failed/skipped status. Name/contact-only edits do not broadcast. | FR-050; BR-036, BR-042–BR-044 |
+| EC-023 | Past appointment remains unmarked or attendance was marked incorrectly. | Show past/unmarked; allow post-end classification/correction with activity logging, no customer messages, and no attendance-triggered reactivation. | FR-036–FR-037; BR-031–BR-032 |
+| EC-024 | Shop is unpublished, time zone is locked, or historical data ages out. | Preserve existing manage links/notifications when unpublished. Cleanup removes eligible bookings/logs but not future appointments/configuration or permanent time-zone lock. | FR-010, FR-012, FR-064 |
+| EC-025 | Protected job is invoked without a valid secret or link holder tries another shop/booking. | Do not authorize protected processing or out-of-scope access. Host resolution does not substitute for permission checks. | FR-004, FR-041, FR-053 |
+| EC-026 | Meta test setup cannot deliver the required custom templates. | Document the actual limitation and do not mark WhatsApp complete or replace it with a generic smoke test. Production onboarding remains excluded. | FR-061; BR-049 |
+
+## 8. Non-functional requirements
+
+| ID | Confirmed requirement/quality constraint | Verification boundary and source |
+| --- | --- | --- |
+| NFR-001 | All shop-specific data access must remain isolated and authorized independently of hostname routing. Public and link-authorized operations cannot become owner operations. | Cross-owner/cross-shop access tests; Brief, Q31–Q32, Q36. |
+| NFR-002 | Manage links must provide secure authority for only one booking, honor revocation/expiry, and never mutate on opening/read access. | Invalid, wrong-scope, revoked, and read-only access cases; Brief, Q32, Q44, Q51. Token mechanism is not selected here. |
+| NFR-003 | The reminder/retry job must authorize its secret header before protected processing. | Unauthorized invocation produces no claimed/sent work; Brief, Q35. |
+| NFR-004 | Public notice/horizon, eligibility, availability, and conflict rules must be enforced server-side, consistently with slot queries. Client-visible availability is not sufficient enforcement. | Boundary and stale-selection tests; Q15–Q16, Q20, Q55, Q59. |
+| NFR-005 | Database-level appointment overlap protection must preserve same-barber safety under competing requests. | Concurrent overlapping booking/rescheduling attempts; Q15, Q20. This PRD does not choose a database schema or constraint expression. |
+| NFR-006 | Failed replacement cannot destroy the original reservation, and notification failure cannot undo committed appointment/address changes. | Competing replacement and provider failure cases; Q24, Q29, Q56. |
+| NFR-007 | Notification reporting must distinguish attempts, acceptance, confirmed delivery, failure, and skipped work accurately. A skipped or unproven delivery cannot be represented as sent/delivered. | Compare reported results with actual provider evidence; Q30, Q50, Q53–Q54. |
+| NFR-008 | Best-effort delivery must suppress obsolete unsent work while avoiding exactly-once/strict-ordering promises or fabricated success under unknown outcomes. | Booking changes, in-flight messages, and uncertain results; Q53. Detailed recovery is OQ-004. |
+| NFR-009 | Enforce the fixed public rate limits and bot protection server-side; protect invalid-link probing and messaging endpoints. | Limit/bot/authorization tests; Q30, Q50. Unspecified numerical thresholds/window definitions remain OQ-003. |
+| NFR-010 | The global daily messaging budget must apply across demo shops/channels/retries/owner alerts/resends without blocking valid booking access at exhaustion. | Budget-boundary and concurrent send eligibility checks; Q50, Q54. Reset definition remains OQ-003. |
+| NFR-011 | Time handling must preserve UTC instants, IANA-based local display/availability, correct DST behavior, elapsed-time intervals, and the explicitly local-date horizon. | DST and local-horizon boundary cases; Q43, Q47, Q55, Q59. |
+| NFR-012 | Clearly identify the shop time zone, fictional demo context, short-notice change restrictions, unavailable WhatsApp/email, and relevant conflict/contact recovery information. | Exercise stated disclosures in customer/owner journeys; Brief, Q18, Q25, Q30, Q43, Q50. |
+| NFR-013 | Cleanup must remove eligible bookings and associated activity/message logs while preserving future appointments, shop setup, and permanent time-zone lock. | Historical cleanup boundary cases; Q43, Q49. Deadline day arithmetic remains OQ-009. |
+| NFR-014 | Target customer confirmation in under one minute without customer accounts or email-code checks. | Confirmed experience goal from Brief/Q52; a precise measurement protocol, device/network conditions, and performance SLO are unresolved in OQ-014. Do not claim a validated timing result yet. |
+| NFR-015 | Actual WhatsApp booking-template capability must be demonstrated before integration completeness is claimed; production onboarding and generic substitution cannot hide unsupported capability. | Recorded successful actual template tests, or explicit incomplete/blocked limitation; Q58. |
+
+No accessibility conformance level, browser/device support matrix, latency percentile, load capacity, or uptime SLA was accepted in the interview. Those are open rather than silently added requirements.
+
+## 9. Acceptance criteria and success metrics
+
+### 9.1 Confirmed behavior acceptance criteria
+
+The following are required verification scenarios, not claims that tests have run. Requirements with unresolved details must be tested against their confirmed portion and cannot be declared fully resolved by selecting an undocumented default.
+
+| ID | Scenario and expected result | Requirement coverage |
+| --- | --- | --- |
+| AC-001 | An owner can use Google only, create their single shop, and manage multiple barber profiles. Another owner cannot read/change that shop, and public visitors cannot administer the shared demo shop. | FR-001–FR-004, FR-014, FR-062; BR-001; NFR-001 |
+| AC-002 | Choosing an available non-reserved subdomain succeeds with the permanence warning; duplicate/reserved choices fail. Published shops resolve through their subdomains, and unknown/invalid shop hosts return clean 404s without granting permissions. | FR-005–FR-008; BR-048; NFR-001 |
+| AC-003 | An incomplete shop stays unpublished. Completing the agreed minimum permits publication and sharing its link/QR. Unpublication prevents new public creation but does not cancel appointments or disable their existing manage links/notifications. | FR-009–FR-011; BR-047 |
+| AC-004 | Time zone can change before the first appointment. After creation it cannot change, including after cancellation, attendance classification, or deletion of all historical bookings by cleanup. | FR-012; BR-024 |
+| AC-005 | Services share values across eligible barbers. Whole-minute durations below 30 and negative/>two-decimal prices are invalid; zero price is valid. Active eligibility controls public offering. | FR-013–FR-014; BR-003–BR-005 |
+| AC-006 | Barber schedules initially copy shop hours; recurring breaks/days off/closures and dated overrides constrain slots. A closure affects all barbers; an override replaces the date schedule and cannot invalidate appointments. | FR-018–FR-021; BR-009, BR-022–BR-023 |
+| AC-007 | Customer starts follow a 15-minute grid and require full-duration fit. A 35-minute service need not be rounded to 45 minutes, but a following start cannot overlap it. Crossing a break/closing time/midnight is rejected. | FR-022; BR-004, BR-006, BR-008–BR-009 |
+| AC-008 | With controlled time, a public start exactly one hour ahead qualifies; below it fails. The whole local date +30 qualifies when available, while date +31 does not. Queries, creation, and replacements apply the same rule even across DST. | FR-022, FR-043; BR-010–BR-011, BR-025; NFR-004, NFR-011 |
+| AC-009 | Repeated local times appear as distinct UTC instants with offset labels; nonexistent times do not appear. Actual reserved durations and reminder offsets remain correct across a clock change. | FR-023; BR-025–BR-026; NFR-011 |
+| AC-010 | The public flow explicitly selects service/barber/date/time, collects required name/email, validates format without OTP, and requires phone for WhatsApp opt-in. Multiple bookings with the same email are possible within limits. | FR-024–FR-027; BR-002, BR-017, BR-033 |
+| AC-011 | Successful public creation immediately shows confirmed details/manage link. Short-notice restrictions and unavailable delivery are disclosed. Two competing overlapping requests cannot both reserve the same barber, while valid simultaneous appointments for different barbers succeed. | FR-028–FR-030; BR-015–BR-016; NFR-005, NFR-012 |
+| AC-012 | Dashboard opens today with all barber appointments; day/week switching and the dropdown filter work. Appointment details/forms support the accepted operations without drag/resize. Activity shows upcoming bookings, changes, and reminder status. | FR-031–FR-032, FR-038 |
+| AC-013 | An owner can record an exact-minute ongoing walk-in or future phone appointment, including outside public notice/horizon, with name but no contact. Fully ended appointment creation fails. Availability/conflict restrictions still hold; absent contact is not reported as a successful notification. | FR-033–FR-034; BR-007, BR-009, BR-014, BR-033–BR-034 |
+| AC-014 | Changing hours, creating a conflicting block, retiring a barber, or removing eligibility with affected future confirmed bookings fails and identifies resolution needs. Moving/cancelling conflicts permits the valid edit; history is preserved through archival. | FR-015–FR-016, FR-021; BR-021–BR-022 |
+| AC-015 | Catalog edits do not rewrite saved name/price/duration. Same-service rescheduling retains them; a different offered service uses current details shown before confirmation. An original hidden service remains usable for its existing booking when barber/slot eligibility passes. | FR-016–FR-017, FR-043; BR-019–BR-020 |
+| AC-016 | Restoration succeeds only for a future cancelled appointment's original valid slot. Rebooking, inactive/ineligible barber, invalid availability, or past original time prevents restoration without displacing another booking. Available customer channels receive the restoration update. | FR-035; BR-030 |
+| AC-017 | Attendance cannot be marked early; after end, unmarked past bookings can be completed/no-show and corrected between them. Corrections are logged, send no customer messages, and do not reactivate the appointment. | FR-036–FR-037; BR-031–BR-032 |
+| AC-018 | Possession of a valid link accesses only its booking. Reading/opening does not mutate. Cancellation uses POST/confirmation. Exactly 12 hours permits changes; below it displays shop contact details. | FR-041–FR-042, FR-046; BR-012, BR-027, BR-029; NFR-002 |
+| AC-019 | An eligible customer can change service/barber/time, including into a valid two-hour-away slot with cutoff disclosure. A taken replacement or other invalid replacement leaves the original intact. | FR-043–FR-044; BR-013, BR-018; NFR-006 |
+| AC-020 | Ordinary changes retain the link; cancelled/past appointments are view-only during validity. Contact corrections invalidate previous links and issue a new one; phone changes clear consent. Owner recovery resends within budget and public lookup is absent. Expiry arithmetic waits for OQ-009. | FR-039–FR-040, FR-045–FR-046; BR-028–BR-029, BR-033; NFR-002 |
+| AC-021 | Customer event messages use email whenever present, plus opted-in/test-eligible WhatsApp. Non-test recipients see WhatsApp unavailable. Owner alerts cover customer actions only, and attendance edits produce no customer message. | FR-026, FR-047–FR-049; BR-034–BR-035 |
+| AC-022 | Address edit targets future confirmed customers and remains committed through failure/budget skips. Name/contact-only shop edits do not broadcast. | FR-050, FR-057; BR-036, BR-042 |
+| AC-023 | Creation/rescheduling/restoration more than 24 hours ahead schedules a reminder; exactly 24 hours or less does not. Rescheduling after an earlier reminder can qualify a new schedule. Obsolete pending work is suppressed. | FR-051–FR-052, FR-055; BR-037–BR-038, BR-041 |
+| AC-024 | Protected job runs on the ten-minute cadence. Invalid secret invokes no protected work. Due reminders require confirmed/current/unreminded/still-future eligibility; at/after start no reminder is sent. Claimed work follows the agreed eligibility. | FR-053; BR-039; NFR-003 |
+| AC-025 | Eligible transient failures receive at most three total automatic attempts/channel, initial included; permanent failures stop. A failed channel does not by itself retry a successful other channel. Actual attempted/accepted/delivered/failed/skipped evidence is distinguishable. In-flight/out-of-order/unknown results do not fabricate success or undo appointment state. | FR-054–FR-057; BR-040–BR-042; NFR-006–NFR-008 |
+| AC-026 | The shared 100-attempt budget includes channel sends, retries, owner alerts, and resends. At exhaustion valid bookings/management still work, confirmation/link is shown, no send is claimed, and skips are not replayed automatically on reset. Owner resend remains budget-bound. | FR-058–FR-060; BR-043–BR-044; NFR-010 |
+| AC-027 | Public bot/rate enforcement rejects excess creation/change attempts at the agreed numerical limits. Invalid-link and messaging-endpoint protection are exercised once OQ-003 thresholds/window details are resolved. | FR-027, FR-063; BR-045; NFR-009 |
+| AC-028 | Cleanup deletes eligible past bookings and related activity/message logs after the agreed deadline, including unmarked records; future appointments, configurations, and time-zone lock survive. Boundary arithmetic waits for OQ-009. | FR-064; BR-024, BR-046; NFR-013 |
+| AC-029 | Verified Meta test recipients successfully receive the actual booking confirmation, update, and reminder templates with real booking details/manage links before WhatsApp completeness is claimed. Unsupported capability is documented as incomplete/blocked, with no generic substitution/production onboarding. | FR-061; BR-049; NFR-015 |
+| AC-030 | Evaluate the customer confirmation journey against the under-one-minute goal after the measurement protocol in OQ-014 is defined. Preserve account-free/no-OTP behavior; until measured, report the timing goal as unverified rather than inventing benchmark conditions or a pass-rate target. | FR-024–FR-028; BR-017; NFR-014 |
+
+### 9.2 Success metrics and evidence limits
+
+| Outcome | Confirmed intent | What remains undefined |
+| --- | --- | --- |
+| Customer booking speed | Confirmation in under one minute without an account or email-code step. | Timer start/end protocol, participant/device/network conditions, sample size, and pass-rate target; OQ-014. |
+| Reduced coordination | Primary product outcome; validate with a small pilot before expanding scope. | Baseline coordination effort, measurement method, pilot size/duration, and numeric reduction target; OQ-015. |
+| No-show observation | Secondary outcome supported by explicit completed/no-show marking. | Comparison baseline, observation period, denominator, and numeric target. No analytics dashboard or promised reduction was agreed; OQ-015. |
+| Portfolio integration proof | Actual email and actual custom WhatsApp booking-template tests, with accurate provider statuses, automated reminder behavior, and failure/retry evidence. | Account-specific capability/setup and exact test evidence collection; OQ-001–OQ-002. Generic API success is insufficient WhatsApp completion evidence. |
+| Demo truthfulness/safety | Fictional labels, correct link permissions, own-shop isolation, bounded messaging, rate/bot enforcement, no fabricated sends, and cleanup. | Remaining threshold/window/deadline definitions identified in Section 11. |
+
+No conversion percentage, no-show reduction percentage, uptime SLA, provider delivery-rate target, or production readiness claim has been established. Meeting behavior criteria is not evidence of real-world business impact.
+
+## 10. Key product decisions and their rationale
+
+This table records selected outcomes and alternatives that were rejected, superseded, or not selected. Rationale reflects tradeoffs discussed in the interview, not new mandatory features. The original brief remains authoritative where no later answer changed it.
+
+| Interview source | Latest confirmed decision | Rejected/superseded alternative and rationale |
+| --- | --- | --- |
+| Q1 | One owner, one shop, multiple barber-specific schedules. | Reject solo-only/shop-wide single capacity; supersede original multi-staff scheduling exclusion while retaining no staff accounts. |
+| Q2, Q9 | USA, English, USD. | Multiple-market/language/currency scope not selected; constrain initial demonstration. |
+| Q3, Q10 | Coordination first; no-shows second; small pilot with owner-maintained authoritative schedules. | Discovery/no-show-first scope and staff/external-calendar authority not selected; unknown external bookings cannot be protected by database rules. |
+| Q4 | Google OAuth only. | Supersede email/password verification; Google+GitHub not selected. |
+| Q5, Q31 | Owner-managed barber profiles; protected shared shop and isolated visitor-owned shops. | No independent barber access or public shared dashboard; protect recorded customer information. |
+| Q6 | Explicit service → barber → time selection. | “Any available” and automatic assignment not selected; avoid assignment-policy expansion. |
+| Q7 | Shared price/duration, selected eligible barbers. | Universal eligibility and per-barber values not selected. |
+| Q8, Q46 | Individual schedules copied initially, with dated replacement overrides and shop constraints. | Shared-only schedules/recurring-only one-off edits not selected; represent recurring differences and one-date overtime. |
+| Q11, Q30, Q58 | Both integrations, public fictional demo with real email, verified-recipient WhatsApp tests and actual-template proof. | Explicitly reject email-only recommendation and tester-only public access. No production onboarding or generic substitute; integrations are portfolio goals. |
+| Q12 | Email always when available; additional opted-in WhatsApp. | WhatsApp-first fallback/single chosen channel not selected; keep channels independently understandable. |
+| Q13 | One service/barber/customer, instant confirmation. | Multi-service and pending approval not selected. |
+| Q14 | Full occupied duration includes preparation/cleanup. | Separate buffer setting not selected; adjacent appointments may touch at the boundary. |
+| Q15, Q33, Q38 | Public 15-minute grid, durations ≥30 whole minutes; owner exact-minute future/ongoing entry. | Public 5-minute/end-packed starts and grid-only owner entry not selected; exclude historical backfill. |
+| Q16, Q55, Q59 | One-hour public notice; local day 0 through entire date +30; owners exempt from public windows. | No configurable windows; explicitly reject rolling 720-hour horizon and counting today as day 1. |
+| Q17, Q20, Q22 | All appointments respect availability; conflicts explicitly resolved, enforced server/database-side. | Owner force-overbooking/out-of-hours override, silent exceptions, and automatic cancellation not selected. |
+| Q18, Q25 | Fixed 12-hour cutoff against existing appointment, equality allowed; replacement uses public windows. | Configurable/no cutoff and requiring 12 hours for replacement not selected; disclose immediate cutoff lock. |
+| Q19 | Customer can change service, barber, and time. | Explicitly reject the same-service/same-barber-only recommendation. |
+| Q21, Q24, Q41 | Preserve saved service details; new service uses current values; original hidden service remains usable for its booking when eligible. | Retroactive rewrite/reprice-all-reschedules and mandatory active replacement for a hidden original service not selected. |
+| Q23, Q40 | Restricted original-slot future restoration; archive/eligibility changes require future bookings resolved first. | Removing restore, moving during restore, and retaining stranded appointments as exceptions not selected. |
+| Q26, Q57 | Manual post-end attendance and logged corrections. | Auto-completion, early release through attendance, and irreversible markings not selected. |
+| Q27 | Manual name-required/contact-optional exception. | Email-required-everywhere not selected; accurate walk-in recording outweighs forcing contact collection. |
+| Q28, Q60 | No newly scheduled reminder at ≤24 hours; confirmation/update only. | Immediate duplicate or separate short-notice reminders not selected; equality clarified explicitly. |
+| Q29, Q50, Q54 | Commit independently of messaging; accept bookings at exhausted budget; log skips without automatic replay. | Rollback, stopping public bookings at the cap, and automatic next-day quota replay not selected. |
+| Q32, Q44, Q51 | One-booking bearer link, stable ordinary lifetime, seven-day post-end expiry; contact correction revokes and owner assists recovery. | OTP, rotate-every-change, immediate-end expiry, public lookup, and cancel/recreate-for-contact recovery not selected. |
+| Q34 | One reminder per schedule with replacement after rescheduling. | One reminder for entire booking lifetime not selected. |
+| Q35 | Ten-minute job and three total attempts/channel. | Supersede hourly job wording and unspecified small retry limit. |
+| Q36 | Vercel wildcard shop subdomains in v1; authorization independent. | Paths-only and wildcard-later not selected; preserve original shop URL model. |
+| Q37 | Owner emails for customer actions only. | Every owner action sending a self-alert not selected; retain activity visibility. |
+| Q39 | Draft-until-ready publication; unpublishing preserves existing obligations. | Immediately public incomplete shops not selected. |
+| Q42 | Permanent v1 subdomain with warning. | Supersede original renaming/temporary redirect workflow. |
+| Q43 | Permanent IANA time-zone lock after any first appointment. | Post-booking edits/migration not selected; do not reinterpret customer schedules. |
+| Q45 | Same-day only. | Overnight hours/cross-midnight appointments not selected. |
+| Q47 | Explicit repeated-time offsets, nonexistent-time exclusion, elapsed-time correctness. | Omitting valid ambiguous capacity not selected. |
+| Q48 | Combined all-barber day/week calendar with dropdown filter and explicit forms. | Barber-column layout, drag-and-drop, and resizing not selected. |
+| Q49 | Delete bookings/logs 30 days after scheduled end; preserve future/configuration. | Indefinite retention and destructive full resets not selected. |
+| Q52 | No verification code; format-valid email is contact, not identity; repeated email allowed within limits. | Pre-booking verification not selected; retain fast/family-contact journeys. |
+| Q53 | Best effort, obsolete-unsent suppression, truthful statuses. | Strict ordering/exactly-once promise not selected; in-flight messages cannot be recalled. |
+| Q56 | Address changes notify future confirmed bookings; name/contact-only edits do not broadcast. | Manage-page-only address changes not selected. |
+| Q61 | Non-negative two-decimal prices, including zero, saved with bookings. | Positive-only pricing not selected; no payments/taxes/tips/discounts introduced. |
+
+The initial proposed stack included Next.js App Router/TypeScript, shadcn/ui/Tailwind, Neon Postgres/RLS, Better Auth, React Hook Form/Zod, FullCalendar or a custom grid, and React Email. These are **technical context, not a collectively approved implementation specification**. The original system workflow separately names cron-job.org as its caller; that caller is retained, with the cadence superseded to ten minutes. Explicit interview commitments to Google sign-in, Meta Cloud API, Resend, Vercel wildcard routing, UTC/IANA handling, server enforcement, and database overlap protection remain binding. No schema, queue, hosting tier, token algorithm, UI library variant, or scheduler replacement is selected here.
+
+## 11. Open questions and unresolved decisions
+
+These matters were not fully decided. Do not infer an answer from an unaccepted recommendation, technical convention, silence, or this document. They do not weaken the confirmed rules they accompany.
+
+| ID | Unresolved matter | Confirmed boundary to preserve |
+| --- | --- | --- |
+| OQ-001 | Whether the actual Meta test account supports approved custom confirmation/update/reminder templates with booking details/manage links; actual sender identity, recipient configuration, approval/access capability, and test evidence. | Test-only, verified recipients, no production onboarding, and no generic substitution. Unsupported capability must be explicit and cannot be called complete. |
+| OQ-002 | Actual root-domain ownership/DNS/wildcard setup and verified Resend sender/domain/account configuration. The illustrated trimtime.com hosts have not been operationally verified. | Shop subdomains on Vercel and real email are required; account/domain configuration is not claimed to exist. |
+| OQ-003 | Daily-budget reset boundary/time zone; fixed versus rolling hourly windows and key normalization; numerical invalid-link-IP and messaging-endpoint limits. | Preserve 100 daily provider attempts, 5/IP/hour and 3/email/shop/hour public creation, 10/link/hour customer changes, bot protection, strict endpoint protection, and booking continuation at exhaustion. |
+| OQ-004 | Detailed transient/permanent error classification, retry timing/backoff, recovery after claimed work fails, treatment of pending/unknown provider outcomes, and reconciliation of delayed provider evidence. | Three total automatic attempts/channel, ten-minute job, current-state/obsolete suppression, no past reminders, accurate reporting, and best-effort—not exactly-once—delivery. |
+| OQ-005 | Whether name-only customer edits count as contact corrections; whether saving corrected contact immediately sends a new confirmation or requires the separate resend action; how fresh WhatsApp consent is captured after a phone change. | Contact corrections revoke old links/issue new ones; phone changes clear consent; owner recovery exists, public lookup does not; resends are protected/budget-bound. |
+| OQ-006 | Handling of catalog price/duration/eligibility changes between customer selection and final initial/replacement confirmation: retain an offered quote, reject/reconfirm, or another explicitly approved policy. | Saved bookings cannot be retroactively rewritten; different service uses current details shown before confirmation; authoritative validity/conflict checks and intact originals are mandatory. |
+| OQ-007 | Whether a newly owner-created appointment may use a hidden service, beyond the confirmed original-service exception for an existing booking. | Existing original hidden service may be retained when eligible; different customer replacement services must currently be offered. Do not silently broaden the exception. |
+| OQ-008 | Exact subdomain grammar/full reserved list; phone/address validation and geographic constraints; field bounds/name uniqueness; maximum price/duration; detailed “usable working hours” publication readiness. | Required fields, reserved examples, USA market/English/USD, duration ≥30 whole minutes, price ≥0/two decimals, eligible pairing, and full-interval availability remain fixed. No geofencing or new numeric caps were approved. |
+| OQ-009 | Whether seven-day link expiry and 30-day retention use elapsed-day arithmetic or shop-local calendar arithmetic, including exact expiration/cleanup boundary handling across DST. | Keep seven days after current/retained scheduled end and 30 days after scheduled end. Only booking horizon was explicitly settled as local-calendar dates. |
+| OQ-010 | Owner cancellation/rescheduling eligibility for already-started/ended appointments and exact lifecycle boundary handling, including a service ending exactly at local midnight; presentation/recovery for expired links, deleted records, or known unpublished shop pages. | Customer cutoff/view-only rules, no overnight/cross-midnight appointments, no fully historical creation, future-only restoration, post-end attendance, no attendance-triggered reactivation, and existing links surviving unpublication remain binding. |
+| OQ-011 | Editing/precedence behavior for simultaneous dated overrides, separate days off, closures, breaks, and blocks; how an owner explicitly reopens an otherwise closed date. | Overrides replace recurring date schedules; barbers remain constrained by shop availability/closures; all applicable restrictions and existing-appointment protection must hold. No implicit override permission exists. |
+| OQ-012 | Activity coverage for general settings/profile edits beyond confirmed booking/contact/attendance/message events; the originally mentioned but undefined owner “reminder preferences.” | Lightweight booking/activity/message visibility is required. Undefined preferences cannot override the fixed accepted channels, timing, cutoff, retry, or budget rules. |
+| OQ-013 | Which owner email address receives alerts and whether configurable; exact approved message wording/template inventory beyond confirmation/update/reminder purposes, including cancellation/restoration/address-change coverage. | Email owner for customer actions only; use agreed customer channels/events, explicit consent/test restriction, truthful statuses, and no marketing. |
+| OQ-014 | Accessibility conformance target, browser/device support, performance/load/uptime targets, and the timer protocol/test conditions for under-one-minute confirmation. | Fast account-free journey, no OTP, required disclosures/explicit forms, and no invented quantitative service levels. |
+| OQ-015 | Pilot participants/size/duration, baseline and measurement method for reduced coordination/no-shows, and numeric success targets. | Coordination primary, no-shows secondary, small pilot before expansion, owner-maintained schedule, and fictional portfolio scope. No production business impact has been demonstrated. |
+| OQ-016 | Remaining framework/calendar-library, database-vendor/security-mechanism, token mechanism, scheduler configuration, and other implementation choices from the proposed stack. | Retain the original cron-job.org caller and honor explicitly confirmed integrations/platform behavior and functional invariants. This PRD chooses no new architecture or application code. |
+
+### 11.1 Verification record for this document
+
+- The original brief and explicit Q1–Q61 answers were reviewed against the feature-organized chat inventory before writing.
+- The original QR-sharing, today-first dashboard, activity list, cancellation POST/confirmation, clean-404, and protected-job requirements were retained.
+- Later explicit changes were preserved: multi-barber scheduling; both messaging integrations; full customer service/barber/time changes; exact-minute owner entry; local-calendar horizon with day 0; bookings continuing at budget exhaustion; contact-correction revocation; ≤24-hour reminder exclusion; and zero-priced services.
+- Rejected alternatives are recorded in Section 10 and are not silently restored as requirements.
+- Unresolved matters are segregated in this section and referenced at affected requirements/criteria instead of being resolved with assumed defaults.
+- Acceptance criteria describe future required verification. No application implementation, live delivery test, DNS setup, or production readiness is asserted by creating this document.
