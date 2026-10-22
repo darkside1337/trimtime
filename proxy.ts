@@ -21,14 +21,16 @@ export function proxy(request: NextRequest) {
   }
 
   if (surface === "marketing") {
-    return pathname === "/" ? NextResponse.next() : new NextResponse(null, { status: 404 });
+    return pathname === "/"
+      ? NextResponse.next()
+      : new NextResponse(null, { status: 404 });
   }
 
-  const destination = request.nextUrl.clone();
-  destination.pathname = `/owner${pathname === "/" ? "" : pathname}`;
-  return NextResponse.rewrite(destination);
+  return NextResponse.next();
 }
 
 export const config = {
-  matcher: ["/((?!_next/|brand/|favicon\\.ico$|icon\\.png$|apple-icon\\.png$).*)"],
+  matcher: [
+    "/((?!_next/|brand/|favicon\\.ico$|icon\\.png$|apple-icon\\.png$).*)",
+  ],
 };
