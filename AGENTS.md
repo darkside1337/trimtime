@@ -51,7 +51,7 @@ For feature verification, follow [SPEC testing strategy](docs/SPEC.md#14-testing
 
 - Report the checks actually run, their results, and any remaining manual verification or blockers. Distinguish implemented behavior from verified acceptance.
 - When working from a roadmap, check an acceptance criterion only after its required evidence passes. Mark a phase done only after its definition of done passes, or an explicitly approved exception is recorded.
-- Keep unfinished criteria open with a concise blocker. Keep dated execution evidence, deviations, and lessons in concise `docs/reports/` reports linked from the roadmap, rather than in phase bodies.
+- Keep dated execution evidence, deviations, and lessons in concise local-only `docs/reports/` reports. Summarize current results and blockers in the roadmap; do not link ignored reports from tracked documents.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

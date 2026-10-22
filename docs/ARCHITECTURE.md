@@ -42,7 +42,7 @@ All hosts resolve to the same deployment. A root-level Next.js `proxy.ts` valida
 
 **Selected stack:** Next.js App Router, TypeScript, Tailwind, shadcn/ui, Zod, Better Auth with its Drizzle adapter, Drizzle ORM, and Neon PostgreSQL. Form and calendar libraries are deferred until their features need them.
 
-The shared `server/hosts.ts` policy accepts exact configured marketing/owner hosts, rejects malformed/comma-separated hosts and conflicting `x-forwarded-host`, and requires the configured owner origin for owner writes. Proxy performs no database/session lookup and never supplies authority headers. Actions retain host/origin validation and session/ownership checks independently of Proxy. Forwarded-host trust must only change after verified ingress behavior and an approved contract. Framework resources and the current public brand/icon assets bypass Proxy; `/design-system` is shared by the configured hosts. Other marketing page paths and unsupported shop hosts return HTTP 404 before rendering. See the [Proxy refactor review](reports/2026-10-22-proxy-routing-review.md) for execution evidence and remaining provider/hosted verification.
+The shared `server/hosts.ts` policy accepts exact configured marketing/owner hosts, rejects malformed/comma-separated hosts and conflicting `x-forwarded-host`, and requires the configured owner origin for owner writes. Proxy performs no database/session lookup and never supplies authority headers. Actions retain host/origin validation and session/ownership checks independently of Proxy. Forwarded-host trust must only change after verified ingress behavior and an approved contract. Framework resources and the current public brand/icon assets bypass Proxy; `/design-system` is shared by the configured hosts. Other marketing page paths and unsupported shop hosts return HTTP 404 before rendering. Local verification records the automated Proxy checks; provider/hosted verification remains pending.
 
 Use Drizzle's `node-postgres` adapter with a reusable `pg` pool, Neon's pooled application connection, and Vercel's pool lifecycle support. Migrations use a separate direct connection. Interactive transactions must retain one database connection through their checks and writes. See [Vercel pool guidance](https://vercel.com/kb/guide/connection-pooling-with-functions) and [Neon connection guidance](https://neon.com/docs/connect/choose-connection).
 
@@ -207,7 +207,7 @@ Hash-only storage cannot reproduce the original link for resending; encrypted re
 
 Feature tests live with the feature. Shared database fixtures support integration tests; browser journeys live centrally. Current scripts and prerequisites are in [README.md](../README.md) and [AGENTS.md](../AGENTS.md). Follow [SPEC testing strategy](SPEC.md#14-testing-strategy-and-acceptance-scenarios) for the evidence boundary of each feature.
 
-Update this document when approved boundaries or architectural mechanisms change. Keep phase status in the delivery roadmap and dated execution evidence in `docs/reports/`, not here.
+Update this document when approved boundaries or architectural mechanisms change. Keep phase status in the delivery roadmap and dated, local-only execution evidence under ignored `docs/reports/`.
 
 ## 10. Remaining decisions
 
