@@ -1,0 +1,16 @@
+services:
+  db:
+    image: postgres@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
+    environment:
+      POSTGRES_USER: trimtime_test
+      POSTGRES_PASSWORD: local_test_only
+      POSTGRES_DB: trimtime_test
+    ports:
+      - "127.0.0.1:55432:5432"
+    tmpfs:
+      - /var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trimtime_test -d trimtime_test"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
