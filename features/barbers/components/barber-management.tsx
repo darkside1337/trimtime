@@ -11,6 +11,7 @@ import { useRouter } from "next/navigation";
 import { archiveBarberAction, saveBarberAction } from "../actions";
 import type { BarberView, ServiceView } from "@/features/catalog/types";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import type { ActionResult } from "@/lib/action-result";
 import { OwnerArchiveDialog } from "@/components/owner-archive-dialog";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -103,18 +104,53 @@ export function BarberManagement({
           </Button>
         </div>
       ) : (
-        <div className="mt-6 grid gap-4 sm:grid-cols-2">
+        <div className="mt-6 grid gap-5 lg:grid-cols-3">
           {visible.map((barber) => (
-            <article key={barber.id} className="rounded-xl border p-5">
-              <h2 className="break-words font-heading text-xl font-semibold">
-                {barber.name}
-              </h2>
-              <p className="mt-2 text-sm text-muted-foreground">
-                {barber.archived ? "Archived" : "Active"} ·{" "}
-                {barber.serviceIds.length} eligible services
-              </p>
+            <article
+              key={barber.id}
+              className="flex min-w-0 flex-col rounded-[20px] border p-5 shadow-sm"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <h2 className="min-w-0 flex-1 break-words font-heading text-xl font-semibold">
+                  {barber.name}
+                </h2>
+                <Badge variant={barber.archived ? "outline" : "success"}>
+                  {barber.archived ? "Archived" : "Active"}
+                </Badge>
+              </div>
+              <div className="my-5 border-y py-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  {barber.serviceIds.length} eligible services
+                </p>
+                {barber.serviceIds.length ? (
+                  <ul
+                    aria-label="Eligible services"
+                    className="mt-3 flex flex-wrap gap-2"
+                  >
+                    {services
+                      .filter((service) =>
+                        barber.serviceIds.includes(service.id),
+                      )
+                      .map((service) => (
+                        <li key={service.id} className="min-w-0 max-w-full">
+                          <Badge
+                            variant="outline"
+                            className="h-auto max-w-full whitespace-normal break-words bg-muted py-1 tabular-nums"
+                          >
+                            {service.name} · ${service.priceUsd} ·{" "}
+                            {service.durationMinutes} min
+                          </Badge>
+                        </li>
+                      ))}
+                  </ul>
+                ) : (
+                  <p className="mt-3 text-sm text-muted-foreground">
+                    No eligible services.
+                  </p>
+                )}
+              </div>
               {!barber.archived && (
-                <div className="mt-4 flex gap-2">
+                <div className="mt-auto flex flex-wrap gap-2">
                   <Button
                     variant="outline"
                     onClick={() => {
@@ -126,6 +162,7 @@ export function BarberManagement({
                   </Button>
                   <Button
                     variant="destructive"
+                    className="ml-auto"
                     disabled={pending}
                     onClick={() => {
                       setArchiveError(null);

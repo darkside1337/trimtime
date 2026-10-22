@@ -23,7 +23,9 @@ test("barber archiving uses the owner confirmation dialog", async ({
   await expect(archiveDialog).toContainText("Sam Example");
   await archiveDialog.getByRole("button", { name: "Cancel" }).click();
   await expect(archiveDialog).toHaveCount(0);
-  await expect(page.getByText("Active · 0 eligible services")).toBeVisible();
+  await expect(
+    page.locator("article").getByText("Active", { exact: true }),
+  ).toBeVisible();
 
   await page.getByRole("button", { name: "Archive", exact: true }).click();
   await expect(archiveDialog).toBeVisible();
@@ -32,7 +34,9 @@ test("barber archiving uses the owner confirmation dialog", async ({
   await expect(page.getByRole("status")).toHaveText("Barber archived.");
   expect(nativeDialogs).toEqual([]);
   await page.getByRole("button", { name: "Archived", exact: true }).click();
-  await expect(page.getByText("Archived · 0 eligible services")).toBeVisible();
+  await expect(
+    page.locator("article").getByText("Archived", { exact: true }),
+  ).toBeVisible();
 });
 
 test("eligibility edits from the barber surface reload on the service surface", async ({
@@ -69,9 +73,8 @@ test("eligibility edits from the barber surface reload on the service surface", 
   ).toBeChecked();
   await page.getByLabel("Price (USD)").fill("15.00");
   await page.getByRole("button", { name: "Save service" }).click();
-  await expect(
-    page.getByText("$15.00 · 35 min", { exact: true }),
-  ).toBeVisible();
+  await expect(page.locator("article")).toContainText("$15.00");
+  await expect(page.locator("article")).toContainText("35 min");
   await page.goto(`${ownerOrigin}/barbers`);
   await page
     .locator("article")

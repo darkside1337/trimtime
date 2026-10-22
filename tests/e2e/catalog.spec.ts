@@ -35,7 +35,8 @@ test("owners create, validate, assign, and reload shared service details", async
   await expect(page.getByText("Community cut", { exact: true })).toBeVisible();
   await page.reload();
   await expect(page.getByText("Community cut", { exact: true })).toBeVisible();
-  await expect(page.getByText("$0.00 · 35 min", { exact: true })).toBeVisible();
+  await expect(page.locator("article")).toContainText("$0.00");
+  await expect(page.locator("article")).toContainText("35 min");
 });
 
 test("service form confirms discard and fits the desktop, tablet, and phone widths", async ({
@@ -84,7 +85,7 @@ test("hiding and archiving keep a retained record and update filters", async ({
   await page.getByRole("button", { name: "Hide service" }).click();
   await page.getByRole("button", { name: "Hidden", exact: true }).click();
   await expect(
-    page.getByText("Hidden · 0 eligible barbers", { exact: true }),
+    page.locator("article").getByText("Hidden", { exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Archive", exact: true }).click();
   const archiveDialog = page.getByRole("dialog", { name: "Archive service?" });
@@ -114,7 +115,7 @@ test("hiding and archiving keep a retained record and update filters", async ({
   expect(nativeDialogs).toEqual([]);
   await page.getByRole("button", { name: "Archived", exact: true }).click();
   await expect(
-    page.getByText("Archived · 0 eligible barbers", { exact: true }),
+    page.locator("article").getByText("Archived", { exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Edit" })).toHaveCount(0);
 });

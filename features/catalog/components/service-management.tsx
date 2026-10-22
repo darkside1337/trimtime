@@ -15,6 +15,8 @@ import {
 } from "../actions";
 import type { ServiceView, BarberView } from "../types";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { ClockIcon } from "lucide-react";
 import type { ActionResult } from "@/lib/action-result";
 import { OwnerArchiveDialog } from "@/components/owner-archive-dialog";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -108,29 +110,74 @@ export function ServiceManagement({
           </Button>
         </div>
       ) : (
-        <div className="mt-6 grid gap-4 sm:grid-cols-2">
+        <div className="mt-6 grid gap-5 lg:grid-cols-3">
           {visible.map((service) => (
-            <article key={service.id} className="min-w-0 rounded-xl border p-5">
+            <article
+              key={service.id}
+              className="flex min-w-0 flex-col rounded-[20px] border p-5 shadow-sm"
+            >
               <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <h2 className="break-words font-heading text-xl font-semibold">
-                    {service.name}
-                  </h2>
-                  <p className="mt-2">
-                    ${service.priceUsd} · {service.durationMinutes} min
-                  </p>
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    {service.archived
-                      ? "Archived"
+                <h2 className="min-w-0 flex-1 break-words font-heading text-xl font-semibold">
+                  {service.name}
+                </h2>
+                <Badge
+                  variant={
+                    service.archived
+                      ? "outline"
                       : service.offered
-                        ? "Offered"
-                        : "Hidden"}{" "}
-                    · {service.barberIds.length} eligible barbers
+                        ? "success"
+                        : "warning"
+                  }
+                >
+                  {service.archived
+                    ? "Archived"
+                    : service.offered
+                      ? "Offered"
+                      : "Hidden"}
+                </Badge>
+              </div>
+              <div className="mt-4 flex flex-wrap items-center gap-3 tabular-nums">
+                <p className="min-w-0 break-all font-heading text-3xl font-bold">
+                  ${service.priceUsd}
+                </p>
+                <Badge
+                  variant="outline"
+                  className="h-auto max-w-full whitespace-normal bg-muted py-1"
+                >
+                  <ClockIcon aria-hidden="true" />
+                  {service.durationMinutes} min
+                </Badge>
+              </div>
+              <div className="my-5 border-y py-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  {service.barberIds.length} eligible barbers
+                </p>
+                {service.barberIds.length ? (
+                  <ul
+                    aria-label="Eligible barbers"
+                    className="mt-3 flex flex-wrap gap-2"
+                  >
+                    {barbers
+                      .filter((barber) => service.barberIds.includes(barber.id))
+                      .map((barber) => (
+                        <li key={barber.id} className="min-w-0 max-w-full">
+                          <Badge
+                            variant="outline"
+                            className="h-auto max-w-full whitespace-normal break-words bg-muted py-1"
+                          >
+                            {barber.name}
+                          </Badge>
+                        </li>
+                      ))}
+                  </ul>
+                ) : (
+                  <p className="mt-3 text-sm text-muted-foreground">
+                    No eligible barbers.
                   </p>
-                </div>
+                )}
               </div>
               {!service.archived && (
-                <div className="mt-4 flex flex-wrap gap-2">
+                <div className="mt-auto flex flex-wrap gap-2">
                   <Button
                     variant="outline"
                     onClick={() => {
@@ -168,6 +215,7 @@ export function ServiceManagement({
                   </Button>
                   <Button
                     variant="destructive"
+                    className="ml-auto"
                     disabled={pending}
                     onClick={() => {
                       setArchiveError(null);
