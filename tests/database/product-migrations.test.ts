@@ -32,14 +32,16 @@ describe("product and fixture migration ledgers", () => {
 
     const [fixture, product] = await Promise.all([
       database.pool.query("SELECT note FROM phase00_probe WHERE id = 101"),
-      database.pool.query('SELECT count(*)::int AS count FROM drizzle."__drizzle_migrations"'),
+      database.pool.query(
+        'SELECT count(*)::int AS count FROM drizzle."__drizzle_migrations"',
+      ),
     ]);
     const fixtureLedger = await database.pool.query(
       'SELECT count(*)::int AS count FROM phase00_fixture_migrations."__drizzle_migrations"',
     );
 
     expect(fixture.rows[0]?.note).toBe("separate-ledger");
-    expect(product.rows[0]?.count).toBe(2);
+    expect(product.rows[0]?.count).toBe(3);
     expect(fixtureLedger.rows[0]?.count).toBe(1);
   });
 });

@@ -9,7 +9,11 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["tests/unit/**/*.test.ts", "features/**/tests/*.test.ts", "server/tests/*.test.ts"],
+    include: [
+      "tests/unit/**/*.test.ts",
+      "features/**/tests/*.test.ts",
+      "server/tests/*.test.ts",
+    ],
     exclude: ["**/*.integration.test.ts"],
     passWithNoTests: false,
   },
