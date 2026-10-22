@@ -32,13 +32,13 @@ flowchart LR
     App --> WhatsApp[Meta WhatsApp test integration]
 ```
 
-| Host | Responsibility |
-| --- | --- |
-| `<domain>` | Marketing site |
-| `app.<domain>` | Owner dashboard, Google sign-in, OAuth callback, and owner authentication endpoints |
-| `<shop>.<domain>` | Public booking and customer manage-link pages |
+| Host              | Responsibility                                                                      |
+| ----------------- | ----------------------------------------------------------------------------------- |
+| `<domain>`        | Marketing site                                                                      |
+| `app.<domain>`    | Owner dashboard, Google sign-in, OAuth callback, and owner authentication endpoints |
+| `<shop>.<domain>` | Public booking and customer manage-link pages                                       |
 
-All hosts resolve to the same deployment. A root-level Next.js `proxy.ts` validates the configured marketing/owner host and rewrites owner page requests to an internal `/owner` route prefix while keeping public URLs unchanged. The prefix is not publicly addressable; API routes remain at their public technical paths and enforce their own host policy. Marketing and owner pages remain separate destinations. Public shop-host rewrites are added with the booking routes. Owner session cookies are host-only on `app.<domain>`; customer flows use public-shop or booking-link authority. Host routing identifies a requested surface/shop, never owner permission. Actual domain, DNS, trusted forwarding inputs, and preview/local host configuration remain open.
+All hosts resolve to the same deployment. A root-level Next.js `proxy.ts` validates the configured marketing/owner host and blocks direct requests to the internal `/owner` route prefix. A host-conditioned `beforeFiles` rewrite in `next.config.ts` maps owner public paths to that prefix after Proxy validation while keeping public URLs unchanged. API routes remain at their public technical paths and enforce their own host policy. Marketing and owner pages remain separate destinations. Public shop-host rewrites are added with the booking routes. Owner session cookies are host-only on `app.<domain>`; customer flows use public-shop or booking-link authority. Host routing identifies a requested surface/shop, never owner permission. Actual domain, DNS, trusted forwarding inputs, and preview/local host configuration remain open.
 
 **Selected stack:** Next.js App Router, TypeScript, Tailwind, shadcn/ui, Zod, Better Auth with its Drizzle adapter, Drizzle ORM, and Neon PostgreSQL. Form and calendar libraries are deferred until their features need them.
 
@@ -64,7 +64,7 @@ Use the approved repository-root organization. The tree combines existing infras
 
 ```text
 trimtime/
-├── proxy.ts                 # Host routing to internal owner destinations
+├── proxy.ts                 # Host validation and public-path protections
 ├── app/                     # Routes, layouts, thin pages, HTTP adapters
 ├── features/
 │   ├── shops/
@@ -99,28 +99,30 @@ features/catalog/
     └── queries.integration.test.ts
 ```
 
-| Location | Responsibility |
-| --- | --- |
-| `app/**/page.tsx` | Thin Server Component: resolve route inputs, call feature reads, and render feature views |
-| `components/` | Feature-owned presentation and client interaction |
-| `actions.ts` | Server Action adapter: establish trusted context, validate input, invoke an operation, and adapt its result |
-| `mutations.ts` | Server-only business writes, permission checks, current-state validation, and transaction orchestration |
-| `queries.ts` | Server-only authorized reads returning explicitly shaped data |
-| `schemas.ts` | Zod input schemas and inferred types; browser-safe schemas contain no server imports |
-| `tests/` | Tests owned by the feature |
+| Location          | Responsibility                                                                                              |
+| ----------------- | ----------------------------------------------------------------------------------------------------------- |
+| `app/**/page.tsx` | Thin Server Component: resolve route inputs, call feature reads, and render feature views                   |
+| `components/`     | Feature-owned presentation and client interaction                                                           |
+| `actions.ts`      | Server Action adapter: establish trusted context, validate input, invoke an operation, and adapt its result |
+| `mutations.ts`    | Server-only business writes, permission checks, current-state validation, and transaction orchestration     |
+| `queries.ts`      | Server-only authorized reads returning explicitly shaped data                                               |
+| `schemas.ts`      | Zod input schemas and inferred types; browser-safe schemas contain no server imports                        |
+| `tests/`          | Tests owned by the feature                                                                                  |
 
 Pages and HTTP handlers contain no SQL or duplicated business rules. Database, credential, and mutation modules enforce server-only import boundaries. Client components receive deliberate view data and action results, not unrestricted database rows or secrets.
 
 ## 4. Feature ownership and dependencies
 
-| Feature | Owns | Product reference |
-| --- | --- | --- |
-| `shops` | Setup, publication, contact/address settings, subdomain permanence, and time-zone locking | FR-005–FR-012 |
-| `catalog` | Services, prices, durations, archival, and catalog changes | FR-013, FR-016–FR-017 |
-| `barbers` | Barber profiles, service assignments, and retirement guards | FR-014–FR-015 |
-| `availability` | Working schedules, overrides, restrictions, time blocks, eligibility evaluation, and slot calculation | FR-018–FR-023 |
-| `appointments` | Public/owner booking lifecycle, saved service details, manage links, attendance, and booking history | FR-024–FR-046 |
-| `notifications` | Message eligibility, persisted work, attempts, reminders, retries, and delivery evidence | FR-047–FR-061 |
+| Feature         | Owns                                                                                                  | Product reference     |
+| --------------- | ----------------------------------------------------------------------------------------------------- | --------------------- |
+| `shops`         | Setup, publication, contact/address settings, subdomain permanence, and time-zone locking             | FR-005–FR-012         |
+| `catalog`       | Services, prices, durations, archival, and catalog changes                                            | FR-013, FR-016–FR-017 |
+| `barbers`       | Barber profiles, service assignments, and retirement guards                                           | FR-014–FR-015         |
+| `availability`  | Working schedules, overrides, restrictions, time blocks, eligibility evaluation, and slot calculation | FR-018–FR-023         |
+| `appointments`  | Public/owner booking lifecycle, saved service details, manage links, attendance, and booking history  | FR-024–FR-046         |
+| `notifications` | Message eligibility, persisted work, attempts, reminders, retries, and delivery evidence              | FR-047–FR-061         |
+
+**Phase 02 implementation selection:** Services, barbers, and their eligibility links use `services`, `barbers`, and `barber_services` tables. Catalog values are exact `numeric` strings; composite foreign keys enforce same-shop assignments. Each owner write locks its shop row before validating/updating resources and changes active counterpart links atomically. Archived resources and their links remain stored; current offering choices exclude hidden/archived services and archived or absent eligible barbers. These decisions do not implement booking-bearing retirement guards, which remain part of Phase 06 onward.
 
 Authentication/context construction and abuse-control primitives are shared server infrastructure. Cleanup removes appointment-related history according to the PRD; it does not become a new business feature or select an unapproved job cadence.
 
@@ -213,13 +215,13 @@ Update this document when approved boundaries or architectural mechanisms change
 
 The structural choices above are settled. Resolve remaining details when the affected phase needs them; the document is not blanket implementation readiness.
 
-| Area | Still open | SPEC references |
-| --- | --- | --- |
-| Data and time | Physical fields/IDs, price representation, occupancy predicates, schedule representation, time library, grid/DST boundaries, expiry/retention arithmetic | OTQ-003, OTQ-007, OTQ-014, OTQ-016 |
-| Requests and security | Routes marked proposed in APP_ROUTES.md, remaining job/provider endpoint paths and error codes, hosted forwarding/trusted IP inputs, customer origin defenses, crypto parameters/key rotation, and any database policy hardening. Owner session/host/origin policy is selected in §2 and the approved Phase 01 plan. | OTQ-002, OTQ-005–OTQ-006, OTQ-013 |
-| Limits and dispatch | Rate/reset accounting, bot provider, claim recovery, immediate dispatch, retry classification/backoff, manual-resend identity, and uncertain outcomes | OTQ-008–OTQ-010, OTQ-018 |
-| Providers and hosting | Actual domain/senders/recipients/templates, credentials/API versions, verified outcome collection, and preview/local setup | OTQ-006, OTQ-011–OTQ-012 |
-| Product-dependent behavior | Stale offers, lifecycle/edit predicates, contact/consent effects, publication validation, and other acknowledged PRD gaps | OTQ-015–OTQ-016, OTQ-019–OTQ-020; PI-001–PI-017 |
-| Presentation and tooling | Feature-specific detail under [DESIGN.md](DESIGN.md), remaining form/calendar choices and package versions, accessibility/performance measurement; owner calendar/Dialog navigation is selected in §2.1. Test-container configuration is established in §9. | Remaining OTQ-001, OTQ-017 |
+| Area                       | Still open                                                                                                                                                                                                                                                                                                           | SPEC references                                 |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| Data and time              | Physical fields/IDs, price representation, occupancy predicates, schedule representation, time library, grid/DST boundaries, expiry/retention arithmetic                                                                                                                                                             | OTQ-003, OTQ-007, OTQ-014, OTQ-016              |
+| Requests and security      | Routes marked proposed in APP_ROUTES.md, remaining job/provider endpoint paths and error codes, hosted forwarding/trusted IP inputs, customer origin defenses, crypto parameters/key rotation, and any database policy hardening. Owner session/host/origin policy is selected in §2 and the approved Phase 01 plan. | OTQ-002, OTQ-005–OTQ-006, OTQ-013               |
+| Limits and dispatch        | Rate/reset accounting, bot provider, claim recovery, immediate dispatch, retry classification/backoff, manual-resend identity, and uncertain outcomes                                                                                                                                                                | OTQ-008–OTQ-010, OTQ-018                        |
+| Providers and hosting      | Actual domain/senders/recipients/templates, credentials/API versions, verified outcome collection, and preview/local setup                                                                                                                                                                                           | OTQ-006, OTQ-011–OTQ-012                        |
+| Product-dependent behavior | Stale offers, lifecycle/edit predicates, contact/consent effects, publication validation, and other acknowledged PRD gaps                                                                                                                                                                                            | OTQ-015–OTQ-016, OTQ-019–OTQ-020; PI-001–PI-017 |
+| Presentation and tooling   | Feature-specific detail under [DESIGN.md](DESIGN.md), remaining form/calendar choices and package versions, accessibility/performance measurement; owner calendar/Dialog navigation is selected in §2.1. Test-container configuration is established in §9.                                                          | Remaining OTQ-001, OTQ-017                      |
 
 Refer to [SPEC open technical questions](SPEC.md#16-open-technical-questions) and [PRD issues](SPEC.md#17-prd-issues) for full context. Their original IDs stay stable. These architecture selections narrow the questions; they do not silently close unrelated policies or claim implementation/test evidence.

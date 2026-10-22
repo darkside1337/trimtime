@@ -283,9 +283,9 @@ Use the shared page index for base desktop/tablet/mobile layouts. Each group bel
 - [Service — save failed, input preserved · illustrative](http://localhost:4300/c/i6lCZ9U4mi?frame=ILorhaE6LE) (`ILorhaE6LE`)
 - [Barber — save failed, input preserved · illustrative](http://localhost:4300/c/i6lCZ9U4mi?frame=AP26cYim2t) (`AP26cYim2t`)
 
-**Phase 02 reference context:** Services and Barbers for lists, create/edit forms, and explicit service assignments.
+**Phase 02 reference context:** Services and Barbers for lists, create/edit dialogs, lifecycle filters, and explicit service assignments. The implementation adapts the referenced normal/empty/error states to the approved draft-demo scope; it omits hours, biography, deactivate, booking-conflict, and provider behavior.
 
-**Coverage and evidence limits:** Saving/failure has mobile counterparts. Empty collections need confirmation during planning. Booking-bearing archive conflicts belong to 06/09; fixtures cannot add field constraints or staff accounts.
+**Coverage and evidence limits:** Saving/failure has mobile counterparts. Empty collections and no-assignment profiles are valid under the approved Phase 02 plan. Booking-bearing archive conflicts belong to 06/09; fixtures cannot add field constraints or staff accounts. The current visual walkthrough has not yet established G8 fidelity or contrast.
 
 ### Availability
 

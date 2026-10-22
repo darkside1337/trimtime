@@ -169,6 +169,8 @@ These journeys combine confirmed steps and dependencies. The owner calendar inte
 | FR-016 | Archive rather than delete records needed by booking history. Hiding a service from public booking preserves existing appointments and their saved service details.                                                               | Q21, Q40            |
 | FR-017 | Permit an existing booking to retain its original hidden service during rescheduling/restoration when the selected barber is active/eligible and the interval is valid. Different replacement services must currently be offered. | Q41                 |
 
+**Phase 02 field decisions (approved 2026-10-22):** Service and barber names are required after trimming; duplicates and unspecified name lengths remain allowed. Empty catalogs and zero assignments are valid. Service prices accept trimmed digits with an optional one or two fractional digits, are stored/displayed as canonical USD decimal strings, and are never rounded from invalid input. Durations accept whole digit strings and require at least 30 minutes. These decisions do not settle unrelated field bounds in OQ-008 / PI-013.
+
 ### 5.3 Availability
 
 | ID     | Confirmed requirement                                                                                                                                                                                                                | Source                     |
