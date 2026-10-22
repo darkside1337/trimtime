@@ -179,6 +179,8 @@ A failed reschedule rolls back the replacement transaction, preserving the origi
 
 Availability queries are advisory. Booking commitment repeats authoritative validation using the same rule evaluation. UTC instants, IANA shop zones, elapsed intervals, and local-date horizon semantics remain as specified in [SPEC availability](SPEC.md#63-availability-semantics-and-established-predicates).
 
+Date-specific availability stores shop and barber date rows separately from recurring weekly schedules. Each row retains a revision when its override is cleared, so stale edits cannot reset to revision zero. Date reads and previews use a repeatable-read snapshot; schedule writes lock the shop row and compare the submitted revision. A dated override replaces recurring hours and breaks, while closures, days off, and barber-scoped time blocks remain separate restrictions. Time blocks and future appointment reservations share occupied intervals; `[start, end)` ranges are protected by a PostgreSQL GiST exclusion constraint. Creating a block writes occupancy and its domain row in one transaction; removing the authorized block cascades its occupancy. Block instants remain UTC if the shop time zone later changes; dated schedules remain attached to their local calendar date.
+
 Exact occupancy/state predicates, multi-shop lock ordering, stale-edit/replay responses, DST boundary conversion, and remaining lifecycle ambiguities are not invented here. See [SPEC concurrency](SPEC.md#9-state-transitions-concurrency-and-consistency) and its open questions.
 
 ## 7. Notification work and shared limits

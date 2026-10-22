@@ -308,7 +308,9 @@ Use the shared page index for base desktop/tablet/mobile layouts. Each group bel
 
 **Phase 04 reference context:** Availability for date-specific restrictions, replacement hours, and explicit blocks.
 
-**Coverage and evidence limits:** A fixture making “reason” required does not approve that validation. Reopening/precedence explanations await OQ-011. Booking-bearing conflict fixtures are reserved for the later 06/09 protections.
+**Phase 04 implementation:** The existing Availability page adds an explicit date editor for shop/barber replacement hours, closure/day-off state, and individual-barber time blocks. Block endpoints are selected as shop-local times; repeated or missing local times require explicit disambiguation or rejection. Preview results clear after saved changes. This is a compact form adaptation; the referenced exception dialogs, populated override, and block composition have not been matched visually.
+
+**Coverage and evidence limits:** A fixture making “reason” required does not approve that validation. Schedule-only precedence/reopening is resolved in OQ-011 / PI-003; appointment-bearing conflict fixtures are reserved for later 06/09 protections. Browser coverage does not establish responsive visual fidelity, physical-device behavior, or screen-reader acceptance until the Phase 04 walkthrough is recorded.
 
 ### Publication and shop sharing
 
