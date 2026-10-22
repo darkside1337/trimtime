@@ -21,20 +21,21 @@ If a conflict or unresolved decision affects the requested work, identify it and
 
 Run commands from the repository root:
 
-| Purpose                            | Command                                                            |
-| ---------------------------------- | ------------------------------------------------------------------ |
-| Install locked dependencies        | `pnpm install --frozen-lockfile`                                   |
-| Start development server           | `pnpm dev`                                                         |
-| Start local HTTPS development      | `pnpm dev:https` (trusted certificates; see README)                  |
-| Start/stop persistent dev database | `pnpm db:dev:up` / `pnpm db:dev:stop`                                |
-| Lint                               | `pnpm lint`                                                        |
-| Typecheck without emitting files   | `pnpm exec tsc --noEmit --incremental false`                       |
-| Production build                   | `pnpm build`                                                       |
-| Serve an existing production build | `pnpm start`                                                       |
-| Unit tests                         | `pnpm test`                                                        |
-| Start disposable PostgreSQL        | `pnpm db:test:up`                                                  |
-| Database/migration tests           | `pnpm test:db`                                                     |
-| Stop/remove disposable PostgreSQL  | `pnpm db:test:stop` / `pnpm db:test:down`                          |
+| Purpose                            | Command                                                                               |
+| ---------------------------------- | ------------------------------------------------------------------------------------- |
+| Install locked dependencies        | `pnpm install --frozen-lockfile`                                                      |
+| Start development server           | `pnpm dev`                                                                            |
+| Start local HTTPS development      | `pnpm dev:https` (trusted certificates; see README)                                   |
+| Start local HTTPS app and database | `pnpm dev:local` (starts DB, applies pending migrations, starts app)                  |
+| Start/stop persistent dev database | `pnpm db:dev:up` / `pnpm db:dev:stop`                                                 |
+| Lint                               | `pnpm lint`                                                                           |
+| Typecheck without emitting files   | `pnpm exec tsc --noEmit --incremental false`                                          |
+| Production build                   | `pnpm build`                                                                          |
+| Serve an existing production build | `pnpm start`                                                                          |
+| Unit tests                         | `pnpm test`                                                                           |
+| Start disposable PostgreSQL        | `pnpm db:test:up`                                                                     |
+| Database/migration tests           | `pnpm test:db`                                                                        |
+| Stop/remove disposable PostgreSQL  | `pnpm db:test:stop` / `pnpm db:test:down`                                             |
 | Browser tests                      | `pnpm exec playwright install chromium` once; `pnpm db:test:up`, then `pnpm test:e2e` |
 
 Use `package.json` as the command authority and update this table when scripts change. Both `pnpm test:db` and `pnpm test:e2e` require the running, owned disposable database from `pnpm db:test:up`; they fail if that database is missing or unreachable and never fall back to a shared application database. Lint, typechecking, and a build do not prove product acceptance.

@@ -23,6 +23,7 @@ pnpm exec playwright install chromium
 ```sh
 pnpm dev                         # plain HTTP; configure matching origins below
 pnpm dev:https                   # follow Local Google sign-in setup below
+pnpm dev:local                   # starts local DB, applies migrations, starts HTTPS app
 pnpm db:dev:up                   # persistent dev PostgreSQL on 127.0.0.1:5433
 pnpm db:dev:stop                 # stops dev PostgreSQL, retaining its volume
 pnpm lint
@@ -71,10 +72,12 @@ files once:
 ```sh
 mkdir -p certs/local
 mkcert -key-file certs/local/trimtime-local-key.pem -cert-file certs/local/trimtime-local.pem localtest.me app.localtest.me
-pnpm db:dev:up
-node --env-file=.env scripts/migrate.mjs
-pnpm dev:https
+pnpm dev:local
 ```
+
+`pnpm dev:local` starts the persistent dev database, applies any pending
+migrations, then starts the HTTPS app. Run it again after stopping the app;
+the migration step is safe to repeat and only applies unapplied migrations.
 
 Marketing runs at `https://localtest.me:3000`; owner sign-in runs at
 `https://app.localtest.me:3000/sign-in`. Google must authorize

@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "next dev",
     "dev:https": "next dev --experimental-https --experimental-https-key ./certs/local/trimtime-local-key.pem --experimental-https-cert ./certs/local/trimtime-local.pem --hostname 127.0.0.1 --port 3000",
+    "dev:local": "pnpm db:dev:up && node --env-file=.env scripts/migrate.mjs && NODE_OPTIONS=--use-system-ca pnpm dev:https",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
