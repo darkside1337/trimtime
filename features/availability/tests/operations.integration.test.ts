@@ -721,4 +721,73 @@ describe("availability operations", () => {
       error: { code: "INVALID_PAIRING" },
     });
   });
+
+  it("denies dated edits and new blocks for archived barbers while allowing existing block removal", async () => {
+    const context = await owner();
+    const barber = await saveBarber(context, {
+      name: "Archived availability barber",
+      serviceIds: [],
+    });
+    expect(barber.success).toBe(true);
+    if (!barber.success) return;
+
+    const shop = await database.pool.query<{ id: string; time_zone: string }>(
+      "SELECT id, time_zone FROM shops WHERE owner_id = $1",
+      [context.userId],
+    );
+    const date = "2026-11-02";
+    const block = await createTimeBlock(context, {
+      barberId: barber.data.id,
+      date,
+      timeZone: shop.rows[0]!.time_zone,
+      start: "2026-11-02T14:00:00Z",
+      end: "2026-11-02T14:15:00Z",
+      note: "Existing block",
+    });
+    expect(block.success).toBe(true);
+    if (!block.success) return;
+
+    expect(await archiveBarber(context, barber.data.id)).toMatchObject({
+      success: true,
+    });
+    expect(
+      await saveBarberDateSchedule(context, {
+        barberId: barber.data.id,
+        date,
+        timeZone: shop.rows[0]!.time_zone,
+        override: null,
+        closed: true,
+        revision: 0,
+      }),
+    ).toMatchObject({ success: false, error: { code: "NOT_FOUND" } });
+    expect(
+      await createTimeBlock(context, {
+        barberId: barber.data.id,
+        date,
+        timeZone: shop.rows[0]!.time_zone,
+        start: "2026-11-02T14:30:00Z",
+        end: "2026-11-02T14:45:00Z",
+      }),
+    ).toMatchObject({ success: false, error: { code: "NOT_FOUND" } });
+
+    expect(
+      (
+        await database.pool.query(
+          "SELECT date FROM barber_date_schedules WHERE shop_id = $1 AND barber_id = $2 AND date = $3",
+          [shop.rows[0]!.id, barber.data.id, date],
+        )
+      ).rows,
+    ).toHaveLength(0);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT id FROM occupied_intervals WHERE shop_id = $1 AND barber_id = $2",
+          [shop.rows[0]!.id, barber.data.id],
+        )
+      ).rows,
+    ).toHaveLength(1);
+    expect(await removeTimeBlock(context, { id: block.data.id })).toMatchObject(
+      { success: true },
+    );
+  });
 });
