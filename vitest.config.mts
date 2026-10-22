@@ -15,6 +15,7 @@ export default defineConfig({
       "server/tests/*.test.ts",
     ],
     exclude: ["**/*.integration.test.ts"],
+    maxWorkers: 8,
     passWithNoTests: false,
   },
 });
