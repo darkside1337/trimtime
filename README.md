@@ -1,36 +1,101 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# TrimTime
 
-## Getting Started
+TrimTime is a public portfolio demo of barber-shop booking. Product scope and
+delivery status are documented in [docs/PRD.md](docs/PRD.md) and
+[docs/ROADMAP.md](docs/ROADMAP.md).
 
-First, run the development server:
+## Requirements
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- Node.js 24 LTS (24.x, required by the test tooling and native TypeScript scripts)
+- pnpm 12.6.0 (the version pinned in `package.json`)
+- Docker Engine with Docker Compose v2 for disposable PostgreSQL
+- Chromium for Playwright browser tests
+
+Install dependencies and the browser once:
+
+```sh
+pnpm install --frozen-lockfile
+pnpm exec playwright install chromium
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Run and verify
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```sh
+pnpm dev                         # plain HTTP; configure matching origins below
+pnpm dev:https                   # follow Local Google sign-in setup below
+pnpm db:dev:up                   # persistent dev PostgreSQL on 127.0.0.1:5433
+pnpm db:dev:stop                 # stops dev PostgreSQL, retaining its volume
+pnpm lint
+pnpm exec tsc --noEmit --incremental false
+pnpm build
+pnpm test                        # Vitest unit tests
+pnpm db:test:up                  # disposable PostgreSQL on 127.0.0.1:55432
+pnpm test:db                     # verifies ownership, connectivity, and migrations
+pnpm test:e2e                    # builds, then runs Chromium at desktop/tablet/phone sizes
+pnpm db:test:down                # removes only the Phase 00 Compose project
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+For marketing and design-system inspection over plain HTTP, set matching origins
+for the development process:
 
-## Learn More
+```sh
+MARKETING_ORIGIN=http://localhost:3000 \
+APP_ORIGIN=http://app.localhost:3000 \
+BETTER_AUTH_URL=http://app.localhost:3000 \
+pnpm dev
+```
 
-To learn more about Next.js, take a look at the following resources:
+Open `http://localhost:3000/` or `http://localhost:3000/design-system`. These
+process-level overrides take precedence over `.env`; the application rejects
+unconfigured hosts. Use the HTTPS setup below for real Google sign-in. The
+Playwright runner supplies its own origins on port 3100.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+The database test URL is supplied by the repository's `.env.test` and
+targets only the Compose-owned `trimtime_test` database. If it is stopped,
+both `pnpm test:db` and `pnpm test:e2e` fail with an actionable error. Run
+`pnpm db:test:up` before either suite. `pnpm db:test:stop` and
+`pnpm db:test:up` are available for the stop/restart check. Database tests
+verify the exact container before connecting and never fall back to
+`DATABASE_URL`.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Local Google sign-in
 
-## Deploy on Vercel
+Copy `.env.example` to the ignored `.env` and populate the auth secret and Google
+credentials. Its database URLs match `compose.dev.yml`; both URLs refer to the
+same local dev database. Production should use separate roles where privileges
+differ. The dev volume persists across `db:dev:stop` and `db:dev:up`.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+With `mkcert` installed and its local CA trusted, generate the ignored certificate
+files once:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```sh
+mkdir -p certs/local
+mkcert -key-file certs/local/trimtime-local-key.pem -cert-file certs/local/trimtime-local.pem localtest.me app.localtest.me
+pnpm db:dev:up
+node --env-file=.env scripts/migrate.mjs
+pnpm dev:https
+```
+
+Marketing runs at `https://localtest.me:3000`; owner sign-in runs at
+`https://app.localtest.me:3000/sign-in`. Google must authorize
+`https://app.localtest.me:3000` and the exact redirect
+`https://app.localtest.me:3000/api/auth/callback/google`.
+
+Playwright remains separate on port 3100 with `localhost`/`app.localhost` and
+the owned disposable database. Its runner overrides application and migration
+URLs, auth secret, Google credentials, and the test-only lock timeout. Session
+fixtures use Better Auth test utilities exclusively outside production routes.
+
+The app database connection requires `DATABASE_URL`. The migration command
+requires the separate `MIGRATION_DATABASE_URL` variable and applies versioned
+migrations from `db/migrations`:
+
+```sh
+MIGRATION_DATABASE_URL='postgresql://…' pnpm db:migrate
+```
+
+Keep real application credentials in a local ignored environment file. Never
+point routine tests at a shared or production database. See
+[AGENTS.md](AGENTS.md) for contributor rules and
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#9-verification-and-maintenance) for
+verification boundaries.
