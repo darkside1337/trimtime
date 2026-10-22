@@ -2,6 +2,43 @@ import { describe, expect, it } from "vitest";
 import { calculateSlots } from "../slots";
 
 describe("recurring slot preview", () => {
+  it("excludes a 35-minute start that overlaps occupied time", () => {
+    const day = { working: [{ start: 540, end: 660 }], breaks: [] };
+
+    expect(
+      calculateSlots({
+        date: "2026-11-02",
+        timeZone: "UTC",
+        now: "2026-10-31T12:00:00Z",
+        durationMinutes: 35,
+        shopDay: day,
+        barberDay: day,
+        occupied: [
+          { start: "2026-11-02T10:00:00Z", end: "2026-11-02T10:15:00Z" },
+        ],
+      }),
+    ).toEqual([
+      {
+        start: "2026-11-02T09:00:00Z",
+        end: "2026-11-02T09:35:00Z",
+        localStart: "09:00",
+        offset: "+00:00",
+      },
+      {
+        start: "2026-11-02T09:15:00Z",
+        end: "2026-11-02T09:50:00Z",
+        localStart: "09:15",
+        offset: "+00:00",
+      },
+      {
+        start: "2026-11-02T10:15:00Z",
+        end: "2026-11-02T10:50:00Z",
+        localStart: "10:15",
+        offset: "+00:00",
+      },
+    ]);
+  });
+
   it("offers clock-quarter starts only when all 35 minutes fit", () => {
     const day = {
       working: [{ start: 550, end: 660 }],

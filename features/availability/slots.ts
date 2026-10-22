@@ -1,4 +1,4 @@
-import type { DaySchedule, Slot } from "./types";
+import type { DaySchedule, OccupiedInterval, Slot } from "./types";
 import { Temporal } from "temporal-polyfill";
 
 function contains(ranges: DaySchedule["working"], minute: number) {
@@ -47,6 +47,7 @@ export function calculateSlots({
   durationMinutes,
   shopDay,
   barberDay,
+  occupied = [],
 }: {
   date: string;
   timeZone: string;
@@ -54,6 +55,7 @@ export function calculateSlots({
   durationMinutes: number;
   shopDay: DaySchedule;
   barberDay: DaySchedule;
+  occupied?: readonly OccupiedInterval[];
 }): Slot[] {
   const localDate = Temporal.PlainDate.from(date);
   const nowInstant = Temporal.Instant.from(now);
@@ -96,6 +98,14 @@ export function calculateSlots({
       )
         continue;
       const end = start.add({ minutes: durationMinutes });
+      if (
+        occupied.some(
+          (interval) =>
+            Temporal.Instant.compare(start, interval.end) < 0 &&
+            Temporal.Instant.compare(end, interval.start) > 0,
+        )
+      )
+        continue;
       slots.set(start.toString(), {
         start: start.toString(),
         end: end.toString(),

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { saveBarberScheduleSchema, saveShopScheduleSchema } from "../schemas";
+import {
+  dateScheduleSchema,
+  saveBarberScheduleSchema,
+  saveShopScheduleSchema,
+} from "../schemas";
 import type { WeeklySchedule } from "../types";
 
 const closed = (): WeeklySchedule =>
@@ -66,5 +70,28 @@ describe("recurring schedule schemas", () => {
         "week.0.working.1.end",
         "week.0.breaks.0.start",
       ]);
+  });
+
+  it("validates dated schedule calendar dates and replacement ranges", () => {
+    const valid = {
+      date: "2028-02-29",
+      timeZone: "UTC",
+      override: { working: [], breaks: [] },
+      closed: false,
+      revision: 0,
+    };
+    expect(dateScheduleSchema.safeParse(valid).success).toBe(true);
+    expect(
+      dateScheduleSchema.safeParse({ ...valid, date: "2026-02-30" }).success,
+    ).toBe(false);
+    expect(
+      dateScheduleSchema.safeParse({ ...valid, revision: -1 }).success,
+    ).toBe(false);
+    expect(
+      dateScheduleSchema.safeParse({
+        ...valid,
+        override: { working: [{ start: 1440, end: 1440 }], breaks: [] },
+      }).success,
+    ).toBe(false);
   });
 });

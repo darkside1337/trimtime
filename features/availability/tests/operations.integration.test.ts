@@ -38,6 +38,11 @@ describe("availability operations", () => {
   let saveBarberSchedule: typeof import("../mutations").saveBarberSchedule;
   let getOwnSchedules: typeof import("../queries").getOwnSchedules;
   let previewOwnSlots: typeof import("../queries").previewOwnSlots;
+  let getOwnDateAvailability: typeof import("../queries").getOwnDateAvailability;
+  let saveShopDateSchedule: typeof import("../mutations").saveShopDateSchedule;
+  let saveBarberDateSchedule: typeof import("../mutations").saveBarberDateSchedule;
+  let createTimeBlock: typeof import("../mutations").createTimeBlock;
+  let removeTimeBlock: typeof import("../mutations").removeTimeBlock;
   const userIds: string[] = [];
 
   beforeAll(async () => {
@@ -59,7 +64,14 @@ describe("availability operations", () => {
     ({ saveService, setServiceOffered } =
       await import("@/features/catalog/mutations"));
     ({ saveShopSchedule, saveBarberSchedule } = await import("../mutations"));
-    ({ getOwnSchedules, previewOwnSlots } = await import("../queries"));
+    ({
+      saveShopDateSchedule,
+      saveBarberDateSchedule,
+      createTimeBlock,
+      removeTimeBlock,
+    } = await import("../mutations"));
+    ({ getOwnSchedules, previewOwnSlots, getOwnDateAvailability } =
+      await import("../queries"));
     ({ pool: applicationPool } = await import("@/db"));
     applicationPool.options.max = 5;
     closeApplicationPool = () => applicationPool.end();
@@ -362,6 +374,260 @@ describe("availability operations", () => {
       success: true,
       data: { slots: [] },
     });
+  });
+
+  it("uses saved date replacement and blocks in preview, and removal restores starts", async () => {
+    const context = await owner();
+    const service = await saveService(context, {
+      name: "Dated cut",
+      priceUsd: "12",
+      durationMinutes: "35",
+      offered: true,
+      barberIds: [],
+    });
+    expect(service.success).toBe(true);
+    if (!service.success) return;
+    const barber = await saveBarber(context, {
+      name: "Dated barber",
+      serviceIds: [service.data.id],
+    });
+    expect(barber.success).toBe(true);
+    if (!barber.success) return;
+    const recurring = Array.from({ length: 7 }, () => ({
+      working: [{ start: 540, end: 720 }],
+      breaks: [],
+    }));
+    await saveShopSchedule(context, { week: recurring, revision: 0 });
+    const saved = await saveShopDateSchedule(context, {
+      date: "2026-11-02",
+      timeZone: "America/New_York",
+      override: { working: [{ start: 600, end: 660 }], breaks: [] },
+      closed: false,
+      revision: 0,
+    });
+    expect(saved).toMatchObject({ success: true, data: { revision: 1 } });
+    expect(
+      await getOwnDateAvailability(context, { date: "2026-11-02" }),
+    ).toMatchObject({
+      success: true,
+      data: { shop: { closed: false, revision: 1 } },
+    });
+    const preview = () =>
+      previewOwnSlots(context, {
+        serviceId: service.data.id,
+        barberId: barber.data.id,
+        date: "2026-11-02",
+      });
+    expect(await preview()).toMatchObject({
+      success: true,
+      data: { slots: [{ localStart: "10:00" }, { localStart: "10:15" }] },
+    });
+    const block = await createTimeBlock(context, {
+      barberId: barber.data.id,
+      date: "2026-11-02",
+      timeZone: "America/New_York",
+      start: "2026-11-02T15:00:00Z",
+      end: "2026-11-02T15:15:00Z",
+      note: "Personal",
+    });
+    expect(block).toMatchObject({ success: true, data: { note: "Personal" } });
+    expect(await preview()).toMatchObject({
+      success: true,
+      data: {
+        slots: [{ localStart: "10:15" }],
+      },
+    });
+    if (block.success)
+      expect(
+        await removeTimeBlock(context, { id: block.data.id }),
+      ).toMatchObject({ success: true });
+    expect(await preview()).toMatchObject({
+      success: true,
+      data: { slots: [{ localStart: "10:00" }, { localStart: "10:15" }] },
+    });
+    const contenders = await Promise.all(
+      [0, 1].map(() =>
+        createTimeBlock(context, {
+          barberId: barber.data.id,
+          date: "2026-11-02",
+          timeZone: "America/New_York",
+          start: "2026-11-02T15:00:00Z",
+          end: "2026-11-02T15:15:00Z",
+        }),
+      ),
+    );
+    expect(contenders.filter((result) => result.success)).toHaveLength(1);
+    expect(
+      contenders.filter(
+        (result) => !result.success && result.error.code === "BLOCK_CONFLICT",
+      ),
+    ).toHaveLength(1);
+    const winner = contenders.find((result) => result.success);
+    if (winner?.success) await removeTimeBlock(context, { id: winner.data.id });
+  });
+
+  it("rolls back occupancy when the block record write fails", async () => {
+    const context = await owner();
+    const barber = await saveBarber(context, {
+      name: "Rollback barber",
+      serviceIds: [],
+    });
+    expect(barber.success).toBe(true);
+    if (!barber.success) return;
+    const suffix = randomUUID().replaceAll("-", "");
+    const functionName = `fail_time_block_${suffix}`;
+    const triggerName = `fail_time_block_${suffix}`;
+    await database.pool.query(`
+      CREATE FUNCTION ${functionName}() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.note = 'force-domain-write-failure' THEN
+          RAISE EXCEPTION 'injected time block write failure';
+        END IF;
+        RETURN NEW;
+      END $$
+    `);
+    await database.pool.query(`
+      CREATE TRIGGER ${triggerName}
+      BEFORE INSERT ON time_blocks
+      FOR EACH ROW EXECUTE FUNCTION ${functionName}()
+    `);
+    try {
+      const before = await database.pool.query(
+        "SELECT count(*)::int AS count FROM occupied_intervals WHERE shop_id = (SELECT id FROM shops WHERE owner_id = $1)",
+        [context.userId],
+      );
+      expect(
+        await createTimeBlock(context, {
+          barberId: barber.data.id,
+          date: "2026-11-02",
+          timeZone: "America/New_York",
+          start: "2026-11-02T15:00:00Z",
+          end: "2026-11-02T15:15:00Z",
+          note: "force-domain-write-failure",
+        }),
+      ).toMatchObject({ success: false, error: { code: "SAVE_FAILED" } });
+      const after = await database.pool.query(
+        "SELECT count(*)::int AS count FROM occupied_intervals WHERE shop_id = (SELECT id FROM shops WHERE owner_id = $1)",
+        [context.userId],
+      );
+      expect(after.rows[0]?.count).toBe(before.rows[0]?.count);
+    } finally {
+      await database.pool.query(`DROP TRIGGER ${triggerName} ON time_blocks`);
+      await database.pool.query(`DROP FUNCTION ${functionName}()`);
+    }
+  });
+
+  it("reopens retained overrides explicitly and keeps barber days off independent", async () => {
+    const context = await owner();
+    const service = await saveService(context, {
+      name: "Reopen cut",
+      priceUsd: "12",
+      durationMinutes: "35",
+      offered: true,
+      barberIds: [],
+    });
+    if (!service.success) return;
+    const created = await Promise.all(
+      ["A", "B"].map((name) =>
+        saveBarber(context, {
+          name: `Reopen ${name}`,
+          serviceIds: [service.data.id],
+        }),
+      ),
+    );
+    if (!created[0]?.success || !created[1]?.success) return;
+    const barberA = created[0].data.id;
+    const barberB = created[1].data.id;
+    const recurring = Array.from({ length: 7 }, () => ({
+      working: [{ start: 540, end: 720 }],
+      breaks: [],
+    }));
+    await saveShopSchedule(context, { week: recurring, revision: 0 });
+    const date = "2026-11-02";
+    const timeZone = "America/New_York";
+    const replacement = { working: [{ start: 600, end: 660 }], breaks: [] };
+    const preview = (barberId: string) =>
+      previewOwnSlots(context, { serviceId: service.data.id, barberId, date });
+    expect(
+      await saveShopDateSchedule(context, {
+        date,
+        timeZone,
+        override: replacement,
+        closed: true,
+        revision: 0,
+      }),
+    ).toMatchObject({ success: true, data: { revision: 1 } });
+    expect(await preview(barberA)).toMatchObject({
+      success: true,
+      data: { slots: [] },
+    });
+    expect(
+      await saveShopDateSchedule(context, {
+        date,
+        timeZone,
+        override: replacement,
+        closed: false,
+        revision: 1,
+      }),
+    ).toMatchObject({ success: true, data: { revision: 2 } });
+    expect(await preview(barberA)).toMatchObject({
+      success: true,
+      data: { slots: [{ localStart: "10:00" }, { localStart: "10:15" }] },
+    });
+    expect(await preview(barberB)).toMatchObject({
+      success: true,
+      data: { slots: [{ localStart: "10:00" }, { localStart: "10:15" }] },
+    });
+    expect(
+      await saveBarberDateSchedule(context, {
+        date,
+        timeZone,
+        barberId: barberA,
+        override: null,
+        closed: true,
+        revision: 0,
+      }),
+    ).toMatchObject({ success: true });
+    expect(await preview(barberA)).toMatchObject({
+      success: true,
+      data: { slots: [] },
+    });
+    expect(await preview(barberB)).toMatchObject({
+      success: true,
+      data: { slots: [{ localStart: "10:00" }, { localStart: "10:15" }] },
+    });
+    expect(
+      await saveShopDateSchedule(context, {
+        date,
+        timeZone,
+        override: null,
+        closed: true,
+        revision: 2,
+      }),
+    ).toMatchObject({ success: true, data: { revision: 3 } });
+    expect(
+      await saveShopDateSchedule(context, {
+        date,
+        timeZone,
+        override: null,
+        closed: false,
+        revision: 3,
+      }),
+    ).toMatchObject({ success: true, data: { revision: 4 } });
+    const reopened = await preview(barberB);
+    expect(
+      reopened.success &&
+        reopened.data.slots.slice(0, 2).map(({ localStart }) => localStart),
+    ).toEqual(["09:00", "09:15"]);
+    expect(
+      await saveShopDateSchedule(context, {
+        date,
+        timeZone,
+        override: replacement,
+        closed: false,
+        revision: 2,
+      }),
+    ).toMatchObject({ success: false, error: { code: "STALE_DATE_SCHEDULE" } });
   });
 
   it("requires a shop and keeps foreign, hidden, and archived pairings private", async () => {
