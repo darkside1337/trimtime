@@ -1,6 +1,47 @@
 import { randomUUID } from "node:crypto";
 import { captureState, test, expect, ownerOrigin } from "./fixtures";
 
+test("the dated editor can be loaded and toggled by keyboard with visible focus", async ({
+  page,
+  context,
+  owners,
+}, testInfo) => {
+  await owners(context, { shop: true });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto(`${ownerOrigin}/availability`);
+  const date = page.getByLabel("Schedule day");
+  await date.fill("2026-11-02");
+  await page.getByLabel("Apply to").focus();
+  await page.keyboard.press("Tab");
+  const load = page.getByRole("button", { name: "Load date" });
+  await expect(load).toBeFocused();
+  const focus = await load.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      outlineWidth: style.outlineWidth,
+      outlineStyle: style.outlineStyle,
+    };
+  });
+  expect(parseFloat(focus.outlineWidth)).toBeGreaterThan(0);
+  expect(focus.outlineStyle).not.toBe("none");
+  await page.keyboard.press("Enter");
+  const replace = page.getByLabel("Replace recurring hours and breaks");
+  await expect(replace).toBeVisible();
+  await page.keyboard.press("Tab");
+  await expect(replace).toBeFocused();
+  await page.keyboard.press("Space");
+  await expect(replace).toBeChecked();
+  expect(
+    await replace.evaluate((element) =>
+      parseFloat(getComputedStyle(element).transitionDuration),
+    ),
+  ).toBeLessThanOrEqual(0.001);
+  for (const width of [320, 1024]) {
+    await page.setViewportSize({ width, height: 900 });
+    await captureState(page, `dated-editor-${width}`, testInfo);
+  }
+});
+
 test("a dated shop override changes only its date after reload", async ({
   page,
   context,
@@ -188,7 +229,7 @@ test("a rejected dated save keeps the draft and offers reload recovery", async (
   page,
   context,
   owners,
-}) => {
+}, testInfo) => {
   await owners(context, { shop: true });
   await page.goto(`${ownerOrigin}/availability`);
   await page.getByLabel("Schedule day").fill("2026-11-02");
@@ -211,6 +252,7 @@ test("a rejected dated save keeps the draft and offers reload recovery", async (
   await expect(
     page.getByRole("button", { name: "Reload saved state" }),
   ).toBeEnabled();
+  await captureState(page, "dated-schedule-save-uncertain", testInfo);
   await page.unrouteAll();
   await page.getByRole("button", { name: "Reload saved state" }).click();
   await expect(
@@ -223,7 +265,7 @@ test("a rejected block removal restores the controls and offers reload", async (
   context,
   owners,
   database,
-}) => {
+}, testInfo) => {
   const owner = await owners(context, { shop: true });
   await database.pool.query(
     "INSERT INTO barbers (id, shop_id, name) VALUES ($1, $2, 'Block recovery barber')",
@@ -252,6 +294,7 @@ test("a rejected block removal restores the controls and offers reload", async (
     page.getByText("This barber already has a block during that time."),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Remove" })).toHaveCount(1);
+  await captureState(page, "dated-block-conflict", testInfo);
 
   await page.route("**/*", async (route) => {
     if (route.request().headers()["next-action"]) await route.abort();
@@ -263,6 +306,7 @@ test("a rejected block removal restores the controls and offers reload", async (
       "Removal status is uncertain. Reload saved state before retrying.",
     ),
   ).toBeVisible();
+  await captureState(page, "dated-block-removal-uncertain", testInfo);
   await expect(
     page.getByRole("button", { name: "Reload saved state" }),
   ).toBeEnabled();
