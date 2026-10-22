@@ -302,7 +302,9 @@ Use the shared page index for base desktop/tablet/mobile layouts. Each group bel
 
 **Phase 03 reference context:** Availability for recurring shop/barber schedules and breaks; use Customer booking only as selection/slot-label context, not as an implemented public flow.
 
-**Coverage and evidence limits:** A dedicated owner slot-preview/DST-fold presentation is not established. Plan missing offset/zone labels after OTQ-007 decisions; public booking and dated edits are later phases.
+**Phase 03 implementation:** The owner page adapts the referenced weekly rows, break dialog, hierarchy, and responsive composition inside the existing owner shell. It adds explicit saved-state service/barber/date preview, visible IANA zone, and UTC offsets for repeated local starts. Barber preferences are copied once and remain independent; bookable time is the intersection with shop hours. Public booking, dated edits, exception/block controls, live inheritance, and demo controls remain later or out of scope.
+
+**Coverage and evidence limits:** The canvas does not define the owner preview or DST-fold result layout; these are an implementation adaptation, not a pixel-match claim. Browser checks cover reference viewport widths and keyboard/dialog behavior. Chromium does not establish physical-device, contrast measurement, or screen-reader acceptance.
 
 **Phase 04 reference context:** Availability for date-specific restrictions, replacement hours, and explicit blocks.
 
