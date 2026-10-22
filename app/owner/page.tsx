@@ -6,7 +6,11 @@ import { getOwnShop } from "@/features/shops/queries";
 import { readOwnerContext } from "@/server/owner-context";
 
 export default function OwnerPage() {
-  return <Suspense fallback={<main className="min-h-dvh bg-background" />}><OwnerHomeContent /></Suspense>;
+  return (
+    <Suspense fallback={<main className="min-h-dvh bg-background" />}>
+      <OwnerHomeContent />
+    </Suspense>
+  );
 }
 
 async function OwnerHomeContent() {
