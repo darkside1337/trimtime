@@ -15,6 +15,7 @@ import {
 } from "../actions";
 import type { ServiceView, BarberView } from "../types";
 import { Button } from "@/components/ui/button";
+import type { ActionResult } from "@/lib/action-result";
 import { OwnerArchiveDialog } from "@/components/owner-archive-dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -47,6 +48,10 @@ export function ServiceManagement({
   const closeEditor = useCallback((open: boolean) => {
     if (!open) setEditing(undefined);
   }, []);
+  const saved = useCallback(() => {
+    setEditing(undefined);
+    setStatus("Service saved.");
+  }, []);
   const activeBarbers = barbers.filter((barber) => !barber.archived);
   const visible = services.filter(
     (service) =>
@@ -71,13 +76,22 @@ export function ServiceManagement({
             </Button>
           ))}
         </div>
-        <Button onClick={() => setEditing(null)}>Add service</Button>
+        <Button
+          onClick={() => {
+            setStatus("");
+            setEditing(null);
+          }}
+        >
+          Add service
+        </Button>
       </div>
-      {status && (
-        <p role="status" className="mt-4">
-          {status}
-        </p>
-      )}
+      <p
+        role="status"
+        aria-atomic="true"
+        className={status ? "mt-4" : "sr-only"}
+      >
+        {status}
+      </p>
       {services.length === 0 ? (
         <p className="mt-8 rounded-xl border p-8">
           No services yet. Add a service to start building your catalog.
@@ -117,7 +131,13 @@ export function ServiceManagement({
               </div>
               {!service.archived && (
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <Button variant="outline" onClick={() => setEditing(service)}>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setStatus("");
+                      setEditing(service);
+                    }}
+                  >
                     Edit
                   </Button>
                   <Button
@@ -136,6 +156,11 @@ export function ServiceManagement({
                           );
                           if (result.success) router.refresh();
                         })
+                        .catch(() =>
+                          setStatus(
+                            "Could not confirm the update. Check your connection and try again.",
+                          ),
+                        )
                         .finally(() => setPending(false));
                     }}
                   >
@@ -163,6 +188,7 @@ export function ServiceManagement({
           service={editing ?? undefined}
           open
           onOpenChange={closeEditor}
+          onSaved={saved}
           barbers={activeBarbers}
         />
       )}
@@ -191,6 +217,11 @@ export function ServiceManagement({
                   setArchiveError(result.error.message);
                 }
               })
+              .catch(() =>
+                setArchiveError(
+                  "Could not confirm the archive. Check your connection and try again.",
+                ),
+              )
               .finally(() => setPending(false));
           }}
         />
@@ -203,15 +234,33 @@ function ServiceDialog({
   service,
   open,
   onOpenChange,
+  onSaved,
   barbers,
 }: {
   service?: ServiceView;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onSaved: () => void;
   barbers: BarberView[];
 }) {
   const router = useRouter();
-  const [state, action, pending] = useActionState(saveServiceAction, null);
+  const [state, action, pending] = useActionState<
+    ActionResult<ServiceView> | null,
+    FormData
+  >(async (previous, formData) => {
+    try {
+      return await saveServiceAction(previous, formData);
+    } catch {
+      return {
+        success: false,
+        error: {
+          code: "NETWORK_ERROR",
+          message:
+            "Could not confirm the save. Your input is still here. Check your connection and try again.",
+        },
+      };
+    }
+  }, null);
   const [dirty, setDirty] = useState(false);
   const [values, setValues] = useState({
     name: service?.name ?? "",
@@ -223,14 +272,14 @@ function ServiceDialog({
   const form = useRef<HTMLFormElement>(null);
   useEffect(() => {
     if (state?.success) {
-      onOpenChange(false);
+      onSaved();
       router.refresh();
     } else if (state && !state.success && state.fieldErrors) {
       form.current
         ?.querySelector<HTMLElement>("[aria-invalid='true']")
         ?.focus();
     }
-  }, [state, onOpenChange, router]);
+  }, [state, onSaved, router]);
   const errors = state && !state.success ? state.fieldErrors : undefined;
   return (
     <Dialog
@@ -255,6 +304,7 @@ function ServiceDialog({
         <form
           ref={form}
           action={action}
+          onReset={(event) => event.preventDefault()}
           noValidate
           onChange={() => setDirty(true)}
           className="grid gap-4"
@@ -291,12 +341,13 @@ function ServiceDialog({
               name="offered"
               value="true"
               checked={values.offered}
-              onChange={(event) =>
+              onChange={(event) => {
+                const offered = event.currentTarget.checked;
                 setValues((current) => ({
                   ...current,
-                  offered: event.currentTarget.checked,
-                }))
-              }
+                  offered,
+                }));
+              }}
               className="size-4"
             />{" "}
             Offered to customers

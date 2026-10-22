@@ -11,6 +11,7 @@ import { useRouter } from "next/navigation";
 import { archiveBarberAction, saveBarberAction } from "../actions";
 import type { BarberView, ServiceView } from "@/features/catalog/types";
 import { Button } from "@/components/ui/button";
+import type { ActionResult } from "@/lib/action-result";
 import { OwnerArchiveDialog } from "@/components/owner-archive-dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -43,6 +44,10 @@ export function BarberManagement({
   const closeEditor = useCallback((open: boolean) => {
     if (!open) setEditing(undefined);
   }, []);
+  const saved = useCallback(() => {
+    setEditing(undefined);
+    setStatus("Barber saved.");
+  }, []);
   const activeServices = services.filter((service) => !service.archived);
   const visible = barbers.filter(
     (barber) =>
@@ -66,13 +71,22 @@ export function BarberManagement({
             </Button>
           ))}
         </div>
-        <Button onClick={() => setEditing(null)}>Add barber</Button>
+        <Button
+          onClick={() => {
+            setStatus("");
+            setEditing(null);
+          }}
+        >
+          Add barber
+        </Button>
       </div>
-      {status && (
-        <p role="status" className="mt-4">
-          {status}
-        </p>
-      )}
+      <p
+        role="status"
+        aria-atomic="true"
+        className={status ? "mt-4" : "sr-only"}
+      >
+        {status}
+      </p>
       {barbers.length === 0 ? (
         <p className="mt-8 rounded-xl border p-8">
           No barbers yet. Add a barber to set eligibility.
@@ -101,7 +115,13 @@ export function BarberManagement({
               </p>
               {!barber.archived && (
                 <div className="mt-4 flex gap-2">
-                  <Button variant="outline" onClick={() => setEditing(barber)}>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setStatus("");
+                      setEditing(barber);
+                    }}
+                  >
                     Edit
                   </Button>
                   <Button
@@ -126,6 +146,7 @@ export function BarberManagement({
           barber={editing ?? undefined}
           open
           onOpenChange={closeEditor}
+          onSaved={saved}
           services={activeServices}
         />
       )}
@@ -154,6 +175,11 @@ export function BarberManagement({
                   setArchiveError(result.error.message);
                 }
               })
+              .catch(() =>
+                setArchiveError(
+                  "Could not confirm the archive. Check your connection and try again.",
+                ),
+              )
               .finally(() => setPending(false));
           }}
         />
@@ -166,29 +192,47 @@ function BarberDialog({
   barber,
   open,
   onOpenChange,
+  onSaved,
   services,
 }: {
   barber?: BarberView;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onSaved: () => void;
   services: ServiceView[];
 }) {
   const router = useRouter();
-  const [state, action, pending] = useActionState(saveBarberAction, null);
+  const [state, action, pending] = useActionState<
+    ActionResult<BarberView> | null,
+    FormData
+  >(async (previous, formData) => {
+    try {
+      return await saveBarberAction(previous, formData);
+    } catch {
+      return {
+        success: false,
+        error: {
+          code: "NETWORK_ERROR",
+          message:
+            "Could not confirm the save. Your input is still here. Check your connection and try again.",
+        },
+      };
+    }
+  }, null);
   const [dirty, setDirty] = useState(false);
   const [name, setName] = useState(barber?.name ?? "");
   const [serviceIds, setServiceIds] = useState(barber?.serviceIds ?? []);
   const form = useRef<HTMLFormElement>(null);
   useEffect(() => {
     if (state?.success) {
-      onOpenChange(false);
+      onSaved();
       router.refresh();
     } else if (state && !state.success && state.fieldErrors) {
       form.current
         ?.querySelector<HTMLElement>("[aria-invalid='true']")
         ?.focus();
     }
-  }, [state, onOpenChange, router]);
+  }, [state, onSaved, router]);
   const errors = state && !state.success ? state.fieldErrors : undefined;
   return (
     <Dialog
@@ -213,6 +257,7 @@ function BarberDialog({
         <form
           ref={form}
           action={action}
+          onReset={(event) => event.preventDefault()}
           noValidate
           onChange={() => setDirty(true)}
           className="grid gap-4"
