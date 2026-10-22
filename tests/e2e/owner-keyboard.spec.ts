@@ -60,7 +60,7 @@ test("setup and settings are reachable by keyboard with reduced motion", async (
   await expect(
     page.getByRole("link", { name: "Today", exact: true }),
   ).toBeFocused();
-  for (const label of ["Services", "Barbers", "Settings"]) {
+  for (const label of ["Services", "Barbers", "Availability", "Settings"]) {
     await page.keyboard.press("Tab");
     await expect(
       page.getByRole("link", { name: label, exact: true }),
