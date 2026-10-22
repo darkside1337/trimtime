@@ -1,4 +1,4 @@
-import { test, expect, ownerOrigin, captureState } from "./fixtures";
+import { test, expect, openOwnerNavigation, ownerOrigin, captureState } from "./fixtures";
 
 test("new owner creates a draft shop and reaches Today", async ({ page, context, owners }, info) => {
   const owner = await owners(context);
@@ -15,6 +15,7 @@ test("new owner creates a draft shop and reaches Today", async ({ page, context,
   await expect(page.getByRole("heading", { name: "Today", exact: true })).toBeVisible();
   await expect(page.getByText("Draft shop", { exact: true })).toBeVisible();
   await captureState(page, "today", info);
+  await openOwnerNavigation(page);
   await page.getByRole("link", { name: "Settings", exact: true }).click();
   await expect(page).toHaveURL(`${ownerOrigin}/settings`);
   await expect(page.getByLabel("Shop name")).toHaveValue("Fictional Juniper");

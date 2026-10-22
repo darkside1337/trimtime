@@ -57,19 +57,23 @@ test("setup and settings are reachable by keyboard with reduced motion", async (
     page.getByRole("link", { name: "TrimTime", exact: true }),
   ).toBeFocused();
   await page.keyboard.press("Tab");
-  await expect(
-    page.getByRole("link", { name: "Today", exact: true }),
-  ).toBeFocused();
-  for (const label of ["Services", "Barbers", "Availability", "Settings"]) {
+  const mobile = page.viewportSize()!.width <= 900;
+  if (mobile) {
+    await expect(page.getByRole("button", { name: "Open navigation" })).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("button", { name: "Close navigation" })).toBeFocused();
     await page.keyboard.press("Tab");
-    await expect(
-      page.getByRole("link", { name: label, exact: true }),
-    ).toBeFocused();
+  }
+  for (const [index, label] of ["Today", "Services", "Barbers", "Availability", "Settings"].entries()) {
+    if (index > 0) await page.keyboard.press("Tab");
+    await expect(page.getByRole("link", { name: label, exact: true })).toBeFocused();
   }
   await page.keyboard.press("Tab");
-  await expect(
-    page.getByRole("button", { name: "Sign out", exact: true }),
-  ).toBeFocused();
+  await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeFocused();
+  if (mobile) {
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("button", { name: "Open navigation" })).toBeFocused();
+  }
   for (const label of [
     "Shop name",
     "Public contact",

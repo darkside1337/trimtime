@@ -30,6 +30,11 @@ export async function captureState(page: Page, state: string, info: TestInfo) {
   });
 }
 
+export async function openOwnerNavigation(page: Page) {
+  if (page.viewportSize()!.width <= 900)
+    await page.getByRole("button", { name: "Open navigation" }).click();
+}
+
 function createFixtureAuth(pool: Pool) {
   return betterAuth({
     ...ownerAuthOptions,

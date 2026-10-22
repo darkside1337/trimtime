@@ -1,5 +1,3 @@
-import { OwnerManagementNav } from "@/components/owner-management-nav";
-import { OwnerSignOut } from "@/components/owner-auth-controls";
 import type { ShopView } from "../queries";
 
 export function OwnerHome({ shop }: { shop: ShopView }) {
@@ -8,15 +6,11 @@ export function OwnerHome({ shop }: { shop: ShopView }) {
     timeZone: shop.timeZone,
   }).format(new Date());
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-8 px-5 py-10 sm:px-7">
+    <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-8 px-5 py-10 sm:px-7">
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <p className="text-sm text-muted-foreground">{shop.name}</p>
           <h1 className="font-heading text-4xl font-bold">Today</h1>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <OwnerManagementNav current="today" />
-          <OwnerSignOut />
         </div>
       </header>
       <section aria-label="Shop status" className="rounded-xl bg-muted p-6">

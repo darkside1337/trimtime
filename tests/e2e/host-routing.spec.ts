@@ -1,4 +1,4 @@
-import { test, expect, ownerOrigin, marketingOrigin } from "./fixtures";
+import { test, expect, openOwnerNavigation, ownerOrigin, marketingOrigin } from "./fixtures";
 
 test("invalid hosts and direct internal destinations return HTTP 404", async ({
   request,
@@ -84,6 +84,7 @@ test("rewritten navigation keeps canonical URLs and isolates owner responses", a
     await expect(
       page.getByText("Routing Private A", { exact: true }),
     ).toBeVisible();
+    await openOwnerNavigation(page);
     await page.getByRole("link", { name: "Settings", exact: true }).click();
     await expect(page).toHaveURL(`${ownerOrigin}/settings`);
     await expect(page.getByLabel("Shop name")).toHaveValue("Routing Private A");

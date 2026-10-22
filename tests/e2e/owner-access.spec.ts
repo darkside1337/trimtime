@@ -1,4 +1,4 @@
-import { test, expect, ownerOrigin, marketingOrigin, captureState } from "./fixtures";
+import { test, expect, openOwnerNavigation, ownerOrigin, marketingOrigin, captureState } from "./fixtures";
 
 test("signed-out owner pages require Google sign-in and marketing denies auth endpoints", async ({ page, request, context }, info) => {
   await page.goto(marketingOrigin);
@@ -84,6 +84,7 @@ test("existing owners skip setup and sign-out revokes a replayed session", async
   await expect(page.getByRole("heading", { name: "Today", exact: true })).toBeVisible();
   expect((await context.cookies(marketingOrigin)).some((cookie) => cookie.name.includes("session_token"))).toBe(false);
   expect((await context.cookies("http://sibling.localhost:3100")).some((cookie) => cookie.name.includes("session_token"))).toBe(false);
+  await openOwnerNavigation(page);
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page.getByRole("button", { name: "Continue with Google" })).toBeVisible();
   const replay = await request.get(`${ownerOrigin}/api/auth/get-session`, { headers: { cookie: owner.cookie } });
