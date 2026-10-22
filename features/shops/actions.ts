@@ -6,22 +6,55 @@ import { hasOwnerOrigin, classifyHost } from "@/server/hosts";
 import { readOwnerContext } from "@/server/owner-context";
 import type { ShopView } from "./queries";
 import { createShop, updateOwnShop } from "./mutations";
+import { revalidatePath } from "next/cache";
 
-function denied(): ActionResult<ShopView> { return { success: false, error: { code: "UNAUTHENTICATED", message: "This action is only available from the owner app." } }; }
+function denied(): ActionResult<ShopView> {
+  return {
+    success: false,
+    error: {
+      code: "UNAUTHENTICATED",
+      message: "This action is only available from the owner app.",
+    },
+  };
+}
 
 function formInput(formData: FormData) {
   // React adds action metadata; retain every application field for strict validation.
-  return Object.fromEntries([...formData].filter(([key]) => !key.startsWith("$ACTION_")));
+  return Object.fromEntries(
+    [...formData].filter(([key]) => !key.startsWith("$ACTION_")),
+  );
 }
 
-export async function createShopAction(_previous: ActionResult<ShopView> | null, formData: FormData) {
+export async function createShopAction(
+  _previous: ActionResult<ShopView> | null,
+  formData: FormData,
+) {
   const requestHeaders = await headers();
-  if (classifyHost(requestHeaders) !== "owner" || !hasOwnerOrigin(requestHeaders)) return denied();
-  return createShop(await readOwnerContext(requestHeaders), formInput(formData));
+  if (
+    classifyHost(requestHeaders) !== "owner" ||
+    !hasOwnerOrigin(requestHeaders)
+  )
+    return denied();
+  return createShop(
+    await readOwnerContext(requestHeaders),
+    formInput(formData),
+  );
 }
 
-export async function updateShopAction(_previous: ActionResult<ShopView> | null, formData: FormData) {
+export async function updateShopAction(
+  _previous: ActionResult<ShopView> | null,
+  formData: FormData,
+) {
   const requestHeaders = await headers();
-  if (classifyHost(requestHeaders) !== "owner" || !hasOwnerOrigin(requestHeaders)) return denied();
-  return updateOwnShop(await readOwnerContext(requestHeaders), formInput(formData));
+  if (
+    classifyHost(requestHeaders) !== "owner" ||
+    !hasOwnerOrigin(requestHeaders)
+  )
+    return denied();
+  const result = await updateOwnShop(
+    await readOwnerContext(requestHeaders),
+    formInput(formData),
+  );
+  if (result.success) revalidatePath("/owner/availability");
+  return result;
 }

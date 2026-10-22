@@ -36,6 +36,7 @@ async function authorize() {
 function refresh() {
   revalidatePath("/owner/services");
   revalidatePath("/owner/barbers");
+  revalidatePath("/owner/availability");
 }
 
 export async function saveServiceAction(

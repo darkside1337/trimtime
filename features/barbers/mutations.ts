@@ -8,6 +8,7 @@ import type { ActionResult } from "@/lib/action-result";
 import type { OwnerContext } from "@/server/owner-context";
 import { saveBarberSchema } from "./schemas";
 import type { BarberView } from "@/features/catalog/types";
+import { copyShopScheduleToBarber } from "@/features/availability/copy-schedule";
 
 function validationError(error: z.ZodError) {
   return {
@@ -102,6 +103,7 @@ export async function saveBarber(
             serviceId,
           })),
         );
+      if (!parsed.data.id) await copyShopScheduleToBarber(tx, shopId, id);
       return {
         success: true as const,
         data: {
