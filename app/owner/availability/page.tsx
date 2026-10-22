@@ -8,6 +8,7 @@ import {
 } from "@/components/owner-page-header";
 import { OwnerSignOut } from "@/components/owner-auth-controls";
 import { AvailabilityManagement } from "@/features/availability/components/availability-management";
+import { DateAvailabilityManagement } from "@/features/availability/components/date-availability-management";
 import { getOwnSchedules } from "@/features/availability/queries";
 import { readOwnerContext } from "@/server/owner-context";
 
@@ -48,6 +49,7 @@ async function AvailabilityContent() {
           .
         </p>
         <AvailabilityManagement initial={availability} />
+        <DateAvailabilityManagement initial={availability} />
       </main>
       <OwnerPageFooter />
     </>

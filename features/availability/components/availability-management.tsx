@@ -416,6 +416,15 @@ export function AvailabilityManagement({
   const previewVersion = useRef(0);
   const selectionVersion = useRef(0);
   useEffect(() => {
+    const clearPreview = () => {
+      previewVersion.current++;
+      setSlots(null);
+    };
+    window.addEventListener("trimtime:availability-changed", clearPreview);
+    return () =>
+      window.removeEventListener("trimtime:availability-changed", clearPreview);
+  }, []);
+  useEffect(() => {
     const first = Object.keys(fieldErrors).find((path) =>
       path.startsWith("week."),
     );

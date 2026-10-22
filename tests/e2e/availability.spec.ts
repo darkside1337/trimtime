@@ -29,11 +29,11 @@ test("shop hours save, initialize existing barber schedules, and survive reload"
 
   await page.getByRole("tab", { name: "Barber hours" }).click();
   await expect(page.getByLabel("Opens").first()).toHaveValue("09:10");
-  await expect(page.getByLabel("Break starts").first()).toHaveValue("10:00");
+  await expect(page.getByText("Break · 10:00–10:15").first()).toBeVisible();
   await page.reload();
   await page.getByRole("tab", { name: "Barber hours" }).click();
   await expect(page.getByLabel("Opens").first()).toHaveValue("09:10");
-  await expect(page.getByLabel("Break starts").first()).toHaveValue("10:00");
+  await expect(page.getByText("Break · 10:00–10:15").first()).toBeVisible();
   const saved = await database.pool.query(
     "SELECT barber_id, week, revision FROM barber_schedules WHERE shop_id = $1 ORDER BY barber_id",
     [owner.shopId],
@@ -381,7 +381,7 @@ test("a delayed barber save cannot replace the selected barber or shop schedule"
 
   await page.goto(`${ownerOrigin}/availability`);
   await page.getByRole("tab", { name: "Barber hours" }).click();
-  await page.getByLabel("Barber").selectOption(barberIds[0]!);
+  await page.getByLabel("Barber", { exact: true }).selectOption(barberIds[0]!);
   await page.getByLabel("Opens").first().fill("10:15");
 
   let release!: () => void;
@@ -401,7 +401,9 @@ test("a delayed barber save cannot replace the selected barber or shop schedule"
   await requestStarted;
 
   try {
-    expect(await page.getByLabel("Barber").isDisabled()).toBe(true);
+    expect(await page.getByLabel("Barber", { exact: true }).isDisabled()).toBe(
+      true,
+    );
     expect(
       await page.getByRole("tab", { name: "Shop hours" }).isDisabled(),
     ).toBe(true);
@@ -410,13 +412,15 @@ test("a delayed barber save cannot replace the selected barber or shop schedule"
         .getByRole("tab", { name: "Barber hours" })
         .getAttribute("aria-selected"),
     ).toBe("true");
-    expect(await page.getByLabel("Barber").inputValue()).toBe(barberIds[0]);
+    expect(await page.getByLabel("Barber", { exact: true }).inputValue()).toBe(
+      barberIds[0],
+    );
   } finally {
     release();
   }
   await expect(page.getByRole("status")).toHaveText("Availability saved.");
   await page.unroute("**/availability");
-  await page.getByLabel("Barber").selectOption(barberIds[1]!);
+  await page.getByLabel("Barber", { exact: true }).selectOption(barberIds[1]!);
   await expect(page.getByLabel("Opens").first()).toHaveValue("11:00");
   const saved = await database.pool.query(
     "SELECT barber_id, week FROM barber_schedules WHERE shop_id = $1 ORDER BY barber_id",
