@@ -149,6 +149,11 @@ a:focus-visible {
   outline-offset: 3px;
   box-shadow: 0 0 0 5px var(--sky);
 }
+.availability-controls :is(button, input, select):focus-visible,
+.availability-dialog :is(button, input, select):focus-visible {
+  outline: 2px solid var(--foreground);
+  outline-offset: 2px;
+}
 .owner-skip {
   position: absolute;
   top: 8px;
@@ -159,16 +164,26 @@ a:focus-visible {
   color: var(--primary-foreground);
   transform: translateY(-160%);
 }
-.owner-skip:focus { transform: none; }
+.owner-skip:focus {
+  transform: none;
+}
 .owner-sign-in .owner-google-button {
   height: 52px;
   font-size: 16px;
   font-weight: 600;
 }
 .shop-setup [data-slot="input"],
-.shop-setup [data-slot="textarea"] { font-size: 16px; }
-.shop-setup [data-slot="input"] { height: 48px; }
-.shop-setup [data-slot="button"] { height: 48px; font-size: 16px; font-weight: 600; }
+.shop-setup [data-slot="textarea"] {
+  font-size: 16px;
+}
+.shop-setup [data-slot="input"] {
+  height: 48px;
+}
+.shop-setup [data-slot="button"] {
+  height: 48px;
+  font-size: 16px;
+  font-weight: 600;
+}
 [data-slot="button"] {
   border-radius: var(--radius-pill);
   height: 44px;
@@ -194,10 +209,20 @@ a:focus-visible {
   padding-inline: 13px;
   font-size: 11px;
 }
-[data-slot="button"][data-size="icon-sm"] { width: 36px; padding: 0; }
+[data-slot="button"][data-size="icon-sm"] {
+  width: 36px;
+  padding: 0;
+}
 [data-slot="button"][data-size="xs"],
-[data-slot="button"][data-size="icon-xs"] { height: 28px; padding-inline: 10px; font-size: 10px; }
-[data-slot="button"][data-size="icon-xs"] { width: 28px; padding: 0; }
+[data-slot="button"][data-size="icon-xs"] {
+  height: 28px;
+  padding-inline: 10px;
+  font-size: 10px;
+}
+[data-slot="button"][data-size="icon-xs"] {
+  width: 28px;
+  padding: 0;
+}
 [data-slot="badge"] {
   height: 26px;
   padding: 3px 10px;
@@ -336,12 +361,22 @@ a:focus-visible {
   background: var(--border);
 }
 
-
 @media (max-width: 640px) {
-  [data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"] { font-size: 16px; }
-  [data-slot="dialog-content"] { padding: 26px; }
-  [data-slot="dialog-title"] { font-size: 24px; }
+  [data-slot="input"],
+  [data-slot="textarea"],
+  [data-slot="select-trigger"] {
+    font-size: 16px;
+  }
+  [data-slot="dialog-content"] {
+    padding: 26px;
+  }
+  [data-slot="dialog-title"] {
+    font-size: 24px;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  [data-slot] { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  [data-slot] {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

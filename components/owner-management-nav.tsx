@@ -3,7 +3,7 @@ import Link from "next/link";
 export function OwnerManagementNav({
   current,
 }: {
-  current: "today" | "services" | "barbers" | "settings";
+  current: "today" | "services" | "barbers" | "availability" | "settings";
 }) {
   return (
     <nav aria-label="Owner navigation" className="flex flex-wrap gap-2 text-sm">
@@ -12,6 +12,7 @@ export function OwnerManagementNav({
           ["today", "Today", "/"],
           ["services", "Services", "/services"],
           ["barbers", "Barbers", "/barbers"],
+          ["availability", "Availability", "/availability"],
           ["settings", "Settings", "/settings"],
         ] as const
       ).map(([key, label, href]) => (
