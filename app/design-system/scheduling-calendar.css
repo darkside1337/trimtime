@@ -1,0 +1,474 @@
+.tt-exploration .tt-schedule,
+.tt-exploration .tt-schedule-dialog {
+  --schedule-alex: var(--secondary);
+  --schedule-sam: #e4f5eb;
+  --schedule-noah: #f1ecfb;
+  --schedule-alex-ink: #266080;
+  --schedule-sam-ink: var(--success);
+  --schedule-noah-ink: #72569a;
+}
+.tt-exploration .tt-schedule {
+  scroll-margin-top: 110px;
+  padding: 28px 0 0;
+  overflow: hidden;
+}
+.tt-schedule-heading,
+.tt-schedule-shop,
+.tt-schedule-toolbar,
+.tt-schedule-legend,
+.tt-schedule-footnote,
+.tt-schedule-data-note,
+.tt-schedule-notice {
+  margin-inline: 28px;
+}
+.tt-schedule-heading {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+.tt-schedule-heading h3 {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+}
+.tt-schedule-heading p {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  margin-top: 3px;
+}
+.tt-schedule-shop {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 30px;
+}
+.tt-schedule-shop-mark {
+  display: grid;
+  place-items: center;
+  background: var(--butter);
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-control);
+}
+.tt-schedule-shop-mark svg {
+  width: 19px;
+  height: 19px;
+  stroke-width: 1.6;
+}
+.tt-schedule-shop strong {
+  font-family: var(--font-manrope), sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+}
+.tt-schedule-shop div > span {
+  display: block;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  margin-top: 2px;
+}
+.tt-schedule-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 20px;
+  margin-top: 26px;
+}
+.tt-schedule-navigation,
+.tt-schedule-controls,
+.tt-schedule-date-buttons {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.tt-schedule-date-buttons {
+  gap: 4px;
+  flex-wrap: nowrap;
+}
+.tt-schedule-navigation h4 {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  margin-left: 4px;
+}
+.tt-schedule-controls {
+  margin-left: auto;
+}
+.tt-schedule-controls [data-slot="select-trigger"] {
+  width: 154px;
+}
+.tt-schedule-views {
+  display: flex;
+  padding: 3px;
+  background: var(--surface);
+  border-radius: var(--radius-pill);
+}
+.tt-exploration .tt-schedule-views [data-slot="button"] {
+  height: 36px;
+  padding-inline: 14px;
+}
+.tt-exploration .tt-schedule-views [aria-pressed="true"] {
+  background: var(--background);
+  color: var(--foreground);
+  box-shadow: var(--shadow-resting);
+}
+.tt-schedule-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding-block: 22px 20px;
+}
+.tt-schedule-legend > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+}
+.tt-schedule-legend i,
+.tt-schedule-event-barber i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+  background: var(--barber-ink);
+}
+.tt-schedule-barber-alex {
+  --barber-ink: var(--schedule-alex-ink);
+  --barber-surface: var(--schedule-alex);
+}
+.tt-schedule-barber-sam {
+  --barber-ink: var(--schedule-sam-ink);
+  --barber-surface: var(--schedule-sam);
+}
+.tt-schedule-barber-noah {
+  --barber-ink: var(--schedule-noah-ink);
+  --barber-surface: var(--schedule-noah);
+}
+.tt-schedule-unavailable-legend {
+  color: var(--muted-foreground);
+  margin-left: auto;
+}
+.tt-schedule-unavailable-legend i {
+  background: var(--border);
+}
+.tt-schedule-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-color: var(--border) var(--surface);
+  border-block: 1px solid var(--border);
+}
+.tt-schedule-scroll:focus-visible {
+  outline: 3px solid var(--sky);
+  outline-offset: -3px;
+}
+.tt-schedule-scroll > div {
+  min-width: 360px;
+}
+.tt-schedule-week > div {
+  min-width: 1060px;
+}
+.tt-schedule-day-header {
+  border-bottom: 1px solid var(--border);
+  padding: 12px 0;
+  background: var(--background);
+}
+.tt-schedule-day-header-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+.tt-schedule-day-header-inner > span {
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+.tt-schedule-day-header-inner > strong {
+  font-family: var(--font-manrope), sans-serif;
+  font-size: 17px;
+  font-weight: 600;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+}
+.tt-schedule-today {
+  background: var(--secondary);
+  color: var(--schedule-alex-ink);
+}
+.tt-schedule-slot {
+  border-color: var(--border);
+}
+.tt-schedule-slot-minor {
+  border-style: dotted;
+  border-color: color-mix(in srgb, var(--border), white 30%);
+}
+.tt-schedule .tt-schedule-event {
+  background: var(--barber-surface);
+  border: 1px solid color-mix(in srgb, var(--barber-ink), white 82%);
+  border-radius: 9px;
+  color: var(--foreground);
+  overflow: hidden;
+  box-shadow: none;
+  cursor: pointer;
+  transition:
+    box-shadow var(--motion-feedback),
+    filter var(--motion-feedback);
+}
+.tt-schedule .tt-schedule-event:hover {
+  filter: brightness(0.975);
+  box-shadow: var(--shadow-resting);
+}
+.tt-schedule .tt-schedule-event:focus-visible {
+  outline: 3px solid var(--sky);
+  outline-offset: 2px;
+}
+.tt-schedule-event-inner {
+  height: 100%;
+  padding: 8px 10px;
+}
+.tt-schedule-appointment {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  height: 100%;
+  min-width: 0;
+  line-height: 1.35;
+}
+.tt-schedule-event-time {
+  font-size: 10px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--barber-ink);
+}
+.tt-schedule-appointment > strong {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+.tt-schedule-event-service {
+  font-size: 11px;
+}
+.tt-schedule-event-barber {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: auto;
+  font-size: 10px;
+  color: var(--barber-ink);
+}
+.tt-schedule-week .tt-schedule-event-inner {
+  padding: 5px 6px;
+}
+.tt-schedule-week .tt-schedule-appointment > strong {
+  font-size: 11px;
+}
+.tt-schedule-week .tt-schedule-event-time {
+  font-size: 10px;
+}
+.tt-schedule-week .tt-schedule-event-service,
+.tt-schedule-week .tt-schedule-event-barber {
+  font-size: 10px;
+}
+.tt-schedule-compact {
+  display: none;
+}
+.tt-schedule-week .tt-schedule-full,
+.tt-schedule-week .tt-schedule-event-end {
+  display: none;
+}
+.tt-schedule-week .tt-schedule-compact {
+  display: inline;
+}
+.tt-schedule-unavailable {
+  background: var(--surface);
+  border-block: 1px dashed var(--border);
+  color: var(--muted-foreground);
+  opacity: 1;
+}
+.tt-schedule-unavailable > span {
+  font-size: 10px;
+  padding: 8px;
+  display: block;
+}
+.tt-schedule-footnote {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding-top: 20px;
+}
+.tt-schedule-footnote p {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  max-width: 70ch;
+}
+.tt-schedule-footnote > span {
+  font-size: 10px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.tt-schedule-data-note {
+  font-size: 10px;
+  color: var(--muted-foreground);
+  margin-top: 9px;
+  margin-bottom: 22px;
+}
+.tt-schedule-notice {
+  font-size: 12px;
+  color: var(--success);
+}
+.tt-schedule-notice:not(:empty) {
+  margin-bottom: 22px;
+}
+.tt-exploration .tt-schedule-dialog {
+  width: 520px;
+  max-width: calc(100vw - 32px);
+}
+.tt-schedule-dialog-badge {
+  margin-bottom: 0;
+}
+.tt-schedule-details-service {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  padding: 20px;
+  border-radius: var(--radius-control);
+  background: var(--barber-surface);
+}
+.tt-schedule-details-service > svg {
+  width: 22px;
+  height: 22px;
+  color: var(--barber-ink);
+}
+.tt-schedule-details-service strong {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+}
+.tt-schedule-details-service span {
+  font-size: 12px;
+  color: var(--barber-ink);
+  display: block;
+  margin-top: 3px;
+}
+.tt-schedule-details {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.tt-schedule-details > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  font-size: 12px;
+}
+.tt-schedule-details dt {
+  color: var(--muted-foreground);
+}
+.tt-schedule-details dd {
+  text-align: right;
+}
+.tt-schedule-dialog-note {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  line-height: 1.6;
+}
+.tt-schedule-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.tt-schedule-form-date {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.tt-schedule-zone-note {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.tt-schedule-zone-note svg {
+  width: 13px;
+  height: 13px;
+}
+.tt-schedule-form-error {
+  font-size: 12px;
+  color: var(--destructive);
+}
+.tt-schedule-form-error:empty {
+  display: none;
+}
+@media (max-width: 640px) {
+  .tt-exploration .tt-schedule {
+    padding-top: 22px;
+  }
+  .tt-schedule-heading,
+  .tt-schedule-shop,
+  .tt-schedule-toolbar,
+  .tt-schedule-legend,
+  .tt-schedule-footnote,
+  .tt-schedule-data-note,
+  .tt-schedule-notice {
+    margin-inline: 20px;
+  }
+  .tt-schedule-heading {
+    gap: 10px;
+  }
+  .tt-schedule-heading h3 {
+    font-size: 18px;
+  }
+  .tt-schedule-shop {
+    margin-top: 24px;
+  }
+  .tt-schedule-navigation h4 {
+    width: 100%;
+    margin: 5px 0 0;
+    font-size: 20px;
+  }
+  .tt-schedule-controls {
+    margin-left: 0;
+    width: 100%;
+    gap: 12px;
+    justify-content: space-between;
+  }
+  .tt-exploration .tt-schedule-controls [data-slot="select-trigger"] {
+    width: 159px;
+    font-size: 12px;
+  }
+  .tt-schedule-controls > [data-slot="button"] {
+    width: 100%;
+  }
+  .tt-schedule-legend {
+    gap: 10px 14px;
+  }
+  .tt-schedule-unavailable-legend {
+    margin-left: 0;
+  }
+  .tt-schedule-footnote {
+    flex-direction: column;
+    gap: 8px;
+  }
+  .tt-exploration .tt-schedule-dialog {
+    width: 100vw;
+    max-width: 100vw;
+    max-height: 100dvh;
+    min-height: 100dvh;
+    border-radius: 0;
+    gap: 22px;
+    align-content: start;
+    padding: 64px 24px 28px;
+  }
+  .tt-schedule-dialog [data-slot="dialog-footer"] {
+    margin-top: 8px;
+  }
+  .tt-schedule-form-date {
+    grid-template-columns: 1fr;
+  }
+}

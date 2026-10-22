@@ -1,0 +1,59 @@
+{
+  "symbol": {
+    "viewBox": "0 0 256 256",
+    "width": 256,
+    "height": 256,
+    "visible_bounds": {
+      "x": 28,
+      "y": 30,
+      "width": 200,
+      "height": 192
+    }
+  },
+  "horizontal": {
+    "viewBox": "0 0 1000 256",
+    "width": 1000,
+    "height": 256,
+    "source_canvas_preserved": true,
+    "wordmark_bbox_from_chrome": {
+      "x": 270,
+      "y": 46.885,
+      "width": 467.547,
+      "height": 153.148
+    }
+  },
+  "wordmark": {
+    "viewBox": "0 0 512 256",
+    "width": 512,
+    "height": 256,
+    "translate": [
+      -254,
+      0
+    ],
+    "measured_bbox_x": 16,
+    "measured_bbox_width": 467.547
+  },
+  "stacked": {
+    "viewBox": "0 0 600 480",
+    "width": 600,
+    "height": 480,
+    "symbol_translate": [
+      172,
+      16
+    ],
+    "wordmark_translate": [
+      -203.774,
+      232
+    ]
+  },
+  "source_sha256": {
+    "symbol": "4873b009490a0cd9266c1bcf95fb8074b0afeb8b3de6f37f0a737168556b9297",
+    "horizontal": "c0029230f4ab72fb1c1076e43a03bb0862ac8fe7318b49f3413ac36645645bf3"
+  },
+  "invariance": {
+    "primary_copies_byte_identical": true,
+    "all_geometry_attributes_identical": true,
+    "all_font_and_text_attributes_identical": true,
+    "changes_only_fill_and_outer_translations": true
+  }
+}
