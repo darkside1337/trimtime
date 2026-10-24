@@ -1,5 +1,28 @@
 import { expect, ownerOrigin, test } from "./fixtures";
 
+test("dirty barber forms use the branded discard dialog and retain the draft", async ({
+  page,
+  context,
+  owners,
+}) => {
+  await owners(context, { shop: true });
+  await page.goto(`${ownerOrigin}/barbers`);
+  await page.getByRole("button", { name: "Add barber" }).click();
+  await page.getByLabel("Barber name").fill("Unsaved barber");
+  await page.keyboard.press("Escape");
+  const discard = page.getByRole("dialog", {
+    name: "Discard unsaved changes?",
+  });
+  await expect(discard).toBeVisible();
+  await discard.getByRole("button", { name: "Keep editing" }).click();
+  await expect(page.getByLabel("Barber name")).toHaveValue("Unsaved barber");
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(discard).toBeVisible();
+  await discard.getByRole("button", { name: "Discard changes" }).click();
+  await expect(page.getByRole("dialog", { name: "Add barber" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Add barber" })).toBeFocused();
+});
+
 test("barber archiving uses the owner confirmation dialog", async ({
   page,
   context,
@@ -24,7 +47,7 @@ test("barber archiving uses the owner confirmation dialog", async ({
   await archiveDialog.getByRole("button", { name: "Cancel" }).click();
   await expect(archiveDialog).toHaveCount(0);
   await expect(
-    page.locator("article").getByText("Active", { exact: true }),
+    page.locator("article").getByText("Active · sample", { exact: true }),
   ).toBeVisible();
 
   await page.getByRole("button", { name: "Archive", exact: true }).click();
@@ -33,7 +56,7 @@ test("barber archiving uses the owner confirmation dialog", async ({
   await expect(archiveDialog).toHaveCount(0);
   await expect(page.getByRole("status")).toHaveText("Barber archived.");
   expect(nativeDialogs).toEqual([]);
-  await page.getByRole("button", { name: "Archived", exact: true }).click();
+  await page.getByRole("button", { name: /Archived \(/ }).click();
   await expect(
     page.locator("article").getByText("Archived", { exact: true }),
   ).toBeVisible();
@@ -82,7 +105,9 @@ test("eligibility edits from the barber surface reload on the service surface", 
     .getByRole("button", { name: "Edit" })
     .click();
   await expect(
-    page.getByRole("checkbox", { name: /Shared trim · \$15\.00 · 35 min/ }),
+    page.getByRole("checkbox", {
+      name: /Shared trim \$15\.00 · 35 min Offered/,
+    }),
   ).toBeChecked();
   await page.getByRole("button", { name: "Save barber" }).click();
   await page
@@ -91,6 +116,8 @@ test("eligibility edits from the barber surface reload on the service surface", 
     .getByRole("button", { name: "Edit" })
     .click();
   await expect(
-    page.getByRole("checkbox", { name: /Shared trim · \$15\.00 · 35 min/ }),
+    page.getByRole("checkbox", {
+      name: /Shared trim \$15\.00 · 35 min Offered/,
+    }),
   ).toBeChecked();
 });

@@ -2,8 +2,10 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { AvailabilityManagement } from "@/features/availability/components/availability-management";
-import { DateAvailabilityManagement } from "@/features/availability/components/date-availability-management";
-import { getOwnSchedules } from "@/features/availability/queries";
+import {
+  getOwnAvailabilityOverview,
+  getOwnSchedules,
+} from "@/features/availability/queries";
 import { getOwnShop } from "@/features/shops/queries";
 import { readOwnerContext } from "@/server/owner-context";
 
@@ -18,29 +20,29 @@ export default function AvailabilityPage() {
 async function AvailabilityContent() {
   const context = await readOwnerContext(await headers());
   if (!context) redirect("/sign-in");
-  const [availability, shop] = await Promise.all([
+  const [availability, overview, shop] = await Promise.all([
     getOwnSchedules(context),
+    getOwnAvailabilityOverview(context),
     getOwnShop(context),
   ]);
-  if (!availability || !shop) redirect("/setup");
+  if (!availability || !overview || !shop) redirect("/setup");
   return (
-    <main className="mx-auto w-full max-w-[1176px] flex-1 px-5 py-10 sm:px-7 sm:py-14">
-      <p className="mb-5 text-xs font-bold tracking-[0.14em] text-[var(--success)]">
-        OWNER AVAILABILITY
+    <main className="mr-auto w-full max-w-[1120px] flex-1 px-5 py-5 min-[901px]:px-9 min-[901px]:pt-7 min-[901px]:pb-12">
+      <p className="mb-2 mt-8 text-xs font-bold tracking-[0.14em] text-[var(--success)]">
+        OWNER SCHEDULING · {availability.timeZone}
       </p>
-      <h1 className="font-heading text-4xl font-bold tracking-tight sm:text-5xl">
-        Availability
+      <h1 className="font-heading text-3xl font-bold tracking-tight">
+        Shop and barber availability
       </h1>
-      <p className="mt-5 max-w-2xl text-muted-foreground">
-        Set recurring shop hours and barber preferences. Bookable times use the
-        overlap of both schedules in{" "}
-        <span className="font-medium text-foreground">
-          {availability.timeZone}
-        </span>
-        .
+      <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+        Set weekly shop hours, independent barber schedules, and date-specific
+        changes for {shop.name}. Bookable times use the overlap of both
+        schedules in {availability.timeZone}.
       </p>
-      <AvailabilityManagement initial={availability} />
-      <DateAvailabilityManagement initial={availability} />
+      <AvailabilityManagement
+        initial={availability}
+        initialOverview={overview}
+      />
     </main>
   );
 }

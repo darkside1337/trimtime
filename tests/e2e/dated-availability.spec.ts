@@ -1,6 +1,36 @@
 import { randomUUID } from "node:crypto";
 import { captureState, test, expect, ownerOrigin } from "./fixtures";
 
+async function openDateEditor(page: import("@playwright/test").Page) {
+  if (!(await page.getByLabel("Schedule day").isVisible()))
+    await page
+      .getByRole("button", { name: "Add date override or block", exact: true })
+      .click();
+}
+async function openBlockView(page: import("@playwright/test").Page) {
+  await page.getByLabel("Exception type").selectOption("block");
+}
+async function openPreview(page: import("@playwright/test").Page) {
+  if (await page.getByLabel("Schedule day").isVisible()) {
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+  }
+  await page.getByRole("tab", { name: "Shop hours", exact: true }).click();
+}
+async function resolveBoundary(
+  page: import("@playwright/test").Page,
+  label: string,
+) {
+  const response = page.waitForResponse((response) => {
+    const request = response.request();
+    return (
+      request.method() === "POST" && Boolean(request.headers()["next-action"])
+    );
+  });
+  await page.getByRole("button", { name: label }).click();
+  await response;
+}
+
 test("the dated editor can be loaded and toggled by keyboard with visible focus", async ({
   page,
   context,
@@ -9,11 +39,14 @@ test("the dated editor can be loaded and toggled by keyboard with visible focus"
   await owners(context, { shop: true });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto(`${ownerOrigin}/availability`);
+  await page
+    .getByRole("button", { name: "Add date override or block" })
+    .click();
   const date = page.getByLabel("Schedule day");
   await date.fill("2026-11-02");
   await page.getByLabel("Apply to").focus();
   await page.keyboard.press("Tab");
-  const load = page.getByRole("button", { name: "Load date" });
+  const load = page.getByRole("button", { name: /^(Load|Reload) date$/ });
   await expect(load).toBeFocused();
   const focus = await load.evaluate((element) => {
     const style = getComputedStyle(element);
@@ -25,8 +58,13 @@ test("the dated editor can be loaded and toggled by keyboard with visible focus"
   expect(parseFloat(focus.outlineWidth)).toBeGreaterThan(0);
   expect(focus.outlineStyle).not.toBe("none");
   await page.keyboard.press("Enter");
-  const replace = page.getByLabel("Replace recurring hours and breaks");
+  const replace = page.getByRole("checkbox", {
+    name: "Replace recurring hours and breaks",
+    exact: true,
+  });
   await expect(replace).toBeVisible();
+  await page.keyboard.press("Tab");
+  await expect(page.getByLabel("Exception type")).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(replace).toBeFocused();
   await page.keyboard.press("Space");
@@ -77,18 +115,30 @@ test("a dated shop override changes only its date after reload", async ({
   );
 
   await page.goto(`${ownerOrigin}/availability`);
+  await page
+    .getByRole("button", { name: "Add date override or block" })
+    .click();
   const dateLoad = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
       Boolean(response.request().headers()["next-action"]),
   );
+  await openDateEditor(page);
   await page.getByLabel("Schedule day").fill("2026-11-02");
-  await page.getByRole("button", { name: "Load date" }).click();
+  await page.getByRole("button", { name: /^(Load|Reload) date$/ }).click();
   await dateLoad;
   await expect(page.getByLabel("Schedule day")).toBeEnabled();
-  await page.getByLabel("Replace recurring hours and breaks").check();
+  await page
+    .getByRole("checkbox", {
+      name: "Replace recurring hours and breaks",
+      exact: true,
+    })
+    .check();
   await expect(
-    page.getByLabel("Replace recurring hours and breaks"),
+    page.getByRole("checkbox", {
+      name: "Replace recurring hours and breaks",
+      exact: true,
+    }),
   ).toBeChecked();
   await expect(page.getByLabel("Hours start", { exact: true })).toHaveValue(
     "09:00",
@@ -96,17 +146,16 @@ test("a dated shop override changes only its date after reload", async ({
   await page.getByLabel("Hours start").fill("10:00");
   await page.getByLabel("Hours end (24:00 allowed)").fill("11:00");
   await page.getByRole("button", { name: "Save date settings" }).click();
-  await expect(
-    page
-      .getByRole("region", { name: "Overrides & blocks" })
-      .getByText("Saved."),
-  ).toBeVisible();
+  await expect(page.getByRole("dialog").getByText("Saved.")).toBeVisible();
   await page.reload();
+  await openDateEditor(page);
   await page.getByLabel("Schedule day").fill("2026-11-02");
-  await page.getByRole("button", { name: "Load date" }).click();
+  await page.getByRole("button", { name: /^(Load|Reload) date$/ }).click();
   await expect(page.getByLabel("Hours start")).toHaveValue("10:00");
 
+  await openPreview(page);
   await page.getByLabel("Service").selectOption(serviceId);
+  await openPreview(page);
   await page.getByLabel("Eligible barber").selectOption(barberId);
   await page.getByLabel("Date", { exact: true }).fill("2026-11-02");
   await page.getByRole("button", { name: "Preview times" }).click();
@@ -148,15 +197,20 @@ test("changing the exception date requires loading that date before saving", asy
     );
   }
   await page.goto(`${ownerOrigin}/availability`);
+  await page
+    .getByRole("button", { name: "Add date override or block" })
+    .click();
+  await openDateEditor(page);
   await page.getByLabel("Schedule day").fill("2026-11-02");
-  await page.getByRole("button", { name: "Load date" }).click();
+  await page.getByRole("button", { name: /^(Load|Reload) date$/ }).click();
   await expect(page.getByLabel("Hours start")).toHaveValue("10:00");
+  await openDateEditor(page);
   await page.getByLabel("Schedule day").fill("2026-11-03");
   await expect(page.getByLabel("Hours start")).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Save date settings" }),
   ).toHaveCount(0);
-  await page.getByRole("button", { name: "Load date" }).click();
+  await page.getByRole("button", { name: /^(Load|Reload) date$/ }).click();
   await expect(page.getByLabel("Hours start")).toHaveValue("12:00");
 });
 
@@ -182,8 +236,12 @@ test("editing a dated replacement preserves every working and break range", asyn
     [owner.shopId, JSON.stringify(override)],
   );
   await page.goto(`${ownerOrigin}/availability`);
+  await page
+    .getByRole("button", { name: "Add date override or block" })
+    .click();
+  await openDateEditor(page);
   await page.getByLabel("Schedule day").fill("2026-11-02");
-  await page.getByRole("button", { name: "Load date" }).click();
+  await page.getByRole("button", { name: /^(Load|Reload) date$/ }).click();
   await expect(page.getByLabel("Hours start 2")).toHaveValue("13:00");
   await expect(page.getByLabel("Break start 2")).toHaveValue("14:00");
   await captureState(page, "dated-availability-exception-editor", testInfo);
@@ -212,15 +270,25 @@ test("changing a block boundary clears a resolved DST choice", async ({
 }) => {
   await owners(context, { shop: true });
   await page.goto(`${ownerOrigin}/availability`);
+  await page
+    .getByRole("button", { name: "Add date override or block" })
+    .click();
+  await openDateEditor(page);
   await page.getByLabel("Schedule day").fill("2026-11-01");
-  await page.getByRole("button", { name: "Load date" }).click();
+  await page.getByRole("button", { name: /^(Load|Reload) date$/ }).click();
+  await openBlockView(page);
   await page.getByLabel("Start (shop local time)").fill("01:30");
-  await page.getByRole("button", { name: "Resolve start" }).click();
+  await resolveBoundary(page, "Resolve start");
   await expect(page.getByLabel("Start UTC offset")).toBeVisible();
   await page.getByLabel("Start (shop local time)").fill("01:45");
   await expect(page.getByLabel("Start UTC offset")).toHaveCount(0);
+  await openDateEditor(page);
   await page.getByLabel("Schedule day").fill("2026-11-02");
-  await page.getByRole("button", { name: "Load date" }).click();
+  await page
+    .getByRole("dialog", { name: "Discard unsaved changes?" })
+    .getByRole("button", { name: "Discard changes" })
+    .click();
+  await page.getByRole("button", { name: /^(Load|Reload) date$/ }).click();
   await expect(page.getByLabel("Start (shop local time)")).toHaveValue("");
   await expect(page.getByLabel("Start UTC offset")).toHaveCount(0);
 });
@@ -232,9 +300,18 @@ test("a rejected dated save keeps the draft and offers reload recovery", async (
 }, testInfo) => {
   await owners(context, { shop: true });
   await page.goto(`${ownerOrigin}/availability`);
+  await page
+    .getByRole("button", { name: "Add date override or block" })
+    .click();
+  await openDateEditor(page);
   await page.getByLabel("Schedule day").fill("2026-11-02");
-  await page.getByRole("button", { name: "Load date" }).click();
-  await page.getByLabel("Replace recurring hours and breaks").check();
+  await page.getByRole("button", { name: /^(Load|Reload) date$/ }).click();
+  await page
+    .getByRole("checkbox", {
+      name: "Replace recurring hours and breaks",
+      exact: true,
+    })
+    .check();
   await page.getByRole("button", { name: "Add hours range" }).click();
   await page.getByLabel("Hours start").fill("10:00");
   await page.getByLabel("Hours end (24:00 allowed)").fill("11:00");
@@ -256,11 +333,14 @@ test("a rejected dated save keeps the draft and offers reload recovery", async (
   await page.unrouteAll();
   await page.getByRole("button", { name: "Reload saved state" }).click();
   await expect(
-    page.getByLabel("Replace recurring hours and breaks"),
+    page.getByRole("checkbox", {
+      name: "Replace recurring hours and breaks",
+      exact: true,
+    }),
   ).not.toBeChecked();
 });
 
-test("a rejected block removal restores the controls and offers reload", async ({
+test("archived barber blocks remain reachable and removal offers reload", async ({
   page,
   context,
   owners,
@@ -272,12 +352,20 @@ test("a rejected block removal restores the controls and offers reload", async (
     [randomUUID(), owner.shopId],
   );
   await page.goto(`${ownerOrigin}/availability`);
+  await page
+    .getByRole("button", { name: "Add date override or block" })
+    .click();
+  await openDateEditor(page);
   await page.getByLabel("Schedule day").fill("2026-11-02");
-  await page.getByRole("button", { name: "Load date" }).click();
+  await page.getByRole("button", { name: /^(Load|Reload) date$/ }).click();
+  await openBlockView(page);
+  await page
+    .getByLabel("Barber for this time block")
+    .selectOption({ label: "Block recovery barber" });
   await page.getByLabel("Start (shop local time)").fill("10:00");
-  await page.getByRole("button", { name: "Resolve start" }).click();
+  await resolveBoundary(page, "Resolve start");
   await page.getByLabel("End (shop local time, 24:00 allowed)").fill("10:30");
-  await page.getByRole("button", { name: "Resolve end" }).click();
+  await resolveBoundary(page, "Resolve end");
   await page.getByRole("button", { name: "Save time block" }).click();
   await expect(
     page.getByText(
@@ -285,34 +373,102 @@ test("a rejected block removal restores the controls and offers reload", async (
     ),
   ).toBeVisible();
 
-  await page.getByLabel("Start (shop local time)").fill("10:00");
-  await page.getByRole("button", { name: "Resolve start" }).click();
-  await page.getByLabel("End (shop local time, 24:00 allowed)").fill("10:30");
-  await page.getByRole("button", { name: "Resolve end" }).click();
-  await page.getByRole("button", { name: "Save time block" }).click();
+  const barber = await database.pool.query(
+    "SELECT id FROM barbers WHERE shop_id = $1 AND name = 'Block recovery barber'",
+    [owner.shopId],
+  );
+  const barberId = String(barber.rows[0]?.id);
+  const savedBlock = await database.pool.query(
+    "SELECT id FROM occupied_intervals WHERE shop_id = $1 AND barber_id = $2",
+    [owner.shopId, barberId],
+  );
+  expect(savedBlock.rows).toHaveLength(1);
+  const blockId = String(savedBlock.rows[0]?.id);
+  await page.getByLabel("Start (shop local time)").fill("11:00");
+  await page.evaluate(
+    ({ date, target }) =>
+      window.dispatchEvent(
+        new CustomEvent("trimtime:availability-edit", {
+          detail: { date, target, view: "block" },
+        }),
+      ),
+    { date: "2026-11-02", target: barberId },
+  );
+  const reloadDiscard = page.getByRole("dialog", {
+    name: "Discard unsaved changes?",
+  });
+  await reloadDiscard.getByRole("button", { name: "Discard changes" }).click();
+  await expect(page.getByLabel("Exception type")).toHaveValue("block");
+  await expect(page.getByLabel("Apply to")).toHaveValue(barberId);
+  await expect(page.getByLabel("Start (shop local time)")).toHaveValue("");
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await database.pool.query(
+    "UPDATE barbers SET archived = true WHERE id = $1 AND shop_id = $2",
+    [barberId, owner.shopId],
+  );
+  await page.reload();
+  await page.getByRole("tab", { name: /Date overrides.*blocks/ }).click();
+  await page.getByRole("button", { name: "View block", exact: true }).click();
+  await expect(page.getByLabel("Exception type")).toHaveValue("block");
+  await expect(page.getByLabel("Apply to")).toHaveValue(barberId);
   await expect(
-    page.getByText("This barber already has a block during that time."),
+    page.getByText(
+      "New blocks require an active barber. Existing blocks for this archived barber remain available to remove below.",
+    ),
   ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Save time block" }),
+  ).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Remove" })).toHaveCount(1);
-  await captureState(page, "dated-block-conflict", testInfo);
+  await captureState(page, "archived-block-removal", testInfo);
 
   await page.route("**/*", async (route) => {
     if (route.request().headers()["next-action"]) await route.abort();
     else await route.continue();
   });
   await page.getByRole("button", { name: "Remove" }).click();
+  const removeDialog = page.getByRole("dialog", {
+    name: "Remove this barber time block?",
+  });
+  await removeDialog.getByRole("button", { name: "Remove block" }).click();
   await expect(
-    page.getByText(
-      "Removal status is uncertain. Reload saved state before retrying.",
-    ),
+    removeDialog
+      .getByRole("alert")
+      .getByText(
+        "Removal status is uncertain. Reload saved state before retrying.",
+      ),
   ).toBeVisible();
   await captureState(page, "dated-block-removal-uncertain", testInfo);
+  await removeDialog.getByRole("button", { name: "Keep block" }).click();
+  await expect(
+    page
+      .locator('p[aria-live="polite"]')
+      .getByText(
+        "Removal status is uncertain. Reload saved state before retrying.",
+        { exact: true },
+      ),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Reload saved state" }),
   ).toBeEnabled();
   await page.unrouteAll();
   await page.getByRole("button", { name: "Reload saved state" }).click();
   await expect(page.getByRole("button", { name: "Remove" })).toBeVisible();
+  await page.getByRole("button", { name: "Remove" }).click();
+  const finalRemoveDialog = page.getByRole("dialog", {
+    name: "Remove this barber time block?",
+  });
+  await finalRemoveDialog.getByRole("button", { name: "Remove block" }).click();
+  await expect(finalRemoveDialog).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Remove" })).toHaveCount(0);
+  const remainingBlockRows = await database.pool.query(
+    "SELECT (SELECT count(*)::int FROM occupied_intervals WHERE id = $1) AS occupied_count, (SELECT count(*)::int FROM time_blocks WHERE id = $1) AS block_count",
+    [blockId],
+  );
+  expect(remainingBlockRows.rows[0]).toEqual({
+    occupied_count: 0,
+    block_count: 0,
+  });
 });
 
 test("a stale date revision keeps the saved restriction and offers reload", async ({
@@ -323,14 +479,28 @@ test("a stale date revision keeps the saved restriction and offers reload", asyn
 }) => {
   const owner = await owners(context, { shop: true });
   await page.goto(`${ownerOrigin}/availability`);
+  await page
+    .getByRole("button", { name: "Add date override or block" })
+    .click();
+  await openDateEditor(page);
   await page.getByLabel("Schedule day").fill("2026-11-02");
-  await page.getByRole("button", { name: "Load date" }).click();
-  await expect(page.getByLabel("Close the shop for this date")).toBeVisible();
+  await page.getByRole("button", { name: /^(Load|Reload) date$/ }).click();
+  await expect(
+    page.getByRole("checkbox", {
+      name: "Close the shop for this date",
+      exact: true,
+    }),
+  ).toBeVisible();
   await database.pool.query(
     "INSERT INTO shop_date_schedules (shop_id, date, override, closed, revision) VALUES ($1, '2026-11-02', NULL, false, 1)",
     [owner.shopId],
   );
-  await page.getByLabel("Close the shop for this date").check();
+  await page
+    .getByRole("checkbox", {
+      name: "Close the shop for this date",
+      exact: true,
+    })
+    .check();
   await expect(
     page.getByRole("button", { name: "Save date settings" }),
   ).toBeEnabled();
@@ -365,10 +535,19 @@ test("dated barber actions reject signed-out and foreign-owner replay", async ({
       [barberId, owner.shopId],
     );
     await page.goto(`${ownerOrigin}/availability`);
+    await page
+      .getByRole("button", { name: "Add date override or block" })
+      .click();
+    await openDateEditor(page);
     await page.getByLabel("Schedule day").fill("2026-11-02");
     await page.getByLabel("Apply to").selectOption(barberId);
-    await page.getByRole("button", { name: "Load date" }).click();
-    await page.getByLabel("Mark this barber off for this date").check();
+    await page.getByRole("button", { name: /^(Load|Reload) date$/ }).click();
+    await page
+      .getByRole("checkbox", {
+        name: "Mark this barber off for this date",
+        exact: true,
+      })
+      .check();
     const captured = page.waitForRequest(
       (entry) =>
         entry.method() === "POST" && Boolean(entry.headers()["next-action"]),
@@ -444,16 +623,27 @@ test("shop closure affects both barbers and reopening preserves one barber's day
   );
 
   await page.goto(`${ownerOrigin}/availability`);
+  await page
+    .getByRole("button", { name: "Add date override or block" })
+    .click();
+  await openDateEditor(page);
   await page.getByLabel("Schedule day").fill("2026-11-02");
-  await page.getByRole("button", { name: "Load date" }).click();
-  await page.getByLabel("Close the shop for this date").check();
+  await page.getByRole("button", { name: /^(Load|Reload) date$/ }).click();
+  await page
+    .getByRole("checkbox", {
+      name: "Close the shop for this date",
+      exact: true,
+    })
+    .check();
   await page.getByRole("button", { name: "Save date settings" }).click();
   await expect(
     page.getByText("Saved. Preview again to see the updated availability."),
   ).toBeVisible();
 
   for (const barberId of barberIds) {
+    await openPreview(page);
     await page.getByLabel("Service").selectOption(serviceId);
+    await openPreview(page);
     await page.getByLabel("Eligible barber").selectOption(barberId);
     await page.getByLabel("Date", { exact: true }).fill("2026-11-02");
     await page.getByRole("button", { name: "Preview times" }).click();
@@ -474,30 +664,44 @@ test("shop closure affects both barbers and reopening preserves one barber's day
     [owner.shopId, newBarberId, JSON.stringify(week)],
   );
   await page.reload();
+  await openPreview(page);
   await page.getByLabel("Service").selectOption(serviceId);
+  await openPreview(page);
   await page.getByLabel("Eligible barber").selectOption(newBarberId);
   await page.getByLabel("Date", { exact: true }).fill("2026-11-02");
   await page.getByRole("button", { name: "Preview times" }).click();
   await expect(page.getByText(/No available starts match/)).toBeVisible();
 
+  await openDateEditor(page);
   await page.getByLabel("Schedule day").fill("2026-11-02");
   await page.getByLabel("Apply to").selectOption(barberIds[0]!);
-  await page.getByRole("button", { name: "Load date" }).click();
-  await page.getByLabel("Mark this barber off for this date").check();
+  await page.getByRole("button", { name: /^(Load|Reload) date$/ }).click();
+  await page
+    .getByRole("checkbox", {
+      name: "Mark this barber off for this date",
+      exact: true,
+    })
+    .check();
   await page.getByRole("button", { name: "Save date settings" }).click();
   await expect(
     page.getByText("Saved. Preview again to see the updated availability."),
   ).toBeVisible();
 
   await page.getByLabel("Apply to").selectOption("shop");
-  await page.getByRole("button", { name: "Load date" }).click();
-  await page.getByLabel("Close the shop for this date").uncheck();
+  await page.getByRole("button", { name: /^(Load|Reload) date$/ }).click();
+  await page
+    .getByRole("checkbox", {
+      name: "Close the shop for this date",
+      exact: true,
+    })
+    .uncheck();
   await page.getByRole("button", { name: "Save date settings" }).click();
   await expect(
     page.getByText("Saved. Preview again to see the updated availability."),
   ).toBeVisible();
 
   for (const [index, barberId] of barberIds.entries()) {
+    await openPreview(page);
     await page.getByLabel("Eligible barber").selectOption(barberId);
     await page.getByLabel("Date", { exact: true }).fill("2026-11-02");
     await page.getByRole("button", { name: "Preview times" }).click();

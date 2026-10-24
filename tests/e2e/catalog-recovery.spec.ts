@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { expect, ownerOrigin, test } from "./fixtures";
 
-test("offered checkbox toggles persist and every save announces completion", async ({
+test("offered switch toggles persist and every save announces what is saved", async ({
   page,
   context,
   owners,
@@ -13,29 +13,97 @@ test("offered checkbox toggles persist and every save announces completion", asy
   await page.getByRole("button", { name: "Add service" }).click();
   await page.getByLabel("Service name").fill("Toggle trim");
   await page.getByLabel("Price (USD)").fill("12");
-  await page.getByRole("checkbox", { name: "Offered to customers" }).uncheck();
+  await page.getByRole("switch", { name: "Offered to customers" }).uncheck();
   await page.getByRole("button", { name: "Save service" }).click();
-  await expect(page.getByRole("status")).toHaveText("Service saved.");
+  await expect(page.getByRole("status")).toHaveText(
+    "Service details saved. The sample description was not saved.",
+  );
   await expect(
     page.getByRole("button", { name: "Offer service" }),
   ).toBeVisible();
   await page.reload();
   await page.getByRole("button", { name: "Edit", exact: true }).click();
   await expect(
-    page.getByRole("checkbox", { name: "Offered to customers" }),
+    page.getByRole("switch", { name: "Offered to customers" }),
   ).not.toBeChecked();
-  await page.getByRole("checkbox", { name: "Offered to customers" }).check();
+  await page.getByRole("switch", { name: "Offered to customers" }).check();
   await page.getByRole("button", { name: "Save service" }).click();
-  await expect(page.getByRole("status")).toHaveText("Service saved.");
+  await expect(page.getByRole("status")).toHaveText(
+    "Service details saved. The sample description was not saved.",
+  );
   await page.getByRole("button", { name: "Edit", exact: true }).click();
   await expect(page.getByRole("status", { includeHidden: true })).toBeEmpty();
   await page.getByRole("button", { name: "Save service" }).click();
-  await expect(page.getByRole("status")).toHaveText("Service saved.");
+  await expect(page.getByRole("status")).toHaveText(
+    "Service details saved. The sample description was not saved.",
+  );
   await page.reload();
   await expect(
     page.getByRole("button", { name: "Hide service" }),
   ).toBeVisible();
   expect(errors).toEqual([]);
+});
+
+test("sample service and barber copy stays out of the persisted action payload", async ({
+  page,
+  context,
+  owners,
+  database,
+}) => {
+  const owner = await owners(context, { shop: true });
+  await page.goto(`${ownerOrigin}/services`);
+  await page.getByRole("button", { name: "Add service" }).click();
+  await page.getByLabel("Service name").fill("Preview payload service");
+  await page.getByLabel("Price (USD)").fill("20");
+  await page
+    .getByLabel("Description (sample preview)")
+    .fill("SAMPLE_SERVICE_MUST_NOT_PERSIST");
+  const serviceRequest = page.waitForRequest(
+    (request) =>
+      request.method() === "POST" && Boolean(request.headers()["next-action"]),
+  );
+  await page.getByRole("button", { name: "Save service" }).click();
+  expect((await serviceRequest).postData() ?? "").not.toContain(
+    "SAMPLE_SERVICE_MUST_NOT_PERSIST",
+  );
+  await expect(page.getByRole("status")).toHaveText(
+    "Service details saved. The sample description was not saved.",
+  );
+
+  await page.goto(`${ownerOrigin}/barbers`);
+  await page.getByRole("button", { name: "Add barber" }).click();
+  await page.getByLabel("Barber name").fill("Preview payload barber");
+  await page
+    .getByLabel("Specialty (sample preview)")
+    .fill("SAMPLE_SPECIALTY_MUST_NOT_PERSIST");
+  await page
+    .getByRole("switch", { name: "Active status sample preview" })
+    .uncheck();
+  const barberRequest = page.waitForRequest(
+    (request) =>
+      request.method() === "POST" && Boolean(request.headers()["next-action"]),
+  );
+  await page.getByRole("button", { name: "Save barber" }).click();
+  expect((await barberRequest).postData() ?? "").not.toContain(
+    "SAMPLE_SPECIALTY_MUST_NOT_PERSIST",
+  );
+  await expect(page.getByRole("status")).toHaveText(
+    "Barber name and service assignments saved. Sample specialty and active status were not saved.",
+  );
+  const persistedBarber = await database.pool.query(
+    "SELECT archived FROM barbers WHERE shop_id = $1 AND name = $2",
+    [owner.shopId, "Preview payload barber"],
+  );
+  expect(persistedBarber.rows[0]?.archived).toBe(false);
+  await page.reload();
+  await page
+    .locator("article")
+    .filter({ hasText: "Preview payload barber" })
+    .getByRole("button", { name: "Edit" })
+    .click();
+  await expect(page.getByLabel("Specialty (sample preview)")).not.toHaveValue(
+    "SAMPLE_SPECIALTY_MUST_NOT_PERSIST",
+  );
 });
 
 for (const resource of ["service", "barber"] as const) {
@@ -70,7 +138,7 @@ for (const resource of ["service", "barber"] as const) {
       await page.getByLabel("Price (USD)").fill("18.50");
       await page.getByLabel("Duration in minutes").fill("35");
       await page
-        .getByRole("checkbox", { name: "Offered to customers" })
+        .getByRole("switch", { name: "Offered to customers" })
         .uncheck();
     }
     const assignment = page.getByRole("checkbox", { name: /Assigned/ });
@@ -92,14 +160,16 @@ for (const resource of ["service", "barber"] as const) {
       await expect(page.getByLabel("Price (USD)")).toHaveValue("18.50");
       await expect(page.getByLabel("Duration in minutes")).toHaveValue("35");
       await expect(
-        page.getByRole("checkbox", { name: "Offered to customers" }),
+        page.getByRole("switch", { name: "Offered to customers" }),
       ).not.toBeChecked();
     }
     await page.unroute(`**/${route}`);
     await page.getByRole("button", { name: `Save ${resource}` }).click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await expect(page.getByRole("status")).toHaveText(
-      resource === "service" ? "Service saved." : "Barber saved.",
+      resource === "service"
+        ? "Service details saved. The sample description was not saved."
+        : "Barber name and service assignments saved. Sample specialty and active status were not saved.",
     );
     await page.reload();
     await expect(page.locator("article")).toContainText("Network draft");

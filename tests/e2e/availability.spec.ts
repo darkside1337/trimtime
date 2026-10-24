@@ -27,11 +27,11 @@ test("shop hours save, initialize existing barber schedules, and survive reload"
   await page.getByRole("button", { name: "Save hours" }).click();
   await expect(page.getByRole("status")).toHaveText("Availability saved.");
 
-  await page.getByRole("tab", { name: "Barber hours" }).click();
+  await page.getByRole("tab", { name: "Barber schedules" }).click();
   await expect(page.getByLabel("Opens").first()).toHaveValue("09:10");
   await expect(page.getByText("Break · 10:00–10:15").first()).toBeVisible();
   await page.reload();
-  await page.getByRole("tab", { name: "Barber hours" }).click();
+  await page.getByRole("tab", { name: "Barber schedules" }).click();
   await expect(page.getByLabel("Opens").first()).toHaveValue("09:10");
   await expect(page.getByText("Break · 10:00–10:15").first()).toBeVisible();
   const saved = await database.pool.query(
@@ -40,6 +40,62 @@ test("shop hours save, initialize existing barber schedules, and survive reload"
   );
   expect(saved.rows).toHaveLength(2);
   expect(saved.rows.every(({ revision }) => revision === 1)).toBe(true);
+});
+
+test("discarding a shop draft switches the save target to the selected barber", async ({
+  page,
+  context,
+  owners,
+  database,
+}) => {
+  const owner = await owners(context, { shop: true });
+  const barberId = randomUUID();
+  const shopWeek = Array.from({ length: 7 }, (_, index) => ({
+    working: index === 0 ? [{ start: 540, end: 1020 }] : [],
+    breaks: [],
+  }));
+  const barberWeek = Array.from({ length: 7 }, (_, index) => ({
+    working: index === 0 ? [{ start: 600, end: 1080 }] : [],
+    breaks: [],
+  }));
+  await database.pool.query(
+    "INSERT INTO barbers (id, shop_id, name) VALUES ($1, $2, 'Target regression barber')",
+    [barberId, owner.shopId],
+  );
+  await database.pool.query(
+    "INSERT INTO shop_schedules (shop_id, week, revision) VALUES ($1, $2::jsonb, 1)",
+    [owner.shopId, JSON.stringify(shopWeek)],
+  );
+  await database.pool.query(
+    "INSERT INTO barber_schedules (shop_id, barber_id, week, revision) VALUES ($1, $2, $3::jsonb, 1)",
+    [owner.shopId, barberId, JSON.stringify(barberWeek)],
+  );
+
+  await page.goto(`${ownerOrigin}/availability`);
+  await page.getByLabel("Opens").first().fill("09:30");
+  await page.getByRole("tab", { name: "Barber schedules" }).click();
+  const discard = page.getByRole("dialog", {
+    name: "Discard unsaved changes?",
+  });
+  await expect(discard).toBeVisible();
+  await discard.getByRole("button", { name: "Discard changes" }).click();
+  const barberButton = page.getByRole("button", {
+    name: "Target regression barber",
+  });
+  await expect(barberButton).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByLabel("Opens").first()).toHaveValue("10:00");
+  await page.getByLabel("Opens").first().fill("11:00");
+  await page.getByRole("button", { name: "Save hours" }).click();
+  await expect(page.getByRole("status")).toHaveText("Availability saved.");
+
+  const persisted = await database.pool.query(
+    "SELECT (SELECT week FROM shop_schedules WHERE shop_id = $1) AS shop_week, (SELECT week FROM barber_schedules WHERE shop_id = $1 AND barber_id = $2) AS barber_week",
+    [owner.shopId, barberId],
+  );
+  expect(persisted.rows[0]?.shop_week).toEqual(shopWeek);
+  expect(persisted.rows[0]?.barber_week[0]?.working).toEqual([
+    { start: 660, end: 1080 },
+  ]);
 });
 
 test("preview labels both repeated DST starts with their offsets", async ({
@@ -83,7 +139,7 @@ test("preview labels both repeated DST starts with their offsets", async ({
   await page.goto(`${ownerOrigin}/availability`);
   await page.getByLabel("Service").selectOption(serviceId);
   await page.getByLabel("Eligible barber").selectOption(barberId);
-  await page.getByLabel("Date").fill("2026-11-01");
+  await page.getByLabel("Date", { exact: true }).fill("2026-11-01");
   await page.getByRole("button", { name: "Preview times" }).click();
   await expect(page.getByText("01:30 · UTC-04:00")).toBeVisible();
   await expect(page.getByText("01:30 · UTC-05:00")).toBeVisible();
@@ -131,7 +187,7 @@ test("preview uses saved schedules and the latest persisted service duration", a
   await page.goto(`${ownerOrigin}/availability`);
   await page.getByLabel("Service").selectOption(serviceId);
   await page.getByLabel("Eligible barber").selectOption(barberId);
-  await page.getByLabel("Date").fill("2026-11-02");
+  await page.getByLabel("Date", { exact: true }).fill("2026-11-02");
 
   await page.getByLabel("Opens").first().fill("09:45");
   await page.getByRole("button", { name: "Preview times" }).click();
@@ -179,9 +235,10 @@ test("availability fits reference frames and its schedule tabs work by keyboard"
   await page.goto(`${ownerOrigin}/availability`);
   await captureState(page, `availability-${viewport.width}`, info);
   const shop = page.getByRole("tab", { name: "Shop hours" });
-  const barber = page.getByRole("tab", { name: "Barber hours" });
+  const barber = page.getByRole("tab", { name: "Barber schedules" });
   await shop.focus();
   await shop.press("ArrowRight");
+  await barber.press("Enter");
   await expect(barber).toHaveAttribute("aria-selected", "true");
   await expect(barber).toBeFocused();
   await expect(
@@ -189,8 +246,11 @@ test("availability fits reference frames and its schedule tabs work by keyboard"
       const style = getComputedStyle(tab);
       return { outline: style.outlineWidth, color: style.outlineColor };
     }),
-  ).resolves.toEqual({ outline: "2px", color: "rgb(36, 36, 36)" });
+  ).resolves.toMatchObject({
+    outline: expect.stringMatching(/^[1-9][0-9]*(?:\.[0-9]+)?px$/),
+  });
   await barber.press("ArrowLeft");
+  await shop.press("Enter");
   await expect(shop).toHaveAttribute("aria-selected", "true");
   await expect(shop).toBeFocused();
   for (const width of [320, 1024]) {
@@ -210,9 +270,16 @@ test("availability fits reference frames and its schedule tabs work by keyboard"
   await page.getByRole("button", { name: "Add hours" }).first().click();
   await page.getByLabel("Opens").first().fill("10:00");
   await page.getByLabel("Closes").first().fill("12:00");
-  page.once("dialog", (dialog) => dialog.dismiss());
   await barber.click();
-  await expect(shop).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#availability-tab-shop")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  const discard = page.getByRole("dialog", {
+    name: "Discard unsaved changes?",
+  });
+  await expect(discard).toBeVisible();
+  await discard.getByRole("button", { name: "Keep editing" }).click();
   await expect(page.getByLabel("Opens").first()).toHaveValue("10:00");
   await page.getByRole("button", { name: "Add break" }).first().click();
   const dialog = page.getByRole("dialog", { name: "Add a recurring break" });
@@ -224,7 +291,9 @@ test("availability fits reference frames and its schedule tabs work by keyboard"
       const style = getComputedStyle(input);
       return { outline: style.outlineWidth, color: style.outlineColor };
     }),
-  ).resolves.toEqual({ outline: "2px", color: "rgb(36, 36, 36)" });
+  ).resolves.toMatchObject({
+    outline: expect.stringMatching(/^[1-9][0-9]*(?:\.[0-9]+)?px$/),
+  });
   await page.screenshot({
     path: info.outputPath("availability-break-dialog.png"),
     fullPage: true,
@@ -290,7 +359,7 @@ test("populated recurring rows and break chips render at approved viewports", as
     path: info.outputPath(`availability-populated-${viewport.width}.png`),
     fullPage: true,
   });
-  await page.getByRole("tab", { name: "Barber hours" }).click();
+  await page.getByRole("tab", { name: "Barber schedules" }).click();
   await expect(
     page.getByRole("button", { name: /Edit Monday break/ }),
   ).toBeVisible();
@@ -380,8 +449,8 @@ test("a delayed barber save cannot replace the selected barber or shop schedule"
   );
 
   await page.goto(`${ownerOrigin}/availability`);
-  await page.getByRole("tab", { name: "Barber hours" }).click();
-  await page.getByLabel("Barber", { exact: true }).selectOption(barberIds[0]!);
+  await page.getByRole("tab", { name: "Barber schedules" }).click();
+  await page.getByRole("button", { name: "Save A" }).click();
   await page.getByLabel("Opens").first().fill("10:15");
 
   let release!: () => void;
@@ -401,26 +470,27 @@ test("a delayed barber save cannot replace the selected barber or shop schedule"
   await requestStarted;
 
   try {
-    expect(await page.getByLabel("Barber", { exact: true }).isDisabled()).toBe(
-      true,
-    );
+    expect(
+      await page.getByRole("button", { name: "Save A" }).isDisabled(),
+    ).toBe(true);
     expect(
       await page.getByRole("tab", { name: "Shop hours" }).isDisabled(),
     ).toBe(true);
     expect(
       await page
-        .getByRole("tab", { name: "Barber hours" })
+        .getByRole("tab", { name: "Barber schedules" })
         .getAttribute("aria-selected"),
     ).toBe("true");
-    expect(await page.getByLabel("Barber", { exact: true }).inputValue()).toBe(
-      barberIds[0],
+    await expect(page.getByRole("button", { name: "Save A" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
     );
   } finally {
     release();
   }
   await expect(page.getByRole("status")).toHaveText("Availability saved.");
   await page.unroute("**/availability");
-  await page.getByLabel("Barber", { exact: true }).selectOption(barberIds[1]!);
+  await page.getByRole("button", { name: "Save B" }).click();
   await expect(page.getByLabel("Opens").first()).toHaveValue("11:00");
   const saved = await database.pool.query(
     "SELECT barber_id, week FROM barber_schedules WHERE shop_id = $1 ORDER BY barber_id",

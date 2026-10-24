@@ -3,12 +3,7 @@
 import dynamic from "next/dynamic";
 import { TrimTimeLogo } from "@/components/trimtime-logo";
 
-import {
-  useEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   ArrowDown,
   ArrowRight,
@@ -325,7 +320,10 @@ export default function DesignSystemPage() {
                 <span className="tt-brandCaption">Design system</span>
               </span>
             </a>
-            <nav aria-label="Page sections" className="tt-nav">
+            <nav
+              aria-label="Page sections"
+              className="tt-nav max-[640px]:!w-full max-[640px]:!min-w-0 max-[640px]:!flex-wrap max-[640px]:!justify-start max-[640px]:!gap-1"
+            >
               {sections.map((section) => (
                 <a
                   key={section.id}
@@ -333,6 +331,7 @@ export default function DesignSystemPage() {
                   aria-current={
                     activeSection === section.id ? "location" : undefined
                   }
+                  className="max-[640px]:!min-w-0 max-[640px]:!max-w-full max-[640px]:!px-[7px] max-[640px]:!text-[10px] max-[640px]:!break-all"
                 >
                   {section.label}
                 </a>
@@ -1013,8 +1012,8 @@ export default function DesignSystemPage() {
                     </span>
                     <h4>Keep the good bits.</h4>
                     <p>
-                      These examples use the same shared components and theme
-                      as the application.
+                      These examples use the same shared components and theme as
+                      the application.
                     </p>
                   </TabsContent>
                 </Tabs>

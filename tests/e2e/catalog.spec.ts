@@ -8,7 +8,7 @@ test("owners create, validate, assign, and reload shared service details", async
   await owners(context, { shop: true });
   await page.goto(`${ownerOrigin}/services`);
   await expect(
-    page.getByRole("heading", { name: "Services", exact: true }),
+    page.getByRole("heading", { name: "Services management", exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Add service" }).click();
   await page.getByLabel("Service name").fill("Community cut");
@@ -50,12 +50,19 @@ test("service form confirms discard and fits the desktop, tablet, and phone widt
     await page.goto(`${ownerOrigin}/services`);
     await page.getByRole("button", { name: "Add service" }).click();
     await page.getByLabel("Service name").fill("Unsaved draft");
-    page.once("dialog", (dialog) => void dialog.dismiss());
     await page.keyboard.press("Escape");
-    await expect(page.getByRole("dialog")).toBeVisible();
+    const discard = page.getByRole("dialog", {
+      name: "Discard unsaved changes?",
+    });
+    await expect(discard).toBeVisible();
+    await discard.getByRole("button", { name: "Keep editing" }).click();
+    await expect(
+      page.getByRole("dialog", { name: "Add service" }),
+    ).toBeVisible();
     await expect(page.getByLabel("Service name")).toHaveValue("Unsaved draft");
-    page.once("dialog", (dialog) => void dialog.accept());
-    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Cancel" }).click();
+    await expect(discard).toBeVisible();
+    await discard.getByRole("button", { name: "Discard changes" }).click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "Add service" }),
@@ -83,7 +90,7 @@ test("hiding and archiving keep a retained record and update filters", async ({
   await page.getByRole("button", { name: "Save service" }).click();
   await expect(page.getByText("Lifecycle trim", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Hide service" }).click();
-  await page.getByRole("button", { name: "Hidden", exact: true }).click();
+  await page.getByRole("button", { name: /Hidden \(/ }).click();
   await expect(
     page.locator("article").getByText("Hidden", { exact: true }),
   ).toBeVisible();
@@ -113,7 +120,7 @@ test("hiding and archiving keep a retained record and update filters", async ({
   await expect(archiveDialog).toHaveCount(0);
   await expect(page.getByRole("status")).toHaveText("Service archived.");
   expect(nativeDialogs).toEqual([]);
-  await page.getByRole("button", { name: "Archived", exact: true }).click();
+  await page.getByRole("button", { name: /Archived \(/ }).click();
   await expect(
     page.locator("article").getByText("Archived", { exact: true }),
   ).toBeVisible();

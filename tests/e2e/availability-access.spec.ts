@@ -15,7 +15,11 @@ test("availability uses the owner sign-in and setup redirects", async ({
   await page.goto(`${ownerOrigin}/availability`);
   await expect(page).toHaveURL(/\/availability$/);
   await expect(
-    page.getByRole("heading", { name: "Availability" }),
+    page.getByRole("heading", { name: "Shop and barber availability" }),
+  ).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Shop hours" })).toBeVisible();
+  await expect(
+    page.getByRole("tab", { name: /Date overrides.*blocks/ }),
   ).toBeVisible();
 });
 
@@ -37,6 +41,7 @@ test("captured availability saves reject an untrusted origin", async ({
   );
   await page.getByRole("button", { name: "Save hours" }).click();
   const saveAction = await captured;
+  await expect(page.getByRole("status")).toContainText("Availability saved.");
   const response = await request.post(saveAction.url(), {
     headers: {
       "content-type": saveAction.headers()["content-type"],
@@ -76,7 +81,7 @@ test("captured availability saves reject an untrusted origin", async ({
   await page.reload();
   await page.getByLabel("Service").selectOption(serviceId);
   await page.getByLabel("Eligible barber").selectOption(barberId);
-  await page.getByLabel("Date").fill("2026-11-01");
+  await page.getByLabel("Date", { exact: true }).fill("2026-11-01");
   const previewAction = page.waitForRequest(
     (entry) =>
       entry.method() === "POST" && Boolean(entry.headers()["next-action"]),

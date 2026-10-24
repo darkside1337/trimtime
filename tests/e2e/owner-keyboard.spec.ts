@@ -19,10 +19,10 @@ test("setup and settings are reachable by keyboard with reduced motion", async (
   ).toBeFocused();
   for (const [label, value] of [
     ["Shop name", "Fictional Keyboard Shop"],
-    ["Address", "123 Example Street"],
+    ["Shop address", "123 Example Street"],
     ["Public contact", "Call 202-555-0142"],
-    ["Time zone", "UTC"],
-    ["Subdomain", owner.subdomain],
+    ["Shop time zone", "UTC"],
+    ["Booking URL name", owner.subdomain],
   ]) {
     await page.keyboard.press("Tab");
     const field = page.getByLabel(label, { exact: true });
@@ -37,17 +37,28 @@ test("setup and settings are reachable by keyboard with reduced motion", async (
     expect(focus.style).not.toBe("none");
   }
   await page.keyboard.press("Tab");
-  const create = page.getByRole("button", { name: "Create draft shop" });
-  await expect(create).toBeFocused();
+  const review = page.getByRole("button", { name: "Preview draft shop" });
+  await expect(review).toBeFocused();
   expect(
-    await create.evaluate((element) =>
+    await review.evaluate((element) =>
       parseFloat(getComputedStyle(element).transitionDuration),
     ),
   ).toBeLessThanOrEqual(0.001);
   await captureState(page, "setup-keyboard", info);
   await page.keyboard.press("Enter");
+  const reviewHeading = page.getByRole("heading", {
+    name: "Your shop details",
+  });
+  await expect(reviewHeading).toBeFocused();
+  await page.keyboard.press("Tab");
   await expect(
-    page.getByRole("heading", { name: "Today", exact: true }),
+    page.getByRole("button", { name: "Edit details" }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: "Create shop" })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("heading", { name: "Calendar", exact: true }),
   ).toBeVisible();
 
   await page.goto(`${ownerOrigin}/settings`);
@@ -59,32 +70,60 @@ test("setup and settings are reachable by keyboard with reduced motion", async (
   await page.keyboard.press("Tab");
   const mobile = page.viewportSize()!.width <= 900;
   if (mobile) {
-    await expect(page.getByRole("button", { name: "Open navigation" })).toBeFocused();
+    await expect(
+      page.getByRole("button", { name: "Open navigation" }),
+    ).toBeFocused();
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("button", { name: "Close navigation" })).toBeFocused();
+    await expect(
+      page.getByRole("button", { name: "Close navigation" }),
+    ).toBeFocused();
     await page.keyboard.press("Tab");
   }
-  for (const [index, label] of ["Today", "Services", "Barbers", "Availability", "Settings"].entries()) {
+  for (const [index, label] of [
+    "Calendar",
+    "Services",
+    "Barbers",
+    "Availability",
+    "Activity",
+    "Settings",
+  ].entries()) {
     if (index > 0) await page.keyboard.press("Tab");
-    await expect(page.getByRole("link", { name: label, exact: true })).toBeFocused();
+    await expect(
+      page
+        .getByRole("navigation", { name: "Owner navigation" })
+        .getByRole("link", { name: label, exact: true }),
+    ).toBeFocused();
   }
   await page.keyboard.press("Tab");
-  await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeFocused();
+  await expect(
+    page.getByRole("button", { name: "Sign out", exact: true }),
+  ).toBeFocused();
   if (mobile) {
     await page.keyboard.press("Escape");
-    await expect(page.getByRole("button", { name: "Open navigation" })).toBeFocused();
+    await expect(
+      page.getByRole("button", { name: "Open navigation" }),
+    ).toBeFocused();
   }
   for (const label of [
     "Shop name",
     "Public contact",
-    "Time zone",
-    "Subdomain",
     "Address",
+    "Subdomain",
+    "Time zone",
   ]) {
     await page.keyboard.press("Tab");
     await expect(page.getByLabel(label, { exact: true })).toBeFocused();
   }
-  await page.keyboard.press("Tab");
+  const saveSettings = page.getByRole("button", { name: "Save settings" });
+  for (let steps = 0; steps < 16; steps++) {
+    if (
+      await saveSettings.evaluate(
+        (element) => element === document.activeElement,
+      )
+    )
+      break;
+    await page.keyboard.press("Tab");
+  }
   await expect(
     page.getByRole("button", { name: "Save settings" }),
   ).toBeFocused();

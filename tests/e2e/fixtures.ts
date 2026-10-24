@@ -19,7 +19,7 @@ export const ownerOrigin = "http://app.localhost:3100";
 export const marketingOrigin = "http://localhost:3100";
 
 export async function captureState(page: Page, state: string, info: TestInfo) {
-  await expect(page.getByRole("main")).toContainText(/\S/);
+  await expect(page.locator("main").first()).toContainText(/\S/);
   await page.evaluate(() => document.fonts.ready);
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth),

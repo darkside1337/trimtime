@@ -27,6 +27,20 @@ test("catalog cards show named eligibility and the responsive reference grid", a
       "INSERT INTO barber_services (shop_id,barber_id,service_id) VALUES ($1,$2,$3)",
       [owner.shopId, barberId, serviceId],
     );
+    if (index === 0) {
+      const week = Array.from({ length: 7 }, (_, day) =>
+        day < 6
+          ? {
+              working: [{ start: 540, end: 1080 }],
+              breaks: [{ start: 780, end: 810 }],
+            }
+          : { working: [], breaks: [] },
+      );
+      await database.pool.query(
+        "INSERT INTO barber_schedules (shop_id, barber_id, week, revision) VALUES ($1, $2, $3::jsonb, 1)",
+        [owner.shopId, barberId, JSON.stringify(week)],
+      );
+    }
   }
   for (const route of ["services", "barbers"]) {
     await page.goto(`${ownerOrigin}/${route}`);
@@ -34,8 +48,17 @@ test("catalog cards show named eligibility and the responsive reference grid", a
     await expect(cards).toHaveCount(3);
     await expect(cards.first()).toBeVisible();
     await expect(cards.first().getByRole("list")).toContainText(
-      route === "services" ? "Barber 1" : "Classic cut · $35.00 · 35 min",
+      route === "services" ? "Barber 1" : "Classic cut 35m $35.00",
     );
+    if (route === "barbers") {
+      await expect(cards.first()).toContainText(
+        "Mon–Sat · 09:00–18:00 · Break 13:00–13:30",
+      );
+      await expect(cards.first()).toContainText("America/New_York");
+      await expect(
+        cards.first().getByRole("link", { name: "Edit hours" }),
+      ).toHaveAttribute("href", "/availability");
+    }
     const first = (await cards.nth(0).boundingBox())!;
     const second = (await cards.nth(1).boundingBox())!;
     if (page.viewportSize()!.width >= 1024) {
