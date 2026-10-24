@@ -380,3 +380,32 @@ a:focus-visible {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Settings composition follows the shared Doop owner workspace. */
+.owner-settings-card {
+  display: grid;
+  min-width: 0;
+  gap: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-surface);
+  padding: 24px;
+  background: var(--background);
+  box-shadow: var(--shadow-resting);
+}
+.owner-settings-card-header {
+  display: grid;
+  gap: 4px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.owner-settings-card-header h2 {
+  font-family: var(--font-heading);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.owner-settings-card-header p {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.6;
+}
