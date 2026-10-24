@@ -411,8 +411,10 @@ Proposed implementation safeguard: if cleanup uses an externally callable trigge
 **Acceptance criteria**
 
 - [x] Missing required setup prevents publication with actionable feedback; completing the approved minimum permits it.
-- [ ] The link and QR open the same published shop on the intended host with its time zone and demo label; unknown/invalid shop hosts return a clean 404.
+- [x] The link and QR open the same published shop on the intended host with its time zone and demo label; unknown/invalid shop hosts return a clean 404.
 - [x] Unpublishing persists and uses the agreed public presentation; public access still cannot reveal owner settings or customer lists.
+
+**Acceptance update (owner approved 2026-10-25):** All three Phase 05 acceptance criteria are accepted using the recorded local evidence and the owner's confirmed QR destination. This records the owner's request to check all criteria; it adds no new verification evidence. The hosted-verification exception remains in effect. Final phase visual acceptance and the full physical-phone walkthrough remain unverified, so this update does not mark the phase complete.
 
 **Manual walkthrough**
 
