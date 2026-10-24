@@ -15,10 +15,7 @@ export function RecurringHoursPanel({
 }: {
   workflow: Controller;
   section: Section;
-  onSwitchTarget: (
-    target: ScheduleTarget,
-    section: Section | "dates",
-  ) => void;
+  onSwitchTarget: (target: ScheduleTarget, section: Section) => void;
 }) {
   const {
     data,
@@ -26,6 +23,7 @@ export function RecurringHoursPanel({
     schedule,
     draft,
     pending,
+    message,
     fieldErrors,
     dirty,
     canReload,
@@ -240,6 +238,23 @@ export function RecurringHoursPanel({
           </Button>
         )}
       </div>
+      <p
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className={message ? "text-sm" : "sr-only"}
+      >
+        {message}
+      </p>
+      {Object.values(fieldErrors).some((messages) => messages.length > 0) && (
+        <ul role="alert" className="list-disc pl-5 text-sm text-destructive">
+          {Object.entries(fieldErrors).flatMap(([path, messages]) =>
+            messages.map((error, index) => (
+              <li key={`${path}-${index}`}>{error}</li>
+            )),
+          )}
+        </ul>
+      )}
     </section>
   );
 }

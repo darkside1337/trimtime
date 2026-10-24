@@ -54,8 +54,6 @@ export function AvailabilityManagement({
     target,
     dirty,
     pending,
-    message,
-    fieldErrors,
     breakDay,
     breakRangeIndex,
     breakRange,
@@ -83,29 +81,27 @@ export function AvailabilityManagement({
       item.schedule.week.some((day) => day.working.length > 0),
   ).length;
 
-  function applyTarget(next: ScheduleTarget) {
-    recurring.applyTarget(next);
-  }
-
-  function switchTo(next: ScheduleTarget, nextSection: Section) {
+  function navigate(
+    next: { target: ScheduleTarget; section: Section; addDate: boolean },
+    options: { guardSameTarget?: boolean; discard?: boolean } = {},
+  ) {
     if (pending) return;
-    const sameTarget = isSameTarget(next, target);
-    if (dirty && !sameTarget) {
-      setPendingNavigation({
-        target: next,
-        section: nextSection,
-        addDate: false,
-      });
+    const sameTarget = isSameTarget(next.target, target);
+    if (!options.discard && dirty && (options.guardSameTarget || !sameTarget)) {
+      setPendingNavigation(next);
       return;
     }
-    if (!sameTarget) applyTarget(next);
-    setSection(nextSection);
+    if (!sameTarget || options.discard) recurring.applyTarget(next.target);
+    setSection(next.section);
+    if (next.addDate)
+      window.dispatchEvent(new Event("trimtime:availability-add"));
+    if (options.discard) setPendingNavigation(null);
   }
 
   function changeSection(next: Section) {
     if (next === section) return;
-    if (dirty) {
-      setPendingNavigation({
+    navigate(
+      {
         target:
           next === "shop"
             ? { kind: "shop" }
@@ -114,26 +110,16 @@ export function AvailabilityManagement({
               : target,
         section: next,
         addDate: false,
-      });
-      return;
-    }
-    if (next === "dates") {
-      setSection(next);
-      return;
-    }
-    if (next === "shop") switchTo({ kind: "shop" }, next);
-    else if (activeBarbers[0])
-      switchTo({ kind: "barber", barberId: activeBarbers[0].id }, next);
-    else setSection(next);
+      },
+      { guardSameTarget: true },
+    );
   }
 
   function handleAddDateClick() {
-    if (dirty && section !== "dates") {
-      setPendingNavigation({ target, section: "dates", addDate: true });
-      return;
-    }
-    changeSection("dates");
-    window.dispatchEvent(new Event("trimtime:availability-add"));
+    navigate(
+      { target, section: "dates", addDate: true },
+      { guardSameTarget: section !== "dates" },
+    );
   }
 
   function handleEditException(
@@ -148,20 +134,6 @@ export function AvailabilityManagement({
         },
       }),
     );
-  }
-
-  function handleKeepEditing() {
-    setPendingNavigation(null);
-  }
-
-  function handleDiscardChanges() {
-    if (!pendingNavigation) return;
-    const next = pendingNavigation;
-    applyTarget(next.target);
-    setSection(next.section);
-    if (next.addDate)
-      window.dispatchEvent(new Event("trimtime:availability-add"));
-    setPendingNavigation(null);
   }
 
   return (
@@ -246,7 +218,9 @@ export function AvailabilityManagement({
         <RecurringHoursPanel
           workflow={recurring}
           section={section}
-          onSwitchTarget={switchTo}
+          onSwitchTarget={(next, nextSection) =>
+            navigate({ target: next, section: nextSection, addDate: false })
+          }
         />
       </div>
       <div
@@ -269,23 +243,6 @@ export function AvailabilityManagement({
         invalidationKey={previewInvalidationKey}
         disabled={pending}
       />
-      <p
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-        className={message ? "text-sm" : "sr-only"}
-      >
-        {message}
-      </p>
-      {Object.values(fieldErrors).some((messages) => messages.length > 0) && (
-        <ul role="alert" className="list-disc pl-5 text-sm text-destructive">
-          {Object.entries(fieldErrors).flatMap(([path, messages]) =>
-            messages.map((error, index) => (
-              <li key={`${path}-${index}`}>{error}</li>
-            )),
-          )}
-        </ul>
-      )}
       <BreakEditorDialog
         open={breakDay !== null}
         rangeIndex={breakRangeIndex}
@@ -301,8 +258,10 @@ export function AvailabilityManagement({
       />
       <OwnerDiscardDialog
         open={pendingNavigation !== null}
-        onKeepEditing={handleKeepEditing}
-        onDiscard={handleDiscardChanges}
+        onKeepEditing={() => setPendingNavigation(null)}
+        onDiscard={() => {
+          if (pendingNavigation) navigate(pendingNavigation, { discard: true });
+        }}
       />
     </div>
   );
