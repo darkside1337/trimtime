@@ -236,6 +236,14 @@ test("availability fits reference frames and its schedule tabs work by keyboard"
   await captureState(page, `availability-${viewport.width}`, info);
   const shop = page.getByRole("tab", { name: "Shop hours" });
   const barber = page.getByRole("tab", { name: "Barber schedules" });
+  for (const tab of [shop, barber]) {
+    const panelId = await tab.getAttribute("aria-controls");
+    expect(panelId).toBeTruthy();
+    await expect(page.locator(`[id="${panelId}"]`)).toHaveAttribute(
+      "role",
+      "tabpanel",
+    );
+  }
   await shop.focus();
   await shop.press("ArrowRight");
   await barber.press("Enter");
@@ -553,6 +561,7 @@ test("stale browser saves preserve the draft until an explicit reload", async ({
     await target.getByLabel("Opens").first().fill("09:10");
     await target.getByLabel("Closes").first().fill("11:00");
   }
+  await secondPage.getByLabel("Closes").first().fill("12:00");
   await page.getByRole("button", { name: "Save hours" }).click();
   await expect(page.getByRole("status")).toHaveText("Availability saved.");
   await secondPage.getByRole("button", { name: "Save hours" }).click();
@@ -560,15 +569,55 @@ test("stale browser saves preserve the draft until an explicit reload", async ({
     "changed in another session",
   );
   await expect(secondPage.getByLabel("Opens").first()).toHaveValue("09:10");
+  await expect(secondPage.getByLabel("Closes").first()).toHaveValue("12:00");
   await secondPage.getByRole("button", { name: "Reload saved hours" }).click();
   await expect(secondPage.getByRole("status")).toHaveText(
     "Saved availability reloaded.",
   );
   await expect(secondPage.getByLabel("Opens").first()).toHaveValue("09:10");
+  await expect(secondPage.getByLabel("Closes").first()).toHaveValue("11:00");
+  await expect(
+    secondPage.getByRole("region", { name: "Weekly open hours", exact: true }),
+  ).toContainText("1h 50m");
   await secondPage.getByLabel("Closes").first().fill("12:00");
   await secondPage.getByRole("button", { name: "Save hours" }).click();
   await expect(secondPage.getByRole("status")).toHaveText(
     "Availability saved.",
   );
   await secondPage.close();
+});
+
+test("discarding weekly edits opens the requested date dialog and clears the draft", async ({
+  page,
+  context,
+  owners,
+}) => {
+  await owners(context, { shop: true });
+  await page.goto(`${ownerOrigin}/availability`);
+  await page.getByRole("button", { name: "Add hours" }).first().click();
+  await page.getByLabel("Opens").first().fill("10:00");
+  await page
+    .getByRole("button", { name: "Add date override or block" })
+    .click();
+  const discard = page.getByRole("dialog", {
+    name: "Discard unsaved changes?",
+  });
+  await discard.getByRole("button", { name: "Keep editing" }).click();
+  await expect(page.getByLabel("Opens").first()).toHaveValue("10:00");
+  await page
+    .getByRole("button", { name: "Add date override or block" })
+    .click();
+  await discard.getByRole("button", { name: "Discard changes" }).click();
+  const dateDialog = page.getByRole("dialog", {
+    name: "Add a date override or block",
+  });
+  await expect(dateDialog).toBeVisible();
+  await dateDialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.getByRole("tab", { name: "Shop hours" }).click();
+  await expect(page.getByRole("tab", { name: "Shop hours" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.getByLabel("Opens")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Save hours" })).toBeDisabled();
 });
