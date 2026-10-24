@@ -17,10 +17,11 @@ test("shared owner navigation follows each implemented destination", async ({
   await page.goto(`${ownerOrigin}/`);
   const mobile = page.viewportSize()!.width <= 900;
   for (const [label, path] of [
-    ["Today", "/"],
+    ["Calendar", "/"],
     ["Services", "/services"],
     ["Barbers", "/barbers"],
     ["Availability", "/availability"],
+    ["Activity", "/activity"],
     ["Settings", "/settings"],
   ]) {
     await openOwnerNavigation(page);
@@ -30,7 +31,22 @@ test("shared owner navigation follows each implemented destination", async ({
       .click();
     await expect(page).toHaveURL(`${ownerOrigin}${path}`);
     await expect(
-      page.getByRole("heading", { name: label, exact: true, level: 1 }),
+      page.getByRole("heading", {
+        name:
+          label === "Settings"
+            ? "Shop settings & public link"
+            : label === "Activity"
+              ? "Booking activity & message status"
+              : label === "Services"
+                ? "Services management"
+                : label === "Barbers"
+                  ? "Barber profiles and service assignments"
+                  : label === "Availability"
+                    ? "Shop and barber availability"
+                    : label,
+        exact: true,
+        level: 1,
+      }),
     ).toBeVisible();
     await expect(page.getByRole("dialog", { name: "Navigation" })).toBeHidden();
     await captureState(page, `owner-${label.toLowerCase()}-closed`, info);

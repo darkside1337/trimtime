@@ -18,5 +18,12 @@ async function OwnerHomeContent() {
   if (!context) redirect("/sign-in");
   const shop = await getOwnShop(context);
   if (!shop) redirect("/setup");
-  return <OwnerHome shop={shop} />;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: shop.timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const initialDate = `${parts.find((part) => part.type === "year")!.value}-${parts.find((part) => part.type === "month")!.value}-${parts.find((part) => part.type === "day")!.value}`;
+  return <OwnerHome shop={shop} initialDate={initialDate} />;
 }
