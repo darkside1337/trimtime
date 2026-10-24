@@ -8,7 +8,7 @@ Sources: [PRD](PRD.md) for product rules and journeys; [SPEC](SPEC.md) for techn
 
 This table is the authoritative phase-status location. States are `not started`, `in progress`, `blocked`, and `done`. Existing assets or specimens do not establish completion of a product phase.
 
-Phase 01 maintenance: local-only reports record the host-routing refactor, corrections, automated evidence, and pending provider/hosted checks. The shared owner navigation now lives in a route-group layout for the five implemented management pages; sign-in and setup remain outside it, and public paths are unchanged. Lint, typecheck, and build pass; the focused navigation browser run timed out in its setup hook. Reports are intentionally excluded from Git; phase statuses below are unchanged.
+Phase 01 maintenance: local-only reports record the host-routing refactor, corrections, automated evidence, and pending provider/hosted checks. The shared owner navigation now lives in a route-group layout for the six rendered management destinations, distinguishing real business workflows (Services, Barbers, Availability, Settings) from labeled previews (Calendar and Activity); sign-in and setup remain outside it, and public paths are unchanged. Lint, typecheck, and build pass; the focused navigation browser run timed out in its setup hook. Reports are intentionally excluded from Git; phase statuses below are unchanged.
 
 | Phase | Title                                               | Depends on | State       | Evidence / blocker                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | ----- | --------------------------------------------------- | ---------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -17,7 +17,7 @@ Phase 01 maintenance: local-only reports record the host-routing refactor, corre
 | 02    | Services and eligible barber profiles               | 01         | done        | Owner reports the required G8 walkthrough completed; local automated evidence is recorded. Hosted Phase 01 verification remains separately deferred.                                                                                                                                                                                                                                                                                                                     |
 | 03    | Recurring schedules and slot preview                | 02         | done        | Local implementation, 68 unit, 32 database, and 126 full-browser checks pass; responsive availability screenshots and focused route/access checks are recorded. Screen-reader/device checks remain unverified.                                                                                                                                                                                                                                                           |
 | 04    | Date-specific availability and time blocks          | 03         | in progress | The 2026-10-22 execution report now includes follow-up evidence: the dated browser journeys pass across desktop/tablet/phone, including closure after barber creation, explicit reopening, stale revisions, block conflicts, save/remove recovery, and signed-out/foreign action replay. Doop comparisons and rendered screenshots were inspected. Full browser/access matrix, hosted/device/screen-reader evidence, and the known `braces` advisory remain outstanding. |
-| 05    | Publication and shop sharing                        | 03         | not started | Detailed readiness and hosted wildcard routing need verification.                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 05    | Publication and shop sharing                        | 03         | in progress | Hosted verification is waived by approved exception; local publication, public shop preview, and QR sharing pass automated journeys. Final visual acceptance and the full physical-phone walkthrough remain open.                                                                                                                                                                       |
 | 06    | Public booking and immediate manage-link access     | 04, 05     | not started | Stale offers, request replay, expiry, and rate semantics need resolution.                                                                                                                                                                                                                                                                                                                                                                                                |
 | 07    | Email confirmations and truthful message status     | 06         | not started | Sender/recipient setup and send-budget accounting need resolution/evidence.                                                                                                                                                                                                                                                                                                                                                                                              |
 | 08    | Owner calendar and manual appointments              | 06         | not started | The local calendar specimen is UI evidence only; product navigation/persistence remain unverified.                                                                                                                                                                                                                                                                                                                                                                       |
@@ -70,7 +70,7 @@ Current commands, run from the repository root:
 | Unit tests                     | `pnpm test`                                                   | Vitest unit tests.                                                  |
 | Disposable database            | `pnpm db:test:up`, `pnpm db:test:stop`, `pnpm db:test:down`   | Explicit project-owned local PostgreSQL lifecycle.                  |
 | Database/migration tests       | `pnpm test:db`                                                | Requires the running owned disposable database; no shared fallback. |
-| Browser tests                  | `pnpm exec playwright install chromium` once; `pnpm test:e2e` | Chromium smoke tests after a production build.                      |
+| Browser tests                  | `pnpm exec playwright install chromium` once; `pnpm db:test:up`, then `pnpm test:e2e` | Chromium browser journeys after a production build; requires the running owned disposable database. |
 | Serve production build         | `pnpm start`                                                  | Requires a successful existing production build.                    |
 
 Vitest, Playwright, and disposable PostgreSQL are now configured as described in [architecture verification](ARCHITECTURE.md#9-verification-and-maintenance). Follow the [README setup instructions](../README.md); each phase adds only tests its behavior needs. Provider tests require dedicated approved accounts/recipients, not routine live sends from the general test suite.
@@ -85,7 +85,84 @@ Vitest, Playwright, and disposable PostgreSQL are now configured as described in
 
 ## UI references
 
-Use [DESIGN’s Doop reference index](DESIGN.md#doop-visual-references) for responsive layouts, state frames, and known visual conflicts. Each phase links to its relevant reference group below. Apply [visual verification](DESIGN.md#visual-verification-for-every-ui-phase) to every UI slice; record evidence in the phase report and enforce G8. Designs do not expand phase scope, approve routes, or resolve open decisions.
+Use [DESIGN’s Doop reference index](DESIGN.md#doop-visual-references) for responsive layouts, state frames, and known visual conflicts. Preserve the complete approved composition and copy; use realistic, clearly distinguished mock data for deferred features, and label any page containing it as a design preview. Preview controls may update ephemeral in-memory UI state, but must not write sample data to application storage, call providers, or claim a real operation succeeded. List every mocked feature under its owning phase and acceptance criterion. This visual fidelity policy does not approve routes or resolve open decisions; record and resolve conflicts with authoritative requirements rather than silently changing the design. Apply [visual verification](DESIGN.md#visual-verification-for-every-ui-phase) to every UI slice; record evidence in the phase report and enforce G8.
+
+Phase-specific UI-reference notes below describe the real behavior introduced by each phase. Their “only,” “later work,” and available-event restrictions do not limit the approved visual composition or the registered sample previews.
+
+### UI preview and mock register
+
+This register tracks presentation-only sample data and controls. “Planned” means the preview is not established by the audit; “present” is supported by its captured state. Live values on a mixed page must remain visibly distinct. Preview controls may change ephemeral in-memory view/filter/dialog state, but sample data cannot be written to application storage, sent to providers, or reported as a successful real operation. Presentation-only previews do not promise future backend persistence. Existing product requirements govern sample copy and semantics. Findings and conflicts C01–C09 are summarized in this register and resolved in the authoritative documents where applicable.
+
+The `G8-PV-01`–`G8-PV-11` references below are preview-specific verification checks; their current evidence status is recorded in the register. **They do not add or complete product-phase acceptance criteria**. They provide stable IDs for planning and evidence, not approval for mock behavior, routes, or writes. A page passes its applicable preview check only after visual comparison and the listed data/action separation is demonstrated.
+
+#### G8-PV-01
+
+Marketing composition: approved composition is present at desktop, tablet, and phone; appointment/booking examples are marked sample and obey confirmed product rules.
+
+#### G8-PV-02
+
+Setup address/review: actual entered details are distinguished from any example; review displays the actual unsaved form values in memory and creates no shop; distinguish the entered slug from its canonical configured URL; only explicit final confirmation persists the values.
+
+**Wave C local evidence (2026-10-23):** G8-PV-01 and G8-PV-02 passed fresh Doop comparison and independent browser checks at 1440, 768, 390, 320, 900 and 901px. Marketing's complete sample composition is labeled; its controls produced no write requests or browser-storage writes. Configured owner sign-in links, preview notice, FAQ and mobile menu behavior passed. Setup review retained actual values without a database write, edit/reload behavior passed, canonical address retained scheme/port, and final confirmation produced exactly one unpublished shop; pending submission blocked repeated creation. The focused 36-case desktop/tablet/phone run passed required/reserved/duplicate validation, retry, keyboard, auth and access checks. Production build passed. Real Google callback, hosted routing and provider delivery remain unverified; no product-phase status or acceptance checkbox changes.
+
+#### G8-PV-03
+
+Owner calendar: live shop context and sample appointments are distinguishable; sample controls can explore ephemeral UI state but cannot write an appointment or claim it was created; navigation opens the approved labeled preview route.
+
+#### G8-PV-04
+
+Activity: sample events and historical outcomes are labeled and cannot imply actual attendance, provider calls, or delivery; preview controls never call a provider.
+
+**Wave B local evidence (2026-10-23):** G8-PV-03 and G8-PV-04 passed the focused owner preview/navigation checks and independent screenshot comparison at 1440, 768, 390, 320, 900 and 901px. Live shop name, publication status and IANA time zone are separate from samples; sampled interactions produced no mutation requests or browser-storage writes. Access guards, mobile Sheet/focus, date/view/barber and Activity search/dialog controls passed. The specimen navigation also fits 390px. Production build, lint and typecheck passed. Hosted behavior, provider delivery and real appointment/event workflows are not established; no product-phase status or acceptance checkbox changes.
+
+#### G8-PV-05
+
+Service descriptions: preview descriptions are visibly sample and never write to application storage; no persisted field or real write contract is added, and the saved service contract remains unchanged.
+
+#### G8-PV-06
+
+Barber profile extensions: specialty and activation examples are visibly sample and cannot write to application storage or mutate real eligibility/lifecycle; no persisted field or real write contract is added, and eligibility remains unchanged.
+
+
+**Wave D local evidence (2026-10-23):** G8-PV-05/06 passed local preview checks and fresh Doop comparison at 1440, 768, 390, 320, 900 and 901px. Service descriptions, specialty and activation remain visibly sample; edited sample strings are absent from real save payloads, activation leaves stored lifecycle/assignments unchanged, and reload clears the sample state. Live catalog saves, offered/archive transitions, assignments, validation, failure recovery, branded discard and navigation passed the focused desktop/tablet/phone checks. Barber cards show actual recurring intervals, breaks and IANA zone; Edit hours opens the existing Availability editor. The reference's simplified hours dialog is adapted to preserve the approved schedule contract. Production build passed. Hosted/provider, physical-device and screen-reader acceptance remain unverified; no product-phase status or acceptance checkbox changes.
+
+#### G8-PV-07
+
+Public shop: live shop/catalog/availability data is separated from deferred booking stages; paused shops reveal no offerings/starts; no sample submission claims a reservation.
+
+#### G8-PV-08
+
+Future-booking summary: sample counts never affect publication, readiness, or the time-zone lock.
+
+#### G8-PV-09
+
+Notification summary: copy follows approved channels, global budget scope, and truthful outcome rules; unresolved reset wording stays absent.
+
+#### G8-PV-10
+
+Address/contact/export: samples cannot change persisted address/contact or send messages; real SVG QR behavior remains separate; print/PNG previews are not offered as real exports.
+
+#### G8-PV-11
+
+Availability presentation examples: recurring-break labels and dated reasons retain the reference fields as read-only samples with explicit no-save copy (Phase 03/04 frontend ownership); this does not approve new persisted fields. Day-row booking badges are explicitly sample, separate from live saved schedules, capacity and exception counts. They cannot gate saving, alter slot results/publication, write bookings or imply that booking-bearing edit protection is implemented. Real calendar counts belong to Phase 08 / AC-012–AC-013; real booking-bearing configuration guards retain Phase 06/09 ownership.
+
+**Wave E local evidence (2026-10-24):** G8-PV-11 passed local preview checks against fresh Availability references at 1440, 768, 390, 320, 900 and 901px. Saved schedules, capacity and owner-scoped future exceptions use actual data; booking badges and read-only break labels/date reasons are visibly sample and cannot write scheduling data. A 72-case focused run and six-case DST/reload/archived-block follow-up passed; parent independently checked six-width screenshots, no preview writes and real closure/block persistence. Date/block dialogs preserve target/view and dirty input; archived-barber saved blocks remain removable. Production builds passed. No product-phase status or acceptance checkbox changes; hosted/provider, physical-device and screen-reader acceptance remain unverified.
+
+| Page / feature                                                         | Presentation and status                                                                                                                | Owning phase / stable criterion                                                                                                                                                              | Boundary / retirement condition                                                                                                                                                                 |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Marketing: calendar and booking journey (F01)                          | Present: full marketing composition, labeled static sample calendar/services, preview notice and real configured owner entry link.                                                    | Frontend preview: Phase 01 / [G8-PV-01](#g8-pv-01); local preview check passed 2026-10-23. Phase 06 / AC-008–AC-011 and Phase 08 / AC-012–AC-013 own real booking/calendar behavior. | C02: use a compliant ≥30-minute service example. The product behavior stays deferred; preview does not promise later persistence.                                                               |
+| Setup: illustrative hostname and review (F08)                          | Present: labeled configured/example URL plus in-memory review of actual entered values; only explicit final creation writes.                        | Phase 01 / AC-002 + [G8-PV-02](#g8-pv-02) (local preview check passed 2026-10-23).                                                                                                                    | C06 resolved 2026-10-23: review is presentation-only; only explicit final confirmation creates the actual shop. Distinguish entered slug/canonical configured URL from the example.             |
+| Owner Today/calendar and appointment actions (F02)                     | Present: live shop identity/time zone/publication plus labeled sample appointments and local-only preview dialogs/actions. | Frontend preview: Phase 08 / AC-012–AC-013 + [G8-PV-03](#g8-pv-03) (local preview check passed 2026-10-23; real appointment acceptance remains deferred).                                                                                           | C01 resolved 2026-10-23: Calendar and Activity open labeled preview pages at approved `/` and `/activity` routes; sample actions stay in memory and cannot write appointments or claim success. |
+| Activity: sample events and message outcomes (F02/F09)                 | Present: labeled sample metrics/events/outcomes, filters and preview dialogs; no actual send, attendance or booking claim.                | Frontend preview: Phase 07 / AC-021 + [G8-PV-04](#g8-pv-04) (local preview check passed 2026-10-23); attendance events Phase 13 / AC-017, later outcomes Phases 14–16 / AC-023–AC-026 and AC-029.     | C01 resolved 2026-10-23: target approved `/activity` preview page; real event/message coverage remains governed by its owning features. C03 reset wording remains open and omitted.             |
+| Services: descriptions (F06)                                           | Implemented: presentation-only sample descriptions, visibly distinguished from saved service fields; local Wave D checks passed.                                       | Frontend preview: Phase 02 / AC-005 + [G8-PV-05](#g8-pv-05) (local preview criterion passed 2026-10-23; broader G8 remains open).                                                                                                  | C08 resolved 2026-10-23: no persisted field or real write contract and no future-persistence promise; current service contract is unchanged.                                                    |
+| Barbers: specialty text and independent activation (F05)               | Implemented: presentation-only sample specialty/activation, visibly distinguished from real eligibility/lifecycle; local Wave D checks passed.                     | Frontend preview: Phase 02 / AC-005 + [G8-PV-06](#g8-pv-06) (local preview criterion passed 2026-10-23; broader G8 remains open).                                                                                                  | C08 resolved 2026-10-23: no persisted field or real write contract and no future-persistence promise; current eligibility/lifecycle remains unchanged.                                          |
+| Public shop: booking steps, confirmation and management outcomes (F03) | Planned: use live shop/catalog/availability reads; sample only deferred booking stages, clearly identified as preview content.         | Phase 05 / AC-002–AC-003 + [G8-PV-07](#g8-pv-07) (preview criterion unverified); real booking Phase 06 / AC-008–AC-011 and manage links Phase 10 / AC-018.                                   | C04 reconciled with approved paused-shop contract: hide offerings/starts and expose only approved details. Sample steps cannot imply a booking or working manage link.                          |
+| Settings: future-booking summary (F09)                                 | Planned: sample counts clearly separated from live shop readiness and time-zone-lock state.                                            | Frontend preview: Phase 06 / AC-008–AC-011 + [G8-PV-08](#g8-pv-08) (preview criterion unverified); Phase 18 / AC-022 only for address-recipient effects.                                     | Sample counts never gate publication or lock settings and do not promise a future read-model implementation.                                                                                    |
+| Settings: notification channel/quota panel (F09)                       | Planned: sample panel uses approved global budget scope and truthful outcome labels; omit unresolved reset wording.                    | Frontend preview: Phase 07 / AC-021 and Phase 14 / AC-025–AC-026 + [G8-PV-09](#g8-pv-09) (preview criterion unverified).                                                                     | C03 reconciled with approved email/restricted-WhatsApp and global provider-attempt budget; reset policy stays open. No SMS or shop quota claims.                                                |
+| Settings: address impact, separate contact fields, print kit/PNG (F09) | Planned: presentation-only contact/export examples; retain read-only address, single real contact field, and actual SVG QR download.   | Frontend preview: Phase 05 / AC-002–AC-003 + [G8-PV-10](#g8-pv-10) (preview criterion unverified); real address updates Phase 18 / AC-022.                                                   | C07 resolved 2026-10-23: no extra persisted fields or real write/export contracts; sample controls may use in-memory state but cannot save/send.                                                |
+| Availability: break labels, date reasons and day-row booking badges (F04) | Present: read-only sample break names/date reasons and clearly labeled sample booking counts, separated from actual schedule and exception values; local Wave E preview checks passed. | Frontend preview: Phase 03/04 for non-persisted labels/reasons; Phase 08 / AC-012–AC-013 for booking counts, all under [G8-PV-11](#g8-pv-11) (local preview criterion passed 2026-10-24; broader G8 remains open); real protected booking/configuration edits remain Phase 06/09. | C05: independent copied schedules and barber-specific real blocks remain authoritative. Samples cannot enter save payloads, gate saves, capacity, readiness, slot results or simulate conflict protection. Persistent break labels/date reasons require a separately approved contract. |
+
+The register is a presentation plan, not evidence of implementation or phase acceptance. Use the evidence recorded for each G8-PV check; checks without passing evidence remain unverified. “Present” alone describes captured composition and does not establish correct preview behavior. Do not change product-phase status or acceptance checkboxes based on these preview checks.
 
 ## Cross-phase gates
 
@@ -156,12 +233,12 @@ Proposed implementation safeguard: if cleanup uses an externally callable trigge
 
 **Scope**
 
-- Provide a modest branded entry point and Google-only owner authentication on the approved host arrangement.
+- Preserve the complete approved branded entry composition; use clearly labeled preview content for deferred journeys and Google-only real owner authentication on the approved host arrangement.
 - Create the owner's single unpublished shop with required setup fields and a permanent subdomain warning.
 - Permit own-shop name/contact and pre-first-booking time-zone settings; establish independent server authorization.
-- Route owners without a shop into setup and owners with a shop to an honest empty today landing at the owner root.
+- Route owners without a shop into setup and owners with a shop to a labeled calendar preview at the approved owner root; keep live today/appointment behavior deferred.
 
-**UI references:** [Owner entry and shop setup](DESIGN.md#owner-entry-and-shop-setup). Use only entry, sign-in, setup, basic settings, and the empty owner landing. Field bounds/subdomain rules remain their existing decisions; verify OAuth and persistence independently. Calendar/navigation and publication remain later work.
+**UI references:** [Owner entry and shop setup](DESIGN.md#owner-entry-and-shop-setup). Preserve all approved reference composition; real behavior in this phase remains entry/sign-in/shop creation and the tracked previews for deferred journeys. Field bounds/subdomain rules remain their existing decisions; verify OAuth and persistence independently. Calendar operations/navigation behavior and publication remain later work.
 
 **Acceptance criteria**
 
@@ -236,7 +313,7 @@ Proposed implementation safeguard: if cleanup uses an externally callable trigge
 
 **Status (2026-10-22):** Done. Local implementation, automated evidence, and responsive executor walkthrough are recorded; the approved local-only plan is `docs/.plans/phase-03.md`. Manual screen-reader and physical-device checks remain unverified. Hosted Phase 01 OAuth/forwarding/cookie evidence remains separately deferred and is not a Phase 03 blocker.
 
-**Decisions:** The approved Phase 03 choices resolve the affected recurring-slot portions of [OTQ-007 / PI-004](SPEC.md#16-open-technical-questions): shop-local clock quarters, full-interval wall-clock membership across transitions, and end-only `24:00` with exact-midnight completion. Later booking paths must preserve these predicates; dated restriction/reopening policy remains open.
+**Decisions:** The approved Phase 03 choices resolve the affected recurring-slot portions of [OTQ-007 / PI-004](SPEC.md#16-open-technical-questions): shop-local clock quarters, full-interval wall-clock membership across transitions, and end-only `24:00` with exact-midnight completion. Later booking paths must preserve these predicates; schedule-only restriction/reopening policy is resolved under PI-003, while appointment-bearing edit guards remain open under OTQ-016 / PI-002.
 
 **Scope**
 
@@ -244,7 +321,7 @@ Proposed implementation safeguard: if cleanup uses an externally callable trigge
 - Preview full-duration service/barber slots bounded by both schedules.
 - Apply public notice/local-date horizon and distinct shop-zone DST labels to the preview using [SPEC predicates](SPEC.md#63-availability-semantics-and-established-predicates).
 
-**UI references:** [Availability](DESIGN.md#availability). Use recurring hours, breaks, and slot preview only. The owner preview and DST-fold result layout are adaptations because no dedicated canvas reference exists; public booking and dated edits remain later work.
+**UI references:** [Availability](DESIGN.md#availability). Implement recurring hours, breaks, and slot preview as real behavior in this phase; preserve the complete approved composition and use tracked design-preview content for deferred public booking and dated-edit features. The owner slot preview and DST-fold result layout are adaptations because no dedicated canvas reference exists.
 
 **Acceptance criteria**
 
@@ -292,6 +369,9 @@ Proposed implementation safeguard: if cleanup uses an externally callable trigge
 
 **Status (2026-10-22):** Core automated criteria pass. The local Doop comparison and keyboard/focus walkthrough are recorded against the Availability desktop/tablet/phone frames and the exception, block, and failure specimens. The implementation intentionally uses the compact inline dated editor documented below; it differs from the illustrative exception dialogs/cards. Chromium screenshots were reviewed at 1440/768/390 px, with overflow checks at 320/1024 px. Keyboard loading, visible focus, Enter/Space activation, and reduced motion passed. Archived-barber date saves and new block creation are denied without changing state; removing an existing archived-barber block remains allowed. Phase remains in progress for hosted/provider, physical-device, and screen-reader evidence. The production audit found one unrelated `braces` advisory.
 
+**Wave E UI update (2026-10-24):** The historical compact inline editor above is superseded by the reference-led tabs, overview/capacity cards, upcoming exceptions and branded dialogs. Existing live scheduling contracts and required acceptance boundaries remain unchanged. Local Wave E preview evidence is recorded under G8-PV-11; Phase 04 remains in progress for its remaining evidence.
+
+
 **Manual walkthrough**
 
 1. Compare a normal date with a dated shop/barber override; verify only the selected date changes.
@@ -313,22 +393,26 @@ Proposed implementation safeguard: if cleanup uses an externally callable trigge
 
 **Depends on:** 03.
 
-**Decisions needed:** Resolve any readiness detail beyond the confirmed minimum in [OQ-008](PRD.md#11-open-questions-and-unresolved-decisions) and the known-unpublished presentation in OQ-010 before finalizing those behaviors. Proposed public paths need approval through [APP_ROUTES](APP_ROUTES.md#2-page-inventory). Actual domain/DNS configuration under OQ-002 blocks hosted proof, not local hostname tests.
+**Status (2026-10-23):** In progress. Local publication, public read/preview, paused state, shop-scoped routing, and QR sharing are implemented. The approved decisions and execution scope are in [the Phase 05 plan](.plans/phase-05.md). The owner-authorized Settings fidelity correction restores the shared desktop sidebar and Doop section hierarchy; the former drawer-width failures are fixed. The final repository browser run passed all 207 tests across desktop/tablet/phone, including save/failure/discard recovery, live context refresh, publication and QR checks. Hosted verification is waived below. The owner confirmed that scanning the QR reaches the intended shop URL; a full published/paused physical-phone walkthrough and final phase visual acceptance are not claimed from that destination confirmation.
+
+**Acceptance exception (owner approved 2026-10-23):** Hosted Vercel wildcard routing, DNS/TLS, forwarding, and hosted owner-access-denial verification are waived for Phase 05 acceptance. These checks are no longer phase blockers; no hosted behavior is claimed as verified. The previous browser-suite failures are resolved; final phase visual acceptance and the full phone walkthrough remain separate from the owner's confirmed QR destination.
+
+**Decisions needed:** OQ-008 readiness, OQ-010 paused-shop presentation, and the public root route were resolved for this phase during planning; see [PRD](PRD.md#11-open-questions-and-unresolved-decisions) and [APP_ROUTES](APP_ROUTES.md#2-page-inventory). Actual domain/DNS configuration under OQ-002 remains unverified under the approved acceptance exception above.
 
 **Scope**
 
 - Expose publication/unpublication and readiness feedback in Settings.
 - Serve the correct fictional shop, active offerings, and slot preview from its hostname.
 - Provide its canonical booking-page link and scannable QR code.
-- Verify actual Vercel wildcard routing without treating a hostname as owner permission.
+- Verify local shop-host routing without treating a hostname as owner permission; hosted verification is waived under the acceptance exception above.
 
-**UI references:** [Publication and shop sharing](DESIGN.md#publication-and-shop-sharing). Use readiness, publication, sharing, and public read/slot presentation only. Paused-booking policy remains OQ-010. Contact forms, quota/provider counters, and exports do not expand scope; verify QR/hostname behavior independently.
+**UI references:** [Publication and shop sharing](DESIGN.md#publication-and-shop-sharing). Implement readiness, publication, sharing, and public read/slot behavior in this phase while preserving the complete composition; tracked preview content does not expand real feature scope. Paused-shop exposure follows the resolved OQ-010 contract. Sample contact, quota/provider, and export controls may have ephemeral in-memory interactions but no application-storage writes, provider calls, or claims of real success; verify real QR/hostname behavior independently.
 
 **Acceptance criteria**
 
-- [ ] Missing required setup prevents publication with actionable feedback; completing the approved minimum permits it.
+- [x] Missing required setup prevents publication with actionable feedback; completing the approved minimum permits it.
 - [ ] The link and QR open the same published shop on the intended host with its time zone and demo label; unknown/invalid shop hosts return a clean 404.
-- [ ] Unpublishing persists and uses the agreed public presentation; public access still cannot reveal owner settings or customer lists.
+- [x] Unpublishing persists and uses the agreed public presentation; public access still cannot reveal owner settings or customer lists.
 
 **Manual walkthrough**
 
@@ -339,7 +423,9 @@ Proposed implementation safeguard: if cleanup uses an externally callable trigge
 **Automated verification**
 
 - Add readiness unit tests, scoped host/publication integration tests, and Playwright published/unpublished/unknown-host journeys. Decode the generated QR and compare its canonical destination.
-- Automate readiness/routing/data exposure; physical QR scanning and real wildcard DNS/TLS/deployment require manual evidence.
+- Automate readiness/routing/data exposure; physical QR scanning requires manual evidence. Hosted wildcard DNS/TLS/deployment verification is waived for this phase under the owner-approved exception above.
+
+**Local evidence (2026-10-23):** `pnpm test` (84 tests), `pnpm test:db` (45 tests), lint, typecheck, production build and the final full browser run (207/207, two workers) passed. The prior availability test races and drawer-width assertions are resolved. QR download-content/clipboard fallback, public two-shop isolation and unknown-host HTTP 404 remain covered. Settings screenshots at 1440/768/390px and overflow/navigation checks at 320/390/768/900/901/1024/1440px support the independent visual review's improved-composition verdict. Save → failed save → discard → reload preserves the last committed values; sidebar/header/QR context refreshes after saving. No complete-phase claim is inferred from those checks. AC-003 remains partial; booking, existing manage-link and notification behavior is not implemented in this phase.
 
 **Out of scope:** Submitting public bookings (06), verification of existing appointments/manage links/notifications surviving unpublication (G1/G5 as introduced), custom domains, and additional marketing pages.
 

@@ -8,7 +8,7 @@
 
 [PRD.md](PRD.md) owns journeys and product rules; [SPEC.md](SPEC.md#66-owner-appointments-attendance-and-recovery) owns interaction contracts; [ARCHITECTURE.md](ARCHITECTURE.md#21-owner-appointment-navigation) owns routing mechanisms. This inventory is the single reference for page names, URL paths, and their decision status.
 
-- **Approved:** Owner calendar, appointment, and five management-navigation paths explicitly selected on 2026-10-14; `/sign-in` and `/setup` selected in the approved Phase 01 plan and retained by the approved Proxy refactor.
+- **Approved:** Owner calendar, appointment, and five management-navigation paths explicitly selected on 2026-10-14; `/sign-in` and `/setup` selected in the approved Phase 01 plan; public shop root `https://{shop}.{configured-domain}/` approved in Phase 05 on 2026-10-22.
 - **Proposed:** Suggested paths retained for planning; their required capabilities are documented, but these paths have not been approved.
 - The host responsibilities are approved. Customer manage-token placement is still proposed. Other forms, tabs, and page/modal boundaries remain open except for the approved owner appointment interaction.
 
@@ -27,20 +27,22 @@
 | Owner scheduling   | Shop/barber availability and time blocks        | `https://app.trimtime.com/availability`                 | Approved    |
 | Owner settings     | Shop details, publication, booking link, and QR | `https://app.trimtime.com/settings`                     | Approved    |
 | Owner activity     | Booking activity and message status             | `https://app.trimtime.com/activity`                     | Approved    |
-| Customer           | Shop booking flow                               | `https://{shop}.trimtime.com/`                          | Proposed    |
+| Customer           | Public shop and availability preview            | `https://{shop}.{configured-domain}/`                   | Approved    |
 | Customer           | Manage linked booking                           | `https://{shop}.trimtime.com/manage/{token}`            | Proposed    |
 
 `{shop}` identifies the requested public shop, `{appointmentId}` identifies an owner appointment, and `{token}` represents one booking's capability. None grants owner permission; server operations independently enforce authority and shop scope.
 
-**Implementation snapshot (2026-10-22):** `/services`, `/barbers`, and `/availability` are implemented as owner-authenticated, shop-required pages and internally served from `/owner/services`, `/owner/barbers`, and `/owner/availability`. The owner navigation exposes Today, Services, Barbers, Availability, and Settings; Calendar and Activity remain approved target destinations but are not linked until their workflows exist. The snapshot records local route behavior, not hosted deployment evidence.
+**Implementation snapshot (2026-10-23):** `/services`, `/barbers`, and `/availability` are implemented as owner-authenticated, shop-required pages. Calendar at `/` and Activity at `/activity` now render labeled design previews, internally served from `/owner` and `/owner/activity`, with live shop identity, publication status, and time zone alongside separately labeled sample content. The owner navigation exposes Calendar, Services, Barbers, Availability, Activity, and Settings. Preview controls explore ephemeral in-memory UI state; they do not write sample data to application storage, call providers, or claim real operations succeeded. Appointment writes, event producers, and standalone appointment routes remain deferred. These are the previously approved destinations; local preview implementation does not establish hosted routing or real booking/message behavior.
+
+**Wave C entry snapshot (2026-10-23):** The existing marketing homepage renders the approved full composition with labeled fictional calendar/booking examples. Its Create a shop links use the configured owner origin and `/sign-in`; Try booking opens a preview notice and the existing same-page booking section, not a new customer route. Sign-in preserves Google authentication and existing owner/shop redirects. Setup at `/setup` offers an in-memory review of actual entered values; only the explicit final Create shop confirmation invokes the existing create operation. The entered URL name and configured canonical address are shown separately, without claiming availability, publication or hosted routing. Route approval statuses above are unchanged.
 
 ## 3. Page boundaries and conditional flows
 
 - Owners with a shop enter the calendar after sign-in; owners without a shop enter setup at `/setup`.
 - Owner appointment routes open as responsive shadcn Dialogs when reached from the calendar, and as standalone pages on direct visits or refreshes. The full navigation/save/dismissal contract is in [SPEC §6.6.1](SPEC.md#661-owner-calendar-interaction-contract).
-- The approved target owner navigation is Calendar, Services, Barbers, Availability, Activity, and Settings. Current implemented navigation exposes Today (the draft-shop dashboard), Services, Barbers, Availability, and Settings; unavailable Calendar and Activity destinations are not linked. The supplied screenshot is illustrative; summary counters, bell, profile actions, and detailed visual styling are deferred.
+- Implemented owner navigation is Calendar, Services, Barbers, Availability, Activity, and Settings. Calendar and Activity open labeled preview pages at their approved paths under the [roadmap register](ROADMAP.md#ui-preview-and-mock-register). Their real workflows remain deferred. Calendar preview dialogs use in-memory state without creating appointment URLs; the target standalone/intercepted appointment route contract above is not implemented by this preview.
 - Public booking steps and confirmation are required views; separate URLs for them are not selected. Customer cancellation and rescheduling are required flows; separate URLs for them are not selected. Service/barber forms, availability edits, and QR sharing do not imply additional standalone routes.
-- Unknown/invalid shop hosts return a clean 404. Known unpublished-shop, expired/revoked-link, and deleted-record presentation remains open under PRD OQ-010, while existing manage links survive unpublication.
+- Unknown/invalid shop hosts return a clean HTTP 404. A known unpublished shop returns HTTP 200 with its name, public contact, time zone and fictional-demo notice; offerings and starts are hidden (Phase 05 resolution of PRD OQ-010). Expired/revoked-link and deleted-record presentation remain open; manage-link behavior is later work.
 - Owner authentication uses `/api/auth/**`, including `/api/auth/callback/google`, on the owner host. The protected job and provider outcome entry points remain technical interfaces with paths still open. Reserved system names do not imply pages.
 
 Customer accounts, staff dashboards, payments, public booking lookup/recovery, and a general administrator surface remain outside the documented scope.
