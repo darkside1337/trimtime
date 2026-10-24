@@ -1,8 +1,16 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
+import { Globe2, Clock3, LockKeyhole } from "lucide-react";
 import { SettingsForm } from "@/features/shops/components/settings-form";
-import { getOwnShop } from "@/features/shops/queries";
+import { PublicationControls } from "@/features/shops/components/publication-controls";
+import {
+  getOwnPublicationReadiness,
+  getOwnShop,
+  getOwnSettingsDetails,
+} from "@/features/shops/queries";
+import { ShopSharing } from "@/features/shops/components/shop-sharing";
+import { createShopQrSvg, getCanonicalShopUrl } from "@/features/shops/sharing";
 import { readOwnerContext } from "@/server/owner-context";
 export default function SettingsPage() {
   return (
@@ -17,41 +25,110 @@ async function SettingsContent() {
   if (!context) redirect("/sign-in");
   const shop = await getOwnShop(context);
   if (!shop) redirect("/setup");
+  const readiness = await getOwnPublicationReadiness(context);
+  if (!readiness) redirect("/setup");
+  const details = await getOwnSettingsDetails(context);
+  if (!details) redirect("/setup");
+  const timeZoneLocked = Boolean(details.timeZoneLockedAt);
+  const canonicalUrl = getCanonicalShopUrl(shop.subdomain);
+  let qrData = "";
+  try {
+    qrData = `data:image/svg+xml;base64,${Buffer.from(await createShopQrSvg(shop.subdomain)).toString("base64")}`;
+  } catch {
+    // The canonical link remains usable if QR generation is unavailable.
+  }
   return (
-    <main className="mx-auto flex-1 w-full max-w-[1176px] px-5 py-10 sm:px-7 sm:py-14">
-      <p className="mb-5 text-xs font-bold tracking-[0.14em] text-[var(--success)]">
-        OWNER SETTINGS
-      </p>
-      <h1 className="font-heading text-4xl font-bold tracking-tight sm:text-5xl">
-        Settings
-      </h1>
-      <p className="mt-5 text-muted-foreground">
-        Manage the basics of your unpublished shop.
-      </p>
-      <p className="mt-5 w-fit rounded-full bg-secondary px-3 py-1.5 text-xs font-medium">
-        Unpublished draft
-      </p>
-      <div className="mt-10 grid items-start gap-8 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-        <section className="min-w-0 rounded-xl border border-border p-6 sm:p-8">
-          <h2 className="mb-7 font-heading text-2xl font-bold">Shop details</h2>
-          <SettingsForm shop={shop} />
-        </section>
-        <aside className="rounded-xl border border-border bg-muted p-6 sm:p-7">
-          <p className="w-fit rounded-full bg-secondary px-3 py-2 text-xs font-medium">
-            Unpublished draft
-          </p>
-          <h2 className="mt-6 font-heading text-xl font-bold">
-            Your shop, your details.
-          </h2>
-          <p className="mt-4 text-muted-foreground">
-            The subdomain and address stay read-only here. Your time zone can
-            change until the first appointment is created.
-          </p>
-          <p className="mt-5 text-sm text-muted-foreground">
-            Saving settings does not publish your shop.
-          </p>
-        </aside>
+    <main className="owner-settings w-full max-w-[1120px] flex-1 px-5 py-7 min-[901px]:px-9">
+      <header className="mb-6 grid gap-2">
+        <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold">
+          <span className="uppercase tracking-widest text-[var(--success)]">
+            Owner settings
+          </span>
+          <span className="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-2 py-1">
+            <Clock3 className="size-3" aria-hidden="true" />
+            {shop.timeZone}
+          </span>
+          <span
+            className={
+              shop.published
+                ? "rounded-full bg-[var(--success-surface)] px-2 py-1 text-[var(--success)]"
+                : "rounded-full bg-[var(--warning-surface)] px-2 py-1 text-[var(--warning)]"
+            }
+          >
+            {shop.published ? "Published" : "Unpublished draft"}
+          </span>
+        </div>
+        <h1 className="font-heading text-[28px] leading-tight font-bold tracking-tight sm:text-[32px]">
+          Shop settings &amp; public link
+        </h1>
+        <p className="max-w-2xl text-[13px] leading-relaxed text-muted-foreground">
+          Manage {shop.name} details, publication status, your permanent public
+          link, and scannable QR code.
+        </p>
+      </header>
+      <div
+        className="mb-6 grid gap-3 sm:grid-cols-2"
+        aria-label="Shop settings summary"
+      >
+        <div className="flex items-start justify-between gap-4 rounded-[var(--radius)] border border-border bg-muted p-4">
+          <div className="grid gap-1">
+            <span className="text-[10px] font-semibold tracking-widest text-muted-foreground uppercase">
+              Publication
+            </span>
+            <strong className="font-heading text-xl">
+              {shop.published ? "Published" : "Unpublished"}
+            </strong>
+            <span className="text-xs text-muted-foreground">
+              {shop.published
+                ? "Public availability preview is live"
+                : "Public shop page is paused"}
+            </span>
+          </div>
+          <Globe2
+            className="size-5 shrink-0 text-muted-foreground"
+            aria-hidden="true"
+          />
+        </div>
+        <div className="flex items-start justify-between gap-4 rounded-[var(--radius)] border border-border bg-muted p-4">
+          <div className="grid gap-1">
+            <span className="text-[10px] font-semibold tracking-widest text-muted-foreground uppercase">
+              Time zone
+            </span>
+            <strong className="font-heading text-xl">
+              {timeZoneLocked ? "Permanently locked" : "Editable"}
+            </strong>
+            <span className="text-xs text-muted-foreground">
+              {timeZoneLocked
+                ? "First appointment recorded"
+                : "Can change before the first appointment"}
+            </span>
+          </div>
+          <LockKeyhole
+            className="size-5 shrink-0 text-muted-foreground"
+            aria-hidden="true"
+          />
+        </div>
       </div>
+      <SettingsForm
+        shop={shop}
+        timeZoneLocked={timeZoneLocked}
+        owner={details}
+        publication={
+          <PublicationControls
+            published={shop.published}
+            readiness={readiness}
+          />
+        }
+        sharing={
+          <ShopSharing
+            url={canonicalUrl}
+            qrData={qrData}
+            qrAvailable={Boolean(qrData)}
+            shopName={shop.name}
+            address={shop.address}
+          />
+        }
+      />
     </main>
   );
 }

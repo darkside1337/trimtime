@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { createShopSchema, updateShopSchema } from "../schemas";
+import {
+  createShopSchema,
+  shopPublicationSchema,
+  updateShopSchema,
+} from "../schemas";
 
 describe("shop setup input", () => {
   it("accepts the required details of a fictional draft shop", () => {
@@ -16,10 +20,33 @@ describe("shop setup input", () => {
 
   it("rejects missing and blank required text", () => {
     for (const input of [
-      { subdomain: "juniper", timeZone: "UTC", publicContact: "Call", address: "1 Main" },
-      { name: " ", subdomain: "juniper", timeZone: "UTC", publicContact: "Call", address: "1 Main" },
-      { name: "Juniper", subdomain: "juniper", timeZone: "UTC", publicContact: "  ", address: "1 Main" },
-      { name: "Juniper", subdomain: "juniper", timeZone: "UTC", publicContact: "Call", address: "\t" },
+      {
+        subdomain: "juniper",
+        timeZone: "UTC",
+        publicContact: "Call",
+        address: "1 Main",
+      },
+      {
+        name: " ",
+        subdomain: "juniper",
+        timeZone: "UTC",
+        publicContact: "Call",
+        address: "1 Main",
+      },
+      {
+        name: "Juniper",
+        subdomain: "juniper",
+        timeZone: "UTC",
+        publicContact: "  ",
+        address: "1 Main",
+      },
+      {
+        name: "Juniper",
+        subdomain: "juniper",
+        timeZone: "UTC",
+        publicContact: "Call",
+        address: "\t",
+      },
     ]) {
       expect(createShopSchema.safeParse(input).success).toBe(false);
     }
@@ -71,10 +98,22 @@ describe("shop setup input", () => {
       address: "1 Main",
     };
     for (const subdomain of ["a", "a".repeat(63)]) {
-      expect(createShopSchema.safeParse({ ...input, subdomain }).success).toBe(true);
+      expect(createShopSchema.safeParse({ ...input, subdomain }).success).toBe(
+        true,
+      );
     }
-    for (const subdomain of ["", "a".repeat(64), "-start", "end-", "has.dot", "under_score", "café"]) {
-      expect(createShopSchema.safeParse({ ...input, subdomain }).success).toBe(false);
+    for (const subdomain of [
+      "",
+      "a".repeat(64),
+      "-start",
+      "end-",
+      "has.dot",
+      "under_score",
+      "café",
+    ]) {
+      expect(createShopSchema.safeParse({ ...input, subdomain }).success).toBe(
+        false,
+      );
     }
   });
 
@@ -86,7 +125,9 @@ describe("shop setup input", () => {
       address: "1 Main",
     };
     for (const subdomain of ["app", " www ", "API", "admin"]) {
-      expect(createShopSchema.safeParse({ ...input, subdomain }).success).toBe(false);
+      expect(createShopSchema.safeParse({ ...input, subdomain }).success).toBe(
+        false,
+      );
     }
   });
 
@@ -114,5 +155,20 @@ describe("shop setup input", () => {
         timeZone: "UTC",
       }).success,
     ).toBe(true);
+  });
+
+  it("requires explicit desired publication state and rejects authority fields", () => {
+    expect(
+      shopPublicationSchema.safeParse({
+        published: true,
+        expectedPublished: false,
+      }).success,
+    ).toBe(true);
+    for (const input of [
+      { published: true },
+      { published: "true", expectedPublished: false },
+      { published: true, expectedPublished: false, shopId: "foreign" },
+    ])
+      expect(shopPublicationSchema.safeParse(input).success).toBe(false);
   });
 });

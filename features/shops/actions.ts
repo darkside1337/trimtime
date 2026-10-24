@@ -5,7 +5,7 @@ import type { ActionResult } from "@/lib/action-result";
 import { hasOwnerOrigin, classifyHost } from "@/server/hosts";
 import { readOwnerContext } from "@/server/owner-context";
 import type { ShopView } from "./queries";
-import { createShop, updateOwnShop } from "./mutations";
+import { createShop, setOwnShopPublication, updateOwnShop } from "./mutations";
 import { revalidatePath } from "next/cache";
 
 function denied(): ActionResult<ShopView> {
@@ -55,6 +55,23 @@ export async function updateShopAction(
     await readOwnerContext(requestHeaders),
     formInput(formData),
   );
-  if (result.success) revalidatePath("/owner/availability");
+  if (result.success) revalidatePath("/owner/(management)", "layout");
+  return result;
+}
+
+export async function setShopPublicationAction(input: unknown) {
+  const requestHeaders = await headers();
+  if (
+    classifyHost(requestHeaders) !== "owner" ||
+    !hasOwnerOrigin(requestHeaders)
+  )
+    return denied();
+  const result = await setOwnShopPublication(
+    await readOwnerContext(requestHeaders),
+    input,
+  );
+  if (result.success) {
+    revalidatePath("/owner/(management)", "layout");
+  }
   return result;
 }
