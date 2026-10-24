@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { classifyHost } from "@/server/hosts";
+import { classifyHost, shopLabelForHost } from "@/server/hosts";
+import { shopNotFound, shopUnavailable } from "@/server/shop-host-response";
 
-export function proxy(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   if (pathname === "/owner" || pathname.startsWith("/owner/")) {
     return new NextResponse(null, { status: 404 });
@@ -14,6 +15,26 @@ export function proxy(request: NextRequest) {
     return surface === "owner"
       ? NextResponse.next()
       : new NextResponse(null, { status: 404 });
+  }
+
+  if (surface === "shop") {
+    const label = shopLabelForHost(request.headers);
+    if (
+      !label ||
+      pathname !== "/" ||
+      (request.method !== "GET" && request.method !== "HEAD")
+    )
+      return shopNotFound(request);
+    try {
+      const { publicShopExists } =
+        await import("@/features/shops/public-queries");
+      if (!(await publicShopExists(label))) return shopNotFound(request);
+    } catch {
+      return shopUnavailable();
+    }
+    const destination = request.nextUrl.clone();
+    destination.pathname = "/shop";
+    return NextResponse.rewrite(destination);
   }
 
   if (pathname === "/design-system" || pathname.startsWith("/design-system/")) {

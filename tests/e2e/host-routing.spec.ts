@@ -1,4 +1,10 @@
-import { test, expect, openOwnerNavigation, ownerOrigin, marketingOrigin } from "./fixtures";
+import {
+  test,
+  expect,
+  openOwnerNavigation,
+  ownerOrigin,
+  marketingOrigin,
+} from "./fixtures";
 
 test("invalid hosts and direct internal destinations return HTTP 404", async ({
   request,
@@ -26,9 +32,17 @@ test("invalid hosts and direct internal destinations return HTTP 404", async ({
   ]) {
     expect((await request.get(`${marketingOrigin}${path}`)).status()).toBe(404);
   }
+  const unknownShop = await request.get(marketingOrigin, {
+    headers: {
+      host: "unknown.localhost:3100",
+      "x-forwarded-host": "unknown.localhost:3100",
+    },
+  });
+  expect(unknownShop.status()).toBe(404);
+  expect(await unknownShop.text()).toContain("This shop page isn’t available");
   expect(
     (
-      await request.get(marketingOrigin, {
+      await request.head(marketingOrigin, {
         headers: {
           host: "unknown.localhost:3100",
           "x-forwarded-host": "unknown.localhost:3100",
@@ -82,7 +96,7 @@ test("rewritten navigation keeps canonical URLs and isolates owner responses", a
     const otherPage = await otherContext.newPage();
     await page.goto(ownerOrigin);
     await expect(
-      page.getByText("Routing Private A", { exact: true }),
+      page.getByRole("main").getByText("Routing Private A", { exact: true }),
     ).toBeVisible();
     await openOwnerNavigation(page);
     await page.getByRole("link", { name: "Settings", exact: true }).click();
@@ -91,7 +105,7 @@ test("rewritten navigation keeps canonical URLs and isolates owner responses", a
     await page.goBack();
     await expect(page).toHaveURL(`${ownerOrigin}/`);
     await expect(
-      page.getByRole("heading", { name: "Today", exact: true }),
+      page.getByRole("heading", { name: "Calendar", exact: true }),
     ).toBeVisible();
     await page.goForward();
     await expect(page).toHaveURL(`${ownerOrigin}/settings`);

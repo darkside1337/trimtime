@@ -71,7 +71,7 @@ files once:
 
 ```sh
 mkdir -p certs/local
-mkcert -key-file certs/local/trimtime-local-key.pem -cert-file certs/local/trimtime-local.pem localtest.me app.localtest.me
+mkcert -key-file certs/local/trimtime-local-key.pem -cert-file certs/local/trimtime-local.pem localtest.me app.localtest.me '*.localtest.me'
 pnpm dev:local
 ```
 

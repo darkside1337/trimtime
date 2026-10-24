@@ -7,13 +7,32 @@ describe("approved hosts", () => {
     vi.stubEnv("MARKETING_ORIGIN", "https://example.test");
     vi.resetModules();
     try {
-      const { classifyHost: classify, hasOwnerOrigin: ownerOrigin } = await import("../hosts");
+      const { classifyHost: classify, hasOwnerOrigin: ownerOrigin } =
+        await import("../hosts");
       expect(classify(new Headers({ host: "EXAMPLE.TEST" }))).toBe("marketing");
-      expect(classify(new Headers({ host: "app.example.test", "x-forwarded-host": "app.example.test" }))).toBe("owner");
-      expect(classify(new Headers({ host: "app.example.test.attacker.test" }))).toBeNull();
-      expect(classify(new Headers({ host: "app.example.test:3100" }))).toBeNull();
-      expect(ownerOrigin(new Headers({ origin: "https://app.example.test" }))).toBe(true);
-      expect(ownerOrigin(new Headers({ origin: "http://app.example.test" }))).toBe(false);
+      expect(
+        classify(
+          new Headers({
+            host: "app.example.test",
+            "x-forwarded-host": "app.example.test",
+          }),
+        ),
+      ).toBe("owner");
+      expect(classify(new Headers({ host: "juniper.example.test" }))).toBe(
+        "shop",
+      );
+      expect(
+        classify(new Headers({ host: "app.example.test.attacker.test" })),
+      ).toBeNull();
+      expect(
+        classify(new Headers({ host: "app.example.test:3100" })),
+      ).toBeNull();
+      expect(
+        ownerOrigin(new Headers({ origin: "https://app.example.test" })),
+      ).toBe(true);
+      expect(
+        ownerOrigin(new Headers({ origin: "http://app.example.test" })),
+      ).toBe(false);
     } finally {
       vi.unstubAllEnvs();
       vi.resetModules();
@@ -21,14 +40,21 @@ describe("approved hosts", () => {
   });
 
   it("recognizes only exact local marketing and owner hosts", () => {
-    expect(classifyHost(new Headers({ host: "localhost:3100" }))).toBe("marketing");
-    expect(classifyHost(new Headers({ host: "app.localhost:3100" }))).toBe("owner");
+    expect(classifyHost(new Headers({ host: "localhost:3100" }))).toBe(
+      "marketing",
+    );
+    expect(classifyHost(new Headers({ host: "app.localhost:3100" }))).toBe(
+      "owner",
+    );
+    expect(classifyHost(new Headers({ host: "juniper.localhost:3100" }))).toBe(
+      "shop",
+    );
   });
 
   it("rejects deceptive, malformed, wrong-port, and conflicting forwarded hosts", () => {
     const invalidHosts: Record<string, string>[] = [
       { host: "app.localhost.evil.test:3100" },
-      { host: "evil-app.localhost:3100" },
+      { host: "foo.bar.localhost:3100" },
       { host: "app.localhost:3000" },
       { host: "app.localhost:3100", "x-forwarded-host": "localhost:3100" },
       { host: "app.localhost:3100, evil.test" },
@@ -39,8 +65,12 @@ describe("approved hosts", () => {
   });
 
   it("requires the exact owner origin for writes", () => {
-    expect(hasOwnerOrigin(new Headers({ origin: "http://app.localhost:3100" }))).toBe(true);
-    expect(hasOwnerOrigin(new Headers({ origin: "http://localhost:3100" }))).toBe(false);
+    expect(
+      hasOwnerOrigin(new Headers({ origin: "http://app.localhost:3100" })),
+    ).toBe(true);
+    expect(
+      hasOwnerOrigin(new Headers({ origin: "http://localhost:3100" })),
+    ).toBe(false);
     expect(hasOwnerOrigin(new Headers())).toBe(false);
   });
 });
