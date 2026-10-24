@@ -11,9 +11,31 @@ import { SlotPreviewPanel } from "./slot-preview-panel";
 import { UpcomingSavedExceptions } from "./upcoming-saved-exceptions";
 import { RecurringHoursPanel } from "./recurring-hours-panel";
 import { BreakEditorDialog } from "./break-editor-dialog";
+import { OverviewStat } from "./overview-stat";
 import { weeklyOpenMinutes } from "../schedule-draft";
 
 import type { AvailabilityData, AvailabilityOverview } from "../queries";
+
+const availabilityTabs = [
+  {
+    id: "availability-tab-shop",
+    panelId: "availability-panel-weekly",
+    value: "shop",
+    label: "Shop hours",
+  },
+  {
+    id: "availability-tab-barber",
+    panelId: "availability-panel-weekly",
+    value: "barber",
+    label: "Barber schedules",
+  },
+  {
+    id: "availability-tab-dates",
+    panelId: "availability-panel-dates",
+    value: "dates",
+    label: "Date overrides & blocks",
+  },
+] as const;
 
 export function AvailabilityManagement({
   initial,
@@ -148,49 +170,29 @@ export function AvailabilityManagement({
         className="grid gap-3 min-[901px]:grid-cols-3"
         aria-label="Availability overview"
       >
-        <section
-          className="rounded-xl border border-border bg-muted/40 p-4"
-          aria-label="Weekly open hours"
-        >
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Weekly open hours
-          </p>
-          <p className="mt-1 font-heading text-2xl font-bold tabular-nums">
-            {Math.floor(weeklyMinutes / 60)}h
-            {weeklyMinutes % 60 ? ` ${weeklyMinutes % 60}m` : ""}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            Saved shop hours after breaks
-          </p>
-        </section>
-        <section
-          className="rounded-xl border border-border bg-muted/40 p-4"
-          aria-label="Staff coverage"
-        >
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Staff coverage
-          </p>
-          <p className="mt-1 font-heading text-2xl font-bold tabular-nums">
-            {activeBarberCount} {activeBarberCount === 1 ? "barber" : "barbers"}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            Active barbers with saved working hours
-          </p>
-        </section>
-        <section
-          className="rounded-xl border border-border bg-muted/40 p-4"
-          aria-label="Active exceptions"
-        >
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Saved future exceptions
-          </p>
-          <p className="mt-1 font-heading text-2xl font-bold tabular-nums">
-            {initialOverview.exceptions.length} planned
-          </p>
-          <p className="text-xs text-muted-foreground">
-            Saved future closures, overrides, and barber blocks
-          </p>
-        </section>
+        <OverviewStat
+          ariaLabel="Weekly open hours"
+          label="Weekly open hours"
+          value={
+            <>
+              {Math.floor(weeklyMinutes / 60)}h
+              {weeklyMinutes % 60 ? ` ${weeklyMinutes % 60}m` : ""}
+            </>
+          }
+          detail="Saved shop hours after breaks"
+        />
+        <OverviewStat
+          ariaLabel="Staff coverage"
+          label="Staff coverage"
+          value={`${activeBarberCount} ${activeBarberCount === 1 ? "barber" : "barbers"}`}
+          detail="Active barbers with saved working hours"
+        />
+        <OverviewStat
+          ariaLabel="Active exceptions"
+          label="Saved future exceptions"
+          value={`${initialOverview.exceptions.length} planned`}
+          detail="Saved future closures, overrides, and barber blocks"
+        />
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-4">
         <Tabs
@@ -199,33 +201,20 @@ export function AvailabilityManagement({
           className="w-full min-w-0 min-[901px]:w-auto"
         >
           <TabsList className="grid h-auto! w-full grid-cols-3 gap-1">
-            <TabsTrigger
-              id="availability-tab-shop"
-              aria-controls="availability-panel-weekly"
-              value="shop"
-              disabled={pending}
-              className="h-auto! min-h-11 whitespace-normal text-center text-xs sm:text-sm"
-            >
-              Shop hours
-            </TabsTrigger>
-            <TabsTrigger
-              id="availability-tab-barber"
-              aria-controls="availability-panel-weekly"
-              value="barber"
-              disabled={pending}
-              className="h-auto! min-h-11 whitespace-normal text-center text-xs sm:text-sm"
-            >
-              Barber schedules
-            </TabsTrigger>
-            <TabsTrigger
-              id="availability-tab-dates"
-              aria-controls="availability-panel-dates"
-              value="dates"
-              disabled={pending}
-              className="h-auto! min-h-11 whitespace-normal text-center text-xs sm:text-sm"
-            >
-              Date overrides &amp; blocks ({initialOverview.exceptions.length})
-            </TabsTrigger>
+            {availabilityTabs.map((tab) => (
+              <TabsTrigger
+                key={tab.value}
+                id={tab.id}
+                aria-controls={tab.panelId}
+                value={tab.value}
+                disabled={pending}
+                className="h-auto! min-h-11 whitespace-normal text-center text-xs sm:text-sm"
+              >
+                {tab.value === "dates"
+                  ? `${tab.label} (${initialOverview.exceptions.length})`
+                  : tab.label}
+              </TabsTrigger>
+            ))}
           </TabsList>
         </Tabs>
         <Button type="button" disabled={pending} onClick={handleAddDateClick}>

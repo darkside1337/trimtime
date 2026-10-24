@@ -2,15 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { RemoveBlockDialog } from "./remove-block-dialog";
 import { OwnerDiscardDialog } from "@/components/owner-discard-dialog";
 import type { AvailabilityData } from "../queries";
 import { createTimeBlockAction, removeTimeBlockAction } from "../actions";
@@ -443,43 +435,15 @@ export function DateAvailabilityManagement({
           </>
         )}
       </DateExceptionDialog>
-      <Dialog
+      <RemoveBlockDialog
         open={removeBlockId !== null}
+        busy={busy}
+        canRemove={Boolean(removeBlockId)}
+        message={removeMessage}
         onOpenChange={handleRemoveDialogOpenChange}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Remove this barber time block?</DialogTitle>
-            <DialogDescription>
-              The saved block will stop restricting this barber&apos;s
-              availability. This cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          {removeMessage && (
-            <p role="alert" className="text-sm text-destructive">
-              {removeMessage}
-            </p>
-          )}
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={busy}
-              onClick={() => setRemoveBlockId(null)}
-            >
-              Keep block
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              disabled={busy || !removeBlockId}
-              onClick={handleConfirmBlockRemoval}
-            >
-              {busy ? "Removing…" : "Remove block"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        onKeepBlock={() => setRemoveBlockId(null)}
+        onConfirm={handleConfirmBlockRemoval}
+      />
       <OwnerDiscardDialog
         open={discardDialogOpen}
         onKeepEditing={handleKeepEditing}
