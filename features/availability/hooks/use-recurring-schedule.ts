@@ -17,9 +17,7 @@ import {
 } from "../actions";
 import type { AvailabilityData } from "../queries";
 import type { ActionFieldErrors } from "@/lib/action-result";
-
-export type ScheduleTarget =
-  { kind: "shop" } | { kind: "barber"; barberId: string };
+import type { ScheduleTarget } from "../types";
 
 export function useRecurringSchedule(
   initial: AvailabilityData,

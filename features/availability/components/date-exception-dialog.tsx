@@ -13,6 +13,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { AvailabilityData } from "../queries";
+import {
+  scheduleTargetFromValue,
+  scheduleTargetValue,
+  type ScheduleTarget,
+} from "../types";
 
 type ExceptionView = "date" | "block";
 
@@ -36,14 +41,17 @@ export function DateExceptionDialog({
   open: boolean;
   date: string;
   dialogDate: string;
-  dialogTarget: string;
+  dialogTarget: ScheduleTarget;
   exceptionView: ExceptionView;
   hasLoadedSelection: boolean;
   busy: boolean;
   dirty: boolean;
   message: string;
   barbers: AvailabilityData["barbers"];
-  onSelectionChange: (selection: { date: string; target: string }) => void;
+  onSelectionChange: (selection: {
+    date: string;
+    target: ScheduleTarget;
+  }) => void;
   onLoad: () => void;
   onViewChange: (view: ExceptionView) => void;
   onClose: () => void;
@@ -51,7 +59,10 @@ export function DateExceptionDialog({
 }) {
   const activeBarbers = barbers.filter((barber) => !barber.archived);
   const selectedArchivedBarber = barbers.find(
-    (barber) => barber.id === dialogTarget && barber.archived,
+    (barber) =>
+      dialogTarget.kind === "barber" &&
+      barber.id === dialogTarget.barberId &&
+      barber.archived,
   );
 
   function handleOpenChange(nextOpen: boolean) {
@@ -63,7 +74,10 @@ export function DateExceptionDialog({
   }
 
   function handleTargetChange(event: ChangeEvent<HTMLSelectElement>) {
-    onSelectionChange({ date: dialogDate, target: event.target.value });
+    onSelectionChange({
+      date: dialogDate,
+      target: scheduleTargetFromValue(event.target.value),
+    });
   }
 
   function handleViewChange(event: ChangeEvent<HTMLSelectElement>) {
@@ -101,7 +115,7 @@ export function DateExceptionDialog({
             <select
               id="add-exception-target"
               className="h-10 rounded-md border border-input bg-background px-3"
-              value={dialogTarget}
+              value={scheduleTargetValue(dialogTarget)}
               disabled={busy || dirty}
               onChange={handleTargetChange}
             >

@@ -22,7 +22,7 @@ import { useDateOverrideDraft } from "../hooks/use-date-override-draft";
 import { BarberTimeBlockEditor } from "./barber-time-block-editor";
 import { DateExceptionDialog } from "./date-exception-dialog";
 
-type Target = "shop" | string;
+import { barberIdForTarget, isSameTarget, scheduleTargetFromValue, type ScheduleTarget } from "../types";
 type ExceptionView = "date" | "block";
 
 export function DateAvailabilityManagement({
@@ -34,17 +34,17 @@ export function DateAvailabilityManagement({
   const [date, setDate] = useState("");
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [dialogDate, setDialogDate] = useState("");
-  const [dialogTarget, setDialogTarget] = useState<Target>("shop");
+  const [dialogTarget, setDialogTarget] = useState<ScheduleTarget>({ kind: "shop" });
   const [exceptionView, setExceptionView] = useState<ExceptionView>("date");
   const [discardDialogOpen, setDiscardDialogOpen] = useState(false);
   const [pendingLoad, setPendingLoad] = useState<{
     date: string;
-    target: Target;
+    target: ScheduleTarget;
     view?: ExceptionView;
   } | null>(null);
   const [removeBlockId, setRemoveBlockId] = useState<string | null>(null);
   const [removeMessage, setRemoveMessage] = useState("");
-  const [target, setTarget] = useState<Target>("shop");
+  const [target, setTarget] = useState<ScheduleTarget>({ kind: "shop" });
   const [blockBarberId, setBlockBarberId] = useState("");
   const {
     data,
@@ -63,15 +63,15 @@ export function DateAvailabilityManagement({
     [initial.barbers],
   );
   const targetArchived = initial.barbers.some(
-    (barber) => barber.id === target && barber.archived,
+    (barber) => target.kind === "barber" && barber.id === target.barberId && barber.archived,
   );
   const hasBlockDraft = blockDraft.hasDraft;
   const busy = loading || mutationPending;
   const hasLoadedSelection =
     data?.date === date &&
-    loadedTarget === target &&
+    loadedTarget !== null && isSameTarget(loadedTarget, target) &&
     data.date === dialogDate &&
-    loadedTarget === dialogTarget;
+    loadedTarget !== null && isSameTarget(loadedTarget, dialogTarget);
 
   useEffect(() => {
     const openAdd = () => {
@@ -85,7 +85,7 @@ export function DateAvailabilityManagement({
   }, [date, target]);
 
   const load = useCallback(
-    async (dateValue: string, targetValue: Target) => {
+    async (dateValue: string, targetValue: ScheduleTarget) => {
       const result = await loadAvailability(dateValue, targetValue);
       if (!result) return false;
       if ("error" in result) {
@@ -113,7 +113,7 @@ export function DateAvailabilityManagement({
       if (!detail?.date || !detail.target) return;
       const next = {
         date: detail.date,
-        target: detail.target as Target,
+        target: scheduleTargetFromValue(detail.target),
         view: detail.view ?? "date",
       };
       if (dirty || hasBlockDraft) {
@@ -128,9 +128,7 @@ export function DateAvailabilityManagement({
       setDate(next.date);
       setTarget(next.target);
       setBlockBarberId(
-        activeBarbers.some((barber) => barber.id === next.target)
-          ? next.target
-          : "",
+        barberIdForTarget(next.target, activeBarbers),
       );
       void load(next.date, next.target);
     };
@@ -158,7 +156,7 @@ export function DateAvailabilityManagement({
     setAddDialogOpen(false);
   }
 
-  function requestDialogSelection(next: { date: string; target: Target }) {
+  function requestDialogSelection(next: { date: string; target: ScheduleTarget }) {
     if (dirty || hasBlockDraft) {
       setPendingLoad({ ...next, view: exceptionView });
       setDiscardDialogOpen(true);
@@ -167,9 +165,7 @@ export function DateAvailabilityManagement({
     setDialogDate(next.date);
     setDialogTarget(next.target);
     setBlockBarberId(
-      activeBarbers.some((barber) => barber.id === next.target)
-        ? next.target
-        : "",
+      barberIdForTarget(next.target, activeBarbers),
     );
     blockDraft.reset();
   }
@@ -192,9 +188,7 @@ export function DateAvailabilityManagement({
       setDate(dialogDate);
       setTarget(dialogTarget);
       setBlockBarberId(
-        activeBarbers.some((barber) => barber.id === dialogTarget)
-          ? dialogTarget
-          : "",
+        barberIdForTarget(dialogTarget, activeBarbers),
       );
       setAddDialogOpen(true);
     }
@@ -267,7 +261,7 @@ export function DateAvailabilityManagement({
       return;
     }
     const barberId =
-      activeBarbers.find((barber) => barber.id === target)?.id ?? blockBarberId;
+      barberIdForTarget(target, activeBarbers) || blockBarberId;
     if (!barberId) {
       setMessage("Add an active barber before creating a block.");
       return;
@@ -311,9 +305,9 @@ export function DateAvailabilityManagement({
     if (enabled && !draft.override && !draft.working.length && date) {
       const day = (new Date(`${date}T00:00:00Z`).getUTCDay() + 6) % 7;
       const recurring =
-        target === "shop"
+        target.kind === "shop"
           ? initial.shop.week[day]
-          : initial.barbers.find((barber) => barber.id === target)?.schedule
+          : initial.barbers.find((barber) => barber.id === target.barberId)?.schedule
               .week[day];
       scheduleDraft.changeDraft({
         ...draft,
@@ -370,9 +364,7 @@ export function DateAvailabilityManagement({
       setDate(next.date);
       setTarget(next.target);
       setBlockBarberId(
-        activeBarbers.some((barber) => barber.id === next.target)
-          ? next.target
-          : "",
+        barberIdForTarget(next.target, activeBarbers),
       );
       void load(next.date, next.target);
       setAddDialogOpen(true);

@@ -5,6 +5,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { DraftRange } from "../schedule-draft";
+import type { ScheduleTarget } from "../types";
 
 export type DateOverrideDraft = {
   working: DraftRange[];
@@ -27,7 +28,7 @@ export function DateOverrideFields({
   onReload,
 }: {
   date: string;
-  target: string;
+  target: ScheduleTarget;
   targetArchived: boolean;
   draft: DateOverrideDraft;
   busy: boolean;
@@ -196,7 +197,7 @@ export function DateOverrideFields({
           disabled={busy}
           onCheckedChange={handleClosedChange}
         />
-        {target === "shop"
+        {target.kind === "shop"
           ? "Close the shop for this date"
           : "Mark this barber off for this date"}
       </label>

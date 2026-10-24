@@ -1,10 +1,8 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import type {
-  ScheduleTarget,
-  useRecurringSchedule,
-} from "../hooks/use-recurring-schedule";
+import type { useRecurringSchedule } from "../hooks/use-recurring-schedule";
+import type { ScheduleTarget, Section } from "../types";
 import { days } from "../schedule-draft";
 import { ScheduleEditor } from "./weekly-schedule-editor";
 
@@ -16,10 +14,10 @@ export function RecurringHoursPanel({
   onSwitchTarget,
 }: {
   workflow: Controller;
-  section: "shop" | "barber";
+  section: Section;
   onSwitchTarget: (
     target: ScheduleTarget,
-    section: "shop" | "barber" | "dates",
+    section: Section | "dates",
   ) => void;
 }) {
   const {

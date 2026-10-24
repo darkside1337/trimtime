@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { AvailabilityData } from "../queries";
-import type { DateAvailabilityView } from "../types";
+import type { DateAvailabilityView, ScheduleTarget } from "../types";
 import { displayBlockInstant } from "../date-editor";
 import type { useTimeBlockDraft } from "../hooks/use-time-block-draft";
 
@@ -88,7 +88,7 @@ export function BarberTimeBlockEditor({
   onRemove,
 }: {
   date: string;
-  target: string;
+  target: ScheduleTarget;
   targetArchived: boolean;
   barbers: AvailabilityData["barbers"];
   data: DateAvailabilityView;
@@ -150,7 +150,7 @@ export function BarberTimeBlockEditor({
               onChange={(event) => draft.setNote(event.target.value)}
             />
           </div>
-          {target === "shop" && (
+          {target.kind === "shop" && (
             <div className="grid max-w-sm gap-2">
               <Label htmlFor="block-barber">Barber for this time block</Label>
               <select
@@ -172,7 +172,9 @@ export function BarberTimeBlockEditor({
           <Button
             type="button"
             className="w-fit"
-            disabled={busy || dirty || (target === "shop" && !blockBarberId)}
+            disabled={
+              busy || dirty || (target.kind === "shop" && !blockBarberId)
+            }
             onClick={onSave}
           >
             Save time block

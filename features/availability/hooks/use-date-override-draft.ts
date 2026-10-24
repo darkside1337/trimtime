@@ -8,8 +8,7 @@ import type { DateAvailabilityView, DateScheduleView } from "../types";
 import { parseDraftMinute } from "../schedule-draft";
 import type { DateOverrideDraft } from "../components/date-override-fields";
 import { dateRangeDrafts } from "../date-editor";
-
-type Target = "shop" | string;
+import type { ScheduleTarget } from "../types";
 
 export function useDateOverrideDraft() {
   const [draft, setDraft] = useState<DateOverrideDraft>({
@@ -49,7 +48,7 @@ export function useDateOverrideDraft() {
     data,
   }: {
     date: string;
-    target: Target;
+    target: ScheduleTarget;
     data: DateAvailabilityView | null;
   }) {
     if (!date || !data) return { type: "not-ready" as const };
@@ -88,9 +87,10 @@ export function useDateOverrideDraft() {
     }
     setFieldErrors({});
     const state =
-      target === "shop"
+      target.kind === "shop"
         ? data.shop
-        : data.barbers.find((barber) => barber.id === target)?.schedule;
+        : data.barbers.find((barber) => barber.id === target.barberId)
+            ?.schedule;
     if (!state) return { type: "not-ready" as const };
     const input = {
       date,
@@ -105,9 +105,12 @@ export function useDateOverrideDraft() {
     };
     try {
       const result =
-        target === "shop"
+        target.kind === "shop"
           ? await saveShopDateScheduleAction(input)
-          : await saveBarberDateScheduleAction({ ...input, barberId: target });
+          : await saveBarberDateScheduleAction({
+              ...input,
+              barberId: target.barberId,
+            });
       if (!result.success)
         return { type: "error" as const, message: result.error.message };
       setDirty(false);

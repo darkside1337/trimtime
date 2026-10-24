@@ -5,10 +5,8 @@ import { Button } from "@/components/ui/button";
 import { OwnerDiscardDialog } from "@/components/owner-discard-dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DateAvailabilityManagement } from "./date-availability-management";
-import {
-  useRecurringSchedule,
-  type ScheduleTarget,
-} from "../hooks/use-recurring-schedule";
+import { useRecurringSchedule } from "../hooks/use-recurring-schedule";
+import { isSameTarget, type ScheduleTarget, type Section } from "../types";
 import { SlotPreviewPanel } from "./slot-preview-panel";
 import { UpcomingSavedExceptions } from "./upcoming-saved-exceptions";
 import { RecurringHoursPanel } from "./recurring-hours-panel";
@@ -16,8 +14,6 @@ import { BreakEditorDialog } from "./break-editor-dialog";
 import { weeklyOpenMinutes } from "../schedule-draft";
 
 import type { AvailabilityData, AvailabilityOverview } from "../queries";
-
-type Target = ScheduleTarget;
 
 export function AvailabilityManagement({
   initial,
@@ -44,10 +40,10 @@ export function AvailabilityManagement({
     breakOpener,
     breakStartInput,
   } = recurring;
-  const [section, setSection] = useState<"shop" | "barber" | "dates">("shop");
+  const [section, setSection] = useState<Section>("shop");
   const [pendingNavigation, setPendingNavigation] = useState<{
-    target: Target;
-    section: "shop" | "barber" | "dates";
+    target: ScheduleTarget;
+    section: Section;
     addDate: boolean;
   } | null>(null);
 
@@ -65,16 +61,13 @@ export function AvailabilityManagement({
       item.schedule.week.some((day) => day.working.length > 0),
   ).length;
 
-  function applyTarget(next: Target) {
+  function applyTarget(next: ScheduleTarget) {
     recurring.applyTarget(next);
   }
 
-  function switchTo(next: Target, nextSection: "shop" | "barber" | "dates") {
+  function switchTo(next: ScheduleTarget, nextSection: Section) {
     if (pending) return;
-    const sameTarget =
-      next.kind === target.kind &&
-      (next.kind === "shop" ||
-        (target.kind === "barber" && next.barberId === target.barberId));
+    const sameTarget = isSameTarget(next, target);
     if (dirty && !sameTarget) {
       setPendingNavigation({
         target: next,
@@ -87,7 +80,7 @@ export function AvailabilityManagement({
     setSection(nextSection);
   }
 
-  function changeSection(next: "shop" | "barber" | "dates") {
+  function changeSection(next: Section) {
     if (next === section) return;
     if (dirty) {
       setPendingNavigation({
@@ -263,7 +256,7 @@ export function AvailabilityManagement({
       >
         <RecurringHoursPanel
           workflow={recurring}
-          section={section as "shop" | "barber"}
+          section={section}
           onSwitchTarget={switchTo}
         />
       </div>

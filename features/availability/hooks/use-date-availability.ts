@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getOwnDateAvailabilityAction } from "../actions";
-import type { DateAvailabilityView } from "../types";
-
-export type DateAvailabilityTarget = string;
+import type { DateAvailabilityView, ScheduleTarget } from "../types";
 
 export function useDateAvailability() {
   const [data, setData] = useState<DateAvailabilityView | null>(null);
   const [loadedTarget, setLoadedTarget] =
-    useState<DateAvailabilityTarget | null>(null);
+    useState<ScheduleTarget | null>(null);
   const [loading, setLoading] = useState(false);
   const requestVersion = useRef(0);
 
@@ -19,7 +17,7 @@ export function useDateAvailability() {
   );
 
   const load = useCallback(
-    async (date: string, target: DateAvailabilityTarget) => {
+    async (date: string, target: ScheduleTarget) => {
       if (!date) return null;
       const version = ++requestVersion.current;
       setLoading(true);
@@ -38,9 +36,9 @@ export function useDateAvailability() {
       if (!result.success) return { error: result.error.message } as const;
 
       const state =
-        target === "shop"
+        target.kind === "shop"
           ? result.data.shop
-          : result.data.barbers.find((barber) => barber.id === target)
+          : result.data.barbers.find((barber) => barber.id === target.barberId)
               ?.schedule;
       setData(result.data);
       setLoadedTarget(target);

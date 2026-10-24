@@ -1,5 +1,37 @@
 export type MinuteRange = { start: number; end: number };
 
+export type ScheduleTarget =
+  { kind: "shop" } | { kind: "barber"; barberId: string };
+
+export type Section = "shop" | "barber" | "dates";
+
+export function isSameTarget(a: ScheduleTarget, b: ScheduleTarget) {
+  return (
+    a.kind === b.kind &&
+    (a.kind === "shop" || (b.kind === "barber" && a.barberId === b.barberId))
+  );
+}
+
+export function scheduleTargetFromValue(value: string): ScheduleTarget {
+  return value === "shop"
+    ? { kind: "shop" }
+    : { kind: "barber", barberId: value };
+}
+
+export function scheduleTargetValue(target: ScheduleTarget) {
+  return target.kind === "shop" ? "shop" : target.barberId;
+}
+
+export function barberIdForTarget(
+  target: ScheduleTarget,
+  activeBarbers: readonly { id: string }[],
+) {
+  return target.kind === "barber" &&
+    activeBarbers.some((barber) => barber.id === target.barberId)
+    ? target.barberId
+    : "";
+}
+
 export type DaySchedule = {
   working: MinuteRange[];
   breaks: MinuteRange[];
