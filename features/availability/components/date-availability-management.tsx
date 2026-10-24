@@ -10,6 +10,12 @@ import { dateRangeDrafts } from "../date-editor";
 import { useDateAvailability } from "../hooks/use-date-availability";
 import { useTimeBlockDraft } from "../hooks/use-time-block-draft";
 import { useDateOverrideDraft } from "../hooks/use-date-override-draft";
+import { useDiscardGuard } from "../hooks/use-discard-guard";
+import {
+  emitAvailabilityChanged,
+  subscribeAvailabilityAdd,
+  subscribeAvailabilityEdit,
+} from "../availability-events";
 import { BarberTimeBlockEditor } from "./barber-time-block-editor";
 import { DateExceptionDialog } from "./date-exception-dialog";
 import { RemoveBlockDialog } from "./remove-block-dialog";
@@ -35,12 +41,6 @@ export function DateAvailabilityManagement({
     kind: "shop",
   });
   const [exceptionView, setExceptionView] = useState<ExceptionView>("date");
-  const [discardDialogOpen, setDiscardDialogOpen] = useState(false);
-  const [pendingLoad, setPendingLoad] = useState<{
-    date: string;
-    target: ScheduleTarget;
-    view?: ExceptionView;
-  } | null>(null);
   const [removeBlockId, setRemoveBlockId] = useState<string | null>(null);
   const [removeMessage, setRemoveMessage] = useState("");
   const [target, setTarget] = useState<ScheduleTarget>({ kind: "shop" });
@@ -63,7 +63,10 @@ export function DateAvailabilityManagement({
       barber.id === target.barberId &&
       barber.archived,
   );
-  const hasBlockDraft = blockDraft.hasDraft;
+  const discardGuard = useDiscardGuard(dirty || blockDraft.hasDraft, () => {
+    scheduleDraft.discardChanges();
+    blockDraft.reset();
+  });
   const busy = loading || mutationPending;
   const blockBarberId =
     barberIdForTarget(target, activeBarbers) ||
@@ -79,14 +82,11 @@ export function DateAvailabilityManagement({
   );
 
   useEffect(() => {
-    const openAdd = () => {
+    return subscribeAvailabilityAdd(() => {
       setDialogDate(date);
       setDialogTarget(target);
       setAddDialogOpen(true);
-    };
-    window.addEventListener("trimtime:availability-add", openAdd);
-    return () =>
-      window.removeEventListener("trimtime:availability-add", openAdd);
+    });
   }, [date, target]);
 
   const load = useCallback(
@@ -106,39 +106,32 @@ export function DateAvailabilityManagement({
     [loadAvailability, loadDraft],
   );
 
+  const openSelection = useCallback(
+    (next: { date: string; target: ScheduleTarget }, view: ExceptionView) => {
+      setDialogDate(next.date);
+      setDialogTarget(next.target);
+      setExceptionView(view);
+      setDate(next.date);
+      setTarget(next.target);
+      setShopBlockBarberId("");
+      void load(next.date, next.target);
+      setAddDialogOpen(true);
+    },
+    [load],
+  );
+  const guardDiscard = discardGuard.guard;
+
   useEffect(() => {
-    const editException = (event: Event) => {
-      const detail = (
-        event as CustomEvent<{
-          date?: string;
-          target?: string;
-          view?: ExceptionView;
-        }>
-      ).detail;
-      if (!detail?.date || !detail.target) return;
+    return subscribeAvailabilityEdit((detail) => {
       const next = {
         date: detail.date,
         target: scheduleTargetFromValue(detail.target),
         view: detail.view ?? "date",
       };
-      if (dirty || hasBlockDraft) {
-        setPendingLoad(next);
-        setDiscardDialogOpen(true);
-        return;
-      }
-      setExceptionView(next.view);
-      setDialogDate(next.date);
-      setDialogTarget(next.target);
-      setAddDialogOpen(true);
-      setDate(next.date);
-      setTarget(next.target);
-      setShopBlockBarberId("");
-      void load(next.date, next.target);
-    };
-    window.addEventListener("trimtime:availability-edit", editException);
-    return () =>
-      window.removeEventListener("trimtime:availability-edit", editException);
-  }, [dirty, hasBlockDraft, load]);
+      const open = () => openSelection(next, next.view);
+      guardDiscard(open, open, true);
+    });
+  }, [guardDiscard, openSelection]);
 
   const reload = () => load(date, target);
 
@@ -146,7 +139,7 @@ export function DateAvailabilityManagement({
     successMessage?: string,
     reloadFailedMessage?: string,
   ) {
-    window.dispatchEvent(new Event("trimtime:availability-changed"));
+    emitAvailabilityChanged();
     router.refresh();
     if (await reload()) {
       if (successMessage) setMessage(successMessage);
@@ -155,23 +148,30 @@ export function DateAvailabilityManagement({
 
   function requestAddDialogClose() {
     if (busy) return;
-    if (dirty || hasBlockDraft) {
-      setDiscardDialogOpen(true);
-      return;
-    }
-    setAddDialogOpen(false);
+    discardGuard.guard(
+      () => {
+        setAddDialogOpen(false);
+        void reload();
+      },
+      () => setAddDialogOpen(false),
+    );
   }
 
-  function requestDialogSelection(next: { date: string; target: ScheduleTarget }) {
-    if (dirty || hasBlockDraft) {
-      setPendingLoad({ ...next, view: exceptionView });
-      setDiscardDialogOpen(true);
-      return;
-    }
-    setDialogDate(next.date);
-    setDialogTarget(next.target);
-    setShopBlockBarberId("");
-    blockDraft.reset();
+  function requestDialogSelection(next: {
+    date: string;
+    target: ScheduleTarget;
+  }) {
+    const applySelection = () => {
+      setDialogDate(next.date);
+      setDialogTarget(next.target);
+      setShopBlockBarberId("");
+      blockDraft.reset();
+    };
+    discardGuard.guard(
+      () => openSelection(next, exceptionView),
+      applySelection,
+      true,
+    );
   }
 
   async function continueFromAddDialog() {
@@ -179,21 +179,23 @@ export function DateAvailabilityManagement({
       setMessage("Choose a date to review or add an exception.");
       return;
     }
-    if (dirty || hasBlockDraft) {
-      setPendingLoad({
-        date: dialogDate,
-        target: dialogTarget,
-        view: exceptionView,
-      });
-      setDiscardDialogOpen(true);
-      return;
-    }
-    if (await load(dialogDate, dialogTarget)) {
-      setDate(dialogDate);
-      setTarget(dialogTarget);
-      setShopBlockBarberId("");
-      setAddDialogOpen(true);
-    }
+    const next = {
+      date: dialogDate,
+      target: dialogTarget,
+      view: exceptionView,
+    };
+    discardGuard.guard(
+      () => openSelection(next, next.view),
+      async () => {
+        if (await load(next.date, next.target)) {
+          setDate(next.date);
+          setTarget(next.target);
+          setShopBlockBarberId("");
+          setAddDialogOpen(true);
+        }
+      },
+      true,
+    );
   }
 
   async function removeBlock(id: string) {
@@ -317,30 +319,9 @@ export function DateAvailabilityManagement({
   }
 
   function handleKeepEditing() {
-    setDiscardDialogOpen(false);
-    setPendingLoad(null);
-    if (!addDialogOpen && !pendingLoad) setAddDialogOpen(true);
-  }
-
-  function handleDiscardChanges() {
-    const next = pendingLoad;
-    setPendingLoad(null);
-    scheduleDraft.discardChanges();
-    setDiscardDialogOpen(false);
-    blockDraft.reset();
-    if (next) {
-      setDialogDate(next.date);
-      setDialogTarget(next.target);
-      setExceptionView(next.view ?? "date");
-      setDate(next.date);
-      setTarget(next.target);
-      setShopBlockBarberId("");
-      void load(next.date, next.target);
-      setAddDialogOpen(true);
-    } else {
-      setAddDialogOpen(false);
-      void reload();
-    }
+    const hadPendingLoad = discardGuard.hasPendingLoad;
+    discardGuard.keepEditing();
+    if (!addDialogOpen && !hadPendingLoad) setAddDialogOpen(true);
   }
 
   return (
@@ -421,9 +402,9 @@ export function DateAvailabilityManagement({
         onConfirm={() => removeBlockId && removeBlock(removeBlockId)}
       />
       <OwnerDiscardDialog
-        open={discardDialogOpen}
+        open={discardGuard.open}
         onKeepEditing={handleKeepEditing}
-        onDiscard={handleDiscardChanges}
+        onDiscard={discardGuard.discard}
       />
     </section>
   );

@@ -39,6 +39,44 @@ async function seedBarber(
   return barberId;
 }
 
+test("discarding a dated draft applies the latest queued external edit", async ({
+  page,
+  context,
+  owners,
+  database,
+}) => {
+  const owner = await owners(context, { shop: true });
+  const barberId = await seedBarber(database, owner.shopId);
+  await page.goto(`${ownerOrigin}/availability`);
+  await loadShopDate(page);
+  await page
+    .getByRole("checkbox", {
+      name: "Replace recurring hours and breaks",
+      exact: true,
+    })
+    .check();
+  for (const detail of [
+    { date: "2026-11-02", target: "shop", view: "date" },
+    { date: "2026-11-03", target: barberId, view: "block" },
+  ]) {
+    await page.evaluate((eventDetail) => {
+      window.dispatchEvent(
+        new CustomEvent("trimtime:availability-edit", {
+          detail: eventDetail,
+        }),
+      );
+    }, detail);
+  }
+
+  await page
+    .getByRole("dialog", { name: "Discard unsaved changes?" })
+    .getByRole("button", { name: "Discard changes" })
+    .click();
+  await expect(page.getByLabel("Schedule day")).toHaveValue("2026-11-03");
+  await expect(page.getByLabel("Apply to")).toHaveValue(barberId);
+  await expect(page.getByLabel("Exception type")).toHaveValue("block");
+});
+
 test("a saved date reports when its follow-up reload fails", async ({
   page,
   context,

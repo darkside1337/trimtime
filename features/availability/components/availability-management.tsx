@@ -6,7 +6,13 @@ import { OwnerDiscardDialog } from "@/components/owner-discard-dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DateAvailabilityManagement } from "./date-availability-management";
 import { useRecurringSchedule } from "../hooks/use-recurring-schedule";
+import { useDiscardGuard } from "../hooks/use-discard-guard";
 import { isSameTarget, type ScheduleTarget, type Section } from "../types";
+import {
+  emitAvailabilityAdd,
+  emitAvailabilityEdit,
+  subscribeAvailabilityChanged,
+} from "../availability-events";
 import { SlotPreviewPanel } from "./slot-preview-panel";
 import { UpcomingSavedExceptions } from "./upcoming-saved-exceptions";
 import { RecurringHoursPanel } from "./recurring-hours-panel";
@@ -61,17 +67,11 @@ export function AvailabilityManagement({
     breakStartInput,
   } = recurring;
   const [section, setSection] = useState<Section>("shop");
-  const [pendingNavigation, setPendingNavigation] = useState<{
-    target: ScheduleTarget;
-    section: Section;
-    addDate: boolean;
-  } | null>(null);
+  const discardGuard = useDiscardGuard(dirty);
 
   useEffect(() => {
     const clearPreview = () => invalidatePreview();
-    window.addEventListener("trimtime:availability-changed", clearPreview);
-    return () =>
-      window.removeEventListener("trimtime:availability-changed", clearPreview);
+    return subscribeAvailabilityChanged(clearPreview);
   }, [invalidatePreview]);
   const activeBarbers = data.barbers.filter((item) => !item.archived);
   const weeklyMinutes = weeklyOpenMinutes(data.shop.week);
@@ -81,21 +81,30 @@ export function AvailabilityManagement({
       item.schedule.week.some((day) => day.working.length > 0),
   ).length;
 
+  function applyNavigation(
+    next: { target: ScheduleTarget; section: Section; addDate: boolean },
+    discard: boolean,
+  ) {
+    const sameTarget = isSameTarget(next.target, target);
+    if (!sameTarget || discard) recurring.applyTarget(next.target);
+    setSection(next.section);
+    if (next.addDate) emitAvailabilityAdd();
+  }
+
   function navigate(
     next: { target: ScheduleTarget; section: Section; addDate: boolean },
-    options: { guardSameTarget?: boolean; discard?: boolean } = {},
+    options: { guardSameTarget?: boolean } = {},
   ) {
     if (pending) return;
     const sameTarget = isSameTarget(next.target, target);
-    if (!options.discard && dirty && (options.guardSameTarget || !sameTarget)) {
-      setPendingNavigation(next);
+    if (options.guardSameTarget || !sameTarget) {
+      discardGuard.guard(
+        () => applyNavigation(next, true),
+        () => applyNavigation(next, false),
+      );
       return;
     }
-    if (!sameTarget || options.discard) recurring.applyTarget(next.target);
-    setSection(next.section);
-    if (next.addDate)
-      window.dispatchEvent(new Event("trimtime:availability-add"));
-    if (options.discard) setPendingNavigation(null);
+    applyNavigation(next, false);
   }
 
   function changeSection(next: Section) {
@@ -125,15 +134,11 @@ export function AvailabilityManagement({
   function handleEditException(
     exception: AvailabilityOverview["exceptions"][number],
   ) {
-    window.dispatchEvent(
-      new CustomEvent("trimtime:availability-edit", {
-        detail: {
-          date: exception.date,
-          target: exception.target,
-          view: exception.kind === "block" ? "block" : "date",
-        },
-      }),
-    );
+    emitAvailabilityEdit({
+      date: exception.date,
+      target: exception.target,
+      view: exception.kind === "block" ? "block" : "date",
+    });
   }
 
   return (
@@ -257,11 +262,9 @@ export function AvailabilityManagement({
         onSave={recurring.saveBreak}
       />
       <OwnerDiscardDialog
-        open={pendingNavigation !== null}
-        onKeepEditing={() => setPendingNavigation(null)}
-        onDiscard={() => {
-          if (pendingNavigation) navigate(pendingNavigation, { discard: true });
-        }}
+        open={discardGuard.open}
+        onKeepEditing={discardGuard.keepEditing}
+        onDiscard={discardGuard.discard}
       />
     </div>
   );
