@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { RemoveBlockDialog } from "./remove-block-dialog";
 import { OwnerDiscardDialog } from "@/components/owner-discard-dialog";
 import type { AvailabilityData } from "../queries";
 import { createTimeBlockAction, removeTimeBlockAction } from "../actions";
@@ -13,8 +12,14 @@ import { useTimeBlockDraft } from "../hooks/use-time-block-draft";
 import { useDateOverrideDraft } from "../hooks/use-date-override-draft";
 import { BarberTimeBlockEditor } from "./barber-time-block-editor";
 import { DateExceptionDialog } from "./date-exception-dialog";
+import { RemoveBlockDialog } from "./remove-block-dialog";
+import {
+  barberIdForTarget,
+  isSameTarget,
+  scheduleTargetFromValue,
+  type ScheduleTarget,
+} from "../types";
 
-import { barberIdForTarget, isSameTarget, scheduleTargetFromValue, type ScheduleTarget } from "../types";
 type ExceptionView = "date" | "block";
 
 export function DateAvailabilityManagement({
@@ -26,7 +31,9 @@ export function DateAvailabilityManagement({
   const [date, setDate] = useState("");
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [dialogDate, setDialogDate] = useState("");
-  const [dialogTarget, setDialogTarget] = useState<ScheduleTarget>({ kind: "shop" });
+  const [dialogTarget, setDialogTarget] = useState<ScheduleTarget>({
+    kind: "shop",
+  });
   const [exceptionView, setExceptionView] = useState<ExceptionView>("date");
   const [discardDialogOpen, setDiscardDialogOpen] = useState(false);
   const [pendingLoad, setPendingLoad] = useState<{
@@ -37,13 +44,9 @@ export function DateAvailabilityManagement({
   const [removeBlockId, setRemoveBlockId] = useState<string | null>(null);
   const [removeMessage, setRemoveMessage] = useState("");
   const [target, setTarget] = useState<ScheduleTarget>({ kind: "shop" });
-  const [blockBarberId, setBlockBarberId] = useState("");
-  const {
-    data,
-    loadedTarget,
-    loading,
-    load: loadAvailability,
-  } = useDateAvailability();
+  const [shopBlockBarberId, setShopBlockBarberId] = useState("");
+  const { loaded, loading, load: loadAvailability } = useDateAvailability();
+  const data = loaded?.data ?? null;
   const scheduleDraft = useDateOverrideDraft();
   const { draft, dirty, fieldErrors, loadDraft } = scheduleDraft;
   const [mutationPending, setMutationPending] = useState(false);
@@ -55,15 +58,25 @@ export function DateAvailabilityManagement({
     [initial.barbers],
   );
   const targetArchived = initial.barbers.some(
-    (barber) => target.kind === "barber" && barber.id === target.barberId && barber.archived,
+    (barber) =>
+      target.kind === "barber" &&
+      barber.id === target.barberId &&
+      barber.archived,
   );
   const hasBlockDraft = blockDraft.hasDraft;
   const busy = loading || mutationPending;
-  const hasLoadedSelection =
-    data?.date === date &&
-    loadedTarget !== null && isSameTarget(loadedTarget, target) &&
-    data.date === dialogDate &&
-    loadedTarget !== null && isSameTarget(loadedTarget, dialogTarget);
+  const blockBarberId =
+    barberIdForTarget(target, activeBarbers) ||
+    (activeBarbers.some((barber) => barber.id === shopBlockBarberId)
+      ? shopBlockBarberId
+      : "");
+  const hasLoadedSelection = Boolean(
+    loaded &&
+    loaded.date === date &&
+    isSameTarget(loaded.target, target) &&
+    loaded.date === dialogDate &&
+    isSameTarget(loaded.target, dialogTarget),
+  );
 
   useEffect(() => {
     const openAdd = () => {
@@ -119,24 +132,25 @@ export function DateAvailabilityManagement({
       setAddDialogOpen(true);
       setDate(next.date);
       setTarget(next.target);
-      setBlockBarberId(
-        barberIdForTarget(next.target, activeBarbers),
-      );
+      setShopBlockBarberId("");
       void load(next.date, next.target);
     };
     window.addEventListener("trimtime:availability-edit", editException);
     return () =>
       window.removeEventListener("trimtime:availability-edit", editException);
-  }, [activeBarbers, dirty, hasBlockDraft, load]);
+  }, [dirty, hasBlockDraft, load]);
 
   const reload = () => load(date, target);
 
-  function handleLoadFromDialog() {
-    void continueFromAddDialog();
-  }
-
-  function handleReloadDate() {
-    void reload();
+  async function afterMutation(
+    successMessage?: string,
+    reloadFailedMessage?: string,
+  ) {
+    window.dispatchEvent(new Event("trimtime:availability-changed"));
+    router.refresh();
+    if (await reload()) {
+      if (successMessage) setMessage(successMessage);
+    } else if (reloadFailedMessage) setMessage(reloadFailedMessage);
   }
 
   function requestAddDialogClose() {
@@ -156,9 +170,7 @@ export function DateAvailabilityManagement({
     }
     setDialogDate(next.date);
     setDialogTarget(next.target);
-    setBlockBarberId(
-      barberIdForTarget(next.target, activeBarbers),
-    );
+    setShopBlockBarberId("");
     blockDraft.reset();
   }
 
@@ -179,9 +191,7 @@ export function DateAvailabilityManagement({
     if (await load(dialogDate, dialogTarget)) {
       setDate(dialogDate);
       setTarget(dialogTarget);
-      setBlockBarberId(
-        barberIdForTarget(dialogTarget, activeBarbers),
-      );
+      setShopBlockBarberId("");
       setAddDialogOpen(true);
     }
   }
@@ -208,11 +218,7 @@ export function DateAvailabilityManagement({
     setRemoveBlockId(null);
     setRemoveMessage("");
     setMessage("Block removed. Preview again to see the updated availability.");
-    if (result.success) {
-      window.dispatchEvent(new Event("trimtime:availability-changed"));
-      router.refresh();
-      await reload();
-    }
+    await afterMutation();
   }
 
   async function saveSchedule() {
@@ -234,15 +240,10 @@ export function DateAvailabilityManagement({
       );
       return;
     }
-    window.dispatchEvent(new Event("trimtime:availability-changed"));
-    router.refresh();
-    if (await reload()) {
-      setMessage("Saved. Preview again to see the updated availability.");
-    } else {
-      setMessage(
-        "Saved, but the refreshed state could not be loaded. Reload date to verify.",
-      );
-    }
+    await afterMutation(
+      "Saved. Preview again to see the updated availability.",
+      "Saved, but the refreshed state could not be loaded. Reload date to verify.",
+    );
   }
 
   async function addBlock() {
@@ -252,8 +253,7 @@ export function DateAvailabilityManagement({
       );
       return;
     }
-    const barberId =
-      barberIdForTarget(target, activeBarbers) || blockBarberId;
+    const barberId = blockBarberId;
     if (!barberId) {
       setMessage("Add an active barber before creating a block.");
       return;
@@ -282,15 +282,10 @@ export function DateAvailabilityManagement({
       return;
     }
     blockDraft.reset();
-    window.dispatchEvent(new Event("trimtime:availability-changed"));
-    router.refresh();
-    if (await reload()) {
-      setMessage("Block saved. Preview again to see the updated availability.");
-    } else {
-      setMessage(
-        "Block saved, but the refreshed state could not be loaded. Reload saved state to verify.",
-      );
-    }
+    await afterMutation(
+      "Block saved. Preview again to see the updated availability.",
+      "Block saved, but the refreshed state could not be loaded. Reload saved state to verify.",
+    );
   }
 
   function handleOverrideChange(enabled: boolean) {
@@ -299,8 +294,8 @@ export function DateAvailabilityManagement({
       const recurring =
         target.kind === "shop"
           ? initial.shop.week[day]
-          : initial.barbers.find((barber) => barber.id === target.barberId)?.schedule
-              .week[day];
+          : initial.barbers.find((barber) => barber.id === target.barberId)
+              ?.schedule.week[day];
       scheduleDraft.changeDraft({
         ...draft,
         working: dateRangeDrafts(recurring?.working),
@@ -312,18 +307,6 @@ export function DateAvailabilityManagement({
     scheduleDraft.changeDraft({ ...draft, override: enabled });
   }
 
-  function handleSaveSchedule() {
-    void saveSchedule();
-  }
-
-  function handleSaveBlock() {
-    void addBlock();
-  }
-
-  function handleReloadBlock() {
-    void continueFromAddDialog();
-  }
-
   function handleRequestBlockRemoval(id: string) {
     setRemoveMessage("");
     setRemoveBlockId(id);
@@ -331,10 +314,6 @@ export function DateAvailabilityManagement({
 
   function handleRemoveDialogOpenChange(open: boolean) {
     if (!open && !busy) setRemoveBlockId(null);
-  }
-
-  function handleConfirmBlockRemoval() {
-    if (removeBlockId) void removeBlock(removeBlockId);
   }
 
   function handleKeepEditing() {
@@ -355,13 +334,10 @@ export function DateAvailabilityManagement({
       setExceptionView(next.view ?? "date");
       setDate(next.date);
       setTarget(next.target);
-      setBlockBarberId(
-        barberIdForTarget(next.target, activeBarbers),
-      );
+      setShopBlockBarberId("");
       void load(next.date, next.target);
       setAddDialogOpen(true);
     } else {
-      blockDraft.reset();
       setAddDialogOpen(false);
       void reload();
     }
@@ -394,7 +370,7 @@ export function DateAvailabilityManagement({
         message={message}
         barbers={initial.barbers}
         onSelectionChange={requestDialogSelection}
-        onLoad={handleLoadFromDialog}
+        onLoad={continueFromAddDialog}
         onViewChange={setExceptionView}
         onClose={requestAddDialogClose}
       >
@@ -411,8 +387,8 @@ export function DateAvailabilityManagement({
                 fieldErrors={fieldErrors}
                 onDraftChange={scheduleDraft.changeDraft}
                 onOverrideChange={handleOverrideChange}
-                onSave={handleSaveSchedule}
-                onReload={handleReloadDate}
+                onSave={saveSchedule}
+                onReload={reload}
               />
             )}
             {exceptionView === "block" && (
@@ -423,12 +399,12 @@ export function DateAvailabilityManagement({
                 barbers={initial.barbers}
                 data={data}
                 blockBarberId={blockBarberId}
-                onBlockBarberChange={setBlockBarberId}
+                onBlockBarberChange={setShopBlockBarberId}
                 busy={busy}
                 dirty={dirty}
                 draft={blockDraft}
-                onSave={handleSaveBlock}
-                onReload={handleReloadBlock}
+                onSave={addBlock}
+                onReload={continueFromAddDialog}
                 onRemove={handleRequestBlockRemoval}
               />
             )}
@@ -442,7 +418,7 @@ export function DateAvailabilityManagement({
         message={removeMessage}
         onOpenChange={handleRemoveDialogOpenChange}
         onKeepBlock={() => setRemoveBlockId(null)}
-        onConfirm={handleConfirmBlockRemoval}
+        onConfirm={() => removeBlockId && removeBlock(removeBlockId)}
       />
       <OwnerDiscardDialog
         open={discardDialogOpen}
