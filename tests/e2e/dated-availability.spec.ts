@@ -441,6 +441,9 @@ test("archived barber blocks remain reachable and removal offers reload", async 
   await captureState(page, "dated-block-removal-uncertain", testInfo);
   await removeDialog.getByRole("button", { name: "Keep block" }).click();
   await expect(
+    page.getByRole("button", { name: "Remove", exact: true }),
+  ).toBeFocused();
+  await expect(
     page
       .locator('p[aria-live="polite"]')
       .getByText(
@@ -461,6 +464,12 @@ test("archived barber blocks remain reachable and removal offers reload", async 
   await finalRemoveDialog.getByRole("button", { name: "Remove block" }).click();
   await expect(finalRemoveDialog).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Remove" })).toHaveCount(0);
+  await expect(
+    page.getByText(
+      "Block removed. Preview again to see the updated availability.",
+      { exact: true },
+    ),
+  ).toHaveCount(0);
   const remainingBlockRows = await database.pool.query(
     "SELECT (SELECT count(*)::int FROM occupied_intervals WHERE id = $1) AS occupied_count, (SELECT count(*)::int FROM time_blocks WHERE id = $1) AS block_count",
     [blockId],
