@@ -311,9 +311,12 @@ test("wrong-shop, expired, revoked, and unknown links share the unavailable view
   await captureState(page, "manage-unavailable-phone-320", test.info());
   await page.setViewportSize({ width: 1024, height: 900 });
 
+  const now = new Date(process.env.TRIMTIME_E2E_NOW ?? Date.now()).getTime();
+  const end = new Date(now - 169 * 60 * 60_000);
+  const start = new Date(end.getTime() - 35 * 60_000);
   await database.pool.query(
-    "UPDATE bookings SET end_at = '2026-10-24T10:00:00Z', start_at = '2026-10-24T09:25:00Z' WHERE id = $1",
-    [bookingId],
+    "UPDATE bookings SET end_at = $2, start_at = $3 WHERE id = $1",
+    [bookingId, end, start],
   );
   const expired = await page.goto(manageUrl.toString());
   expect(expired?.status()).toBe(200);
