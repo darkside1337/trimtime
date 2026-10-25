@@ -12,9 +12,12 @@ export function shopNotFound(request: NextRequest) {
   });
 }
 
-export function shopUnavailable() {
-  return new NextResponse("Shop page is temporarily unavailable.", {
-    status: 503,
-    headers: { "cache-control": "no-store" },
-  });
+export function shopUnavailable(request: NextRequest) {
+  return new NextResponse(
+    request.method === "HEAD" ? null : "Shop page is temporarily unavailable.",
+    {
+      status: 503,
+      headers: { "cache-control": "no-store" },
+    },
+  );
 }

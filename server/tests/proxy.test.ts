@@ -100,6 +100,37 @@ describe("host routing", () => {
     expect((await proxy(action)).headers.get("x-middleware-next")).toBe("1");
   });
 
+  it("keeps shop lookup outages generic and omits the HEAD response body", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      publicShopExists.mockRejectedValueOnce(
+        new Error("lookup failed for private-shop-token"),
+      );
+      const getResponse = await proxy(
+        request("/", "private-shop.localhost:3100", "GET"),
+      );
+      expect(getResponse.status).toBe(503);
+      expect(await getResponse.text()).toBe(
+        "Shop page is temporarily unavailable.",
+      );
+      expect(getResponse.headers.get("cache-control")).toBe("no-store");
+      expect(log).toHaveBeenCalledWith("Public shop lookup failed");
+      expect(JSON.stringify(log.mock.calls)).not.toContain(
+        "private-shop-token",
+      );
+
+      publicShopExists.mockRejectedValueOnce(new Error("database unavailable"));
+      const headResponse = await proxy(
+        request("/", "private-shop.localhost:3100", "HEAD"),
+      );
+      expect(headResponse.status).toBe(503);
+      expect(await headResponse.text()).toBe("");
+      expect(headResponse.headers.get("cache-control")).toBe("no-store");
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it("rejects shop-host owner paths, writes, and conflicting forwarded hosts", async () => {
     expect(
       (await proxy(request("/settings", "shop.localhost:3100"))).status,
@@ -138,6 +169,19 @@ describe("host routing", () => {
       expect(response.headers.get("referrer-policy")).toBe("no-referrer");
       expect(response.headers.get("x-robots-tag")).toContain("noindex");
     }
+    const rejectedManageWrite = await proxy(
+      request("/manage/token", "shop.localhost:3100", "POST"),
+    );
+    expect(rejectedManageWrite.status).toBe(404);
+    expect(rejectedManageWrite.headers.get("cache-control")).toBe(
+      "private, no-store",
+    );
+    expect(rejectedManageWrite.headers.get("referrer-policy")).toBe(
+      "no-referrer",
+    );
+    expect(rejectedManageWrite.headers.get("x-robots-tag")).toContain(
+      "noindex",
+    );
     expect(
       (
         await proxy(

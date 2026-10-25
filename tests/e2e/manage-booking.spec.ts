@@ -21,4 +21,10 @@ test("unknown manage links stay private and uniformly unavailable", async ({
   const head = await request.head(url);
   expect(head.status()).toBe(200);
   expect(head.headers()["cache-control"]).toBe("private, no-store");
+
+  const rejectedWrite = await request.post(url);
+  expect(rejectedWrite.status()).toBe(404);
+  expect(rejectedWrite.headers()["cache-control"]).toBe("private, no-store");
+  expect(rejectedWrite.headers()["referrer-policy"]).toBe("no-referrer");
+  expect(rejectedWrite.headers()["x-robots-tag"]).toContain("noindex");
 });

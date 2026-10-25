@@ -23,11 +23,11 @@ export async function proxy(request: NextRequest) {
 
   if (surface === "shop") {
     const label = shopLabelForHost(request.headers);
-    if (
-      /^\/manage\/[^/]+\/?$/.test(pathname) &&
-      (request.method === "GET" || request.method === "HEAD")
-    ) {
-      const response = NextResponse.next();
+    if (/^\/manage\/[^/]+\/?$/.test(pathname)) {
+      const response =
+        request.method === "GET" || request.method === "HEAD"
+          ? NextResponse.next()
+          : shopNotFound(request);
       response.headers.set("Cache-Control", "private, no-store");
       response.headers.set("Referrer-Policy", "no-referrer");
       response.headers.set("X-Robots-Tag", "noindex, nofollow, noarchive");
@@ -52,7 +52,8 @@ export async function proxy(request: NextRequest) {
         await import("@/features/shops/public-queries");
       if (!(await publicShopExists(label))) return shopNotFound(request);
     } catch {
-      return shopUnavailable();
+      console.error("Public shop lookup failed");
+      return shopUnavailable(request);
     }
     return NextResponse.next();
   }
