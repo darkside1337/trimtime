@@ -102,3 +102,15 @@ point routine tests at a shared or production database. See
 [AGENTS.md](AGENTS.md) for contributor rules and
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#9-verification-and-maintenance) for
 verification boundaries.
+
+Booking capability encryption uses `BOOKING_CAPABILITY_KEY_ID` and a
+`BOOKING_CAPABILITY_ENCRYPTION_KEY` containing a base64-encoded 32-byte key.
+Do not commit the key or store it in PostgreSQL.
+
+## Local email capture
+
+Mailpit is the selected sink for local development email capture. It is not
+currently installed or configured by the repository, and captured messages do
+not prove inbox delivery. SMTP port `1025` and web UI port `8025` are planned
+local examples only. Hosted v1 has no real email sender; real delivery is
+deferred to v2. Resend is a tentative v2 sender, not a finalized provider.
