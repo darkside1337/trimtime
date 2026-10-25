@@ -1,3 +1,4 @@
+import { serverOrigins } from "@/server/config";
 import "server-only";
 import {
   createCipheriv,
@@ -66,7 +67,7 @@ export function decryptCapability(
 }
 
 export function canonicalManageUrl(subdomain: string, token: string) {
-  const base = new URL(process.env.MARKETING_ORIGIN ?? "http://localhost:3100");
+  const base = new URL(serverOrigins.marketingOrigin);
   base.hostname = `${subdomain}.${base.hostname}`;
   base.pathname = `/manage/${encodeURIComponent(token)}`;
   base.search = "";

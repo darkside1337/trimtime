@@ -1,7 +1,9 @@
 import "server-only";
+import { serverOrigins } from "./config";
 
-const marketingOrigin = process.env.MARKETING_ORIGIN ?? "http://localhost:3100";
-const ownerOrigin = process.env.APP_ORIGIN ?? "http://app.localhost:3100";
+const marketingOrigin = serverOrigins.marketingOrigin;
+const marketingProtocol = new URL(marketingOrigin).protocol;
+const ownerOrigin = serverOrigins.appOrigin;
 
 function originHost(origin: string) {
   return new URL(origin).host.toLowerCase();
@@ -54,7 +56,7 @@ export function hasRequestOrigin(headers: Headers) {
   try {
     const parsed = new URL(origin);
     return (
-      (parsed.protocol === "https:" || parsed.protocol === "http:") &&
+      parsed.protocol === marketingProtocol &&
       parsed.host.toLowerCase() === host &&
       parsed.origin === origin
     );

@@ -1,3 +1,4 @@
+import { serverOrigins } from "@/server/config";
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { Suspense } from "react";
@@ -278,10 +279,7 @@ function ShopFooter({
           <span className={styles.greenDot}>.</span>
         </span>
         <a
-          href={new URL(
-            "/sign-in",
-            process.env.APP_ORIGIN ?? "http://app.localhost:3100",
-          ).toString()}
+          href={new URL("/sign-in", serverOrigins.appOrigin).toString()}
           className={styles.signInLink}
         >
           Owner sign in

@@ -1,3 +1,4 @@
+import { serverOrigins } from "@/server/config";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
@@ -23,9 +24,7 @@ async function SetupContent() {
   const context = await readOwnerContext(requestHeaders);
   if (!context) redirect("/sign-in");
   if (await getOwnShop(context)) redirect("/");
-  const publicOrigin = new URL(
-    process.env.MARKETING_ORIGIN ?? "http://localhost:3100",
-  ).origin;
+  const publicOrigin = serverOrigins.marketingOrigin;
 
   return (
     <>

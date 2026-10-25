@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { classifyHost, hasOwnerOrigin } from "../hosts";
+import { classifyHost, hasOwnerOrigin, hasRequestOrigin } from "../hosts";
 
 describe("approved hosts", () => {
   it("uses configured production origins and rejects deceptive suffixes", async () => {
@@ -7,8 +7,11 @@ describe("approved hosts", () => {
     vi.stubEnv("MARKETING_ORIGIN", "https://example.test");
     vi.resetModules();
     try {
-      const { classifyHost: classify, hasOwnerOrigin: ownerOrigin } =
-        await import("../hosts");
+      const {
+        classifyHost: classify,
+        hasOwnerOrigin: ownerOrigin,
+        hasRequestOrigin: requestOrigin,
+      } = await import("../hosts");
       expect(classify(new Headers({ host: "EXAMPLE.TEST" }))).toBe("marketing");
       expect(
         classify(
@@ -32,6 +35,22 @@ describe("approved hosts", () => {
       ).toBe(true);
       expect(
         ownerOrigin(new Headers({ origin: "http://app.example.test" })),
+      ).toBe(false);
+      expect(
+        requestOrigin(
+          new Headers({
+            host: "juniper.example.test",
+            origin: "https://juniper.example.test",
+          }),
+        ),
+      ).toBe(true);
+      expect(
+        requestOrigin(
+          new Headers({
+            host: "juniper.example.test",
+            origin: "http://juniper.example.test",
+          }),
+        ),
       ).toBe(false);
     } finally {
       vi.unstubAllEnvs();
@@ -72,5 +91,24 @@ describe("approved hosts", () => {
       hasOwnerOrigin(new Headers({ origin: "http://localhost:3100" })),
     ).toBe(false);
     expect(hasOwnerOrigin(new Headers())).toBe(false);
+  });
+
+  it("matches request origins to the configured local HTTP scheme", () => {
+    expect(
+      hasRequestOrigin(
+        new Headers({
+          host: "juniper.localhost:3100",
+          origin: "http://juniper.localhost:3100",
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasRequestOrigin(
+        new Headers({
+          host: "juniper.localhost:3100",
+          origin: "https://juniper.localhost:3100",
+        }),
+      ),
+    ).toBe(false);
   });
 });

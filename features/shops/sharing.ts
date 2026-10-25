@@ -1,12 +1,11 @@
+import { serverOrigins } from "@/server/config";
 import QRCode from "qrcode";
 import { subdomainAvailabilitySchema } from "./schemas";
 
 export function getCanonicalShopUrl(subdomain: string) {
   const parsed = subdomainAvailabilitySchema.safeParse({ subdomain });
   if (!parsed.success) throw new Error("Invalid shop subdomain.");
-  const origin = new URL(
-    process.env.MARKETING_ORIGIN ?? "http://localhost:3100",
-  );
+  const origin = new URL(serverOrigins.marketingOrigin);
   origin.hostname = `${parsed.data.subdomain}.${origin.hostname}`;
   origin.pathname = "/";
   origin.search = "";

@@ -1,8 +1,10 @@
-const ownerOrigin = process.env.APP_ORIGIN ?? "http://app.localhost:3100";
+import { serverOrigins } from "./config";
+
+const ownerOrigin = serverOrigins.appOrigin;
 
 export const ownerAuthOptions = {
   appName: "TrimTime",
-  baseURL: process.env.BETTER_AUTH_URL ?? ownerOrigin,
+  baseURL: serverOrigins.betterAuthUrl,
   secret:
     process.env.BETTER_AUTH_SECRET ??
     (process.env.NEXT_PHASE === "phase-production-build"

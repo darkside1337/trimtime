@@ -1,3 +1,4 @@
+import { serverOrigins } from "@/server/config";
 import Link from "next/link";
 import Image from "next/image";
 import { TrimTimeLogo } from "@/components/trimtime-logo";
@@ -67,7 +68,7 @@ function ActionLink({
 }
 
 export default function Home() {
-  const ownerOrigin = process.env.APP_ORIGIN ?? "http://app.localhost:3100";
+  const ownerOrigin = serverOrigins.appOrigin;
   const signInHref = new URL("/sign-in", ownerOrigin).toString();
   return (
     <>

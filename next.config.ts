@@ -1,14 +1,16 @@
 import type { NextConfig } from "next";
+import { resolveServerOrigins } from "./server/origin-config.mts";
+
+const { marketingOrigin, appOrigin } = resolveServerOrigins(process.env);
 
 const nextConfig: NextConfig = {
   allowedDevOrigins: ["localtest.me", "*.localtest.me"],
   async rewrites() {
-    const marketingHostname = new URL(
-      process.env.MARKETING_ORIGIN ?? "http://localhost:3100",
-    ).hostname.replaceAll(".", "\\.");
-    const ownerHost = new URL(
-      process.env.APP_ORIGIN ?? "http://app.localhost:3100",
-    ).hostname;
+    const marketingHostname = new URL(marketingOrigin).hostname.replaceAll(
+      ".",
+      "\\.",
+    );
+    const ownerHost = new URL(appOrigin).hostname;
     return {
       beforeFiles: [
         {

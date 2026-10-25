@@ -51,6 +51,20 @@ process-level overrides take precedence over `.env`; the application rejects
 unconfigured hosts. Use the HTTPS setup below for real Google sign-in. The
 Playwright runner supplies its own origins on port 3100.
 
+Production builds and starts require explicit `MARKETING_ORIGIN` and
+`APP_ORIGIN` values. Each must be a bare HTTPS origin; one trailing slash is
+normalized away. Credentials, paths, queries, and fragments are rejected,
+and the authorities (host and port) must differ. A custom
+port is allowed. `BETTER_AUTH_URL` is optional and defaults to `APP_ORIGIN`;
+when supplied, it must resolve to that same canonical origin. Set these values
+for both build and runtime because routing rewrites and generated canonical
+URLs use the configured origins. Local development may use HTTP and custom
+ports. `pnpm test:e2e` builds and starts with its own HTTP `:3100` test origins
+under `NODE_ENV=test`. It selects the `react-server` condition for Playwright's
+server-side fixtures only. Direct Node tools importing the guarded auth
+configuration also need that condition. Deploy with `NODE_ENV=production`;
+test-mode HTTP configuration is not deployment configuration.
+
 The database test URL is supplied by the repository's `.env.test` and
 targets only the Compose-owned `trimtime_test` database. If it is stopped,
 both `pnpm test:db` and `pnpm test:e2e` fail with an actionable error. Run

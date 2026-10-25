@@ -93,7 +93,7 @@ describe("host routing", () => {
       headers: {
         host: "coldtrims.localhost:3100",
         "x-forwarded-host": "coldtrims.localhost:3100",
-        origin: "https://coldtrims.localhost:3100",
+        origin: "http://coldtrims.localhost:3100",
         "next-action": "action-id",
       },
     });

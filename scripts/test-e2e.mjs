@@ -8,6 +8,7 @@ process.loadEnvFile(".env.test");
 const databaseUrl = verifyOwnedTestDatabase();
 const env = {
   ...process.env,
+  NODE_ENV: "test",
   DATABASE_URL: databaseUrl,
   MIGRATION_DATABASE_URL: databaseUrl,
   PGOPTIONS: "-c lock_timeout=1000",
@@ -42,10 +43,19 @@ try {
   execFileSync("pnpm", ["build"], { stdio: "inherit", env });
   const args = process.argv.slice(2);
   if (args[0] === "--") args.shift();
-  execFileSync("node_modules/.bin/playwright", ["test", ...args], {
-    stdio: "inherit",
-    env,
-  });
+  execFileSync(
+    process.execPath,
+    [
+      "--conditions=react-server",
+      "node_modules/@playwright/test/cli.js",
+      "test",
+      ...args,
+    ],
+    {
+      stdio: "inherit",
+      env,
+    },
+  );
 } finally {
   await pool.end();
 }

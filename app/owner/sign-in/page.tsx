@@ -1,3 +1,4 @@
+import { serverOrigins } from "@/server/config";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
@@ -29,12 +30,10 @@ async function SignInContent({ searchParams }: SignInProps) {
       <a className="owner-skip" href="#sign-in-heading">
         Skip to sign in
       </a>
-      <OwnerPageHeader
-        homeHref={process.env.MARKETING_ORIGIN ?? "http://localhost:3100"}
-      >
+      <OwnerPageHeader homeHref={serverOrigins.marketingOrigin}>
         <Link
           className="inline-flex min-h-11 items-center rounded-sm text-sm font-medium underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-4"
-          href={process.env.MARKETING_ORIGIN ?? "http://localhost:3100"}
+          href={serverOrigins.marketingOrigin}
         >
           Back to site
         </Link>
