@@ -14,7 +14,8 @@ describe("owner context", () => {
     database = await openTestDatabase();
     process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
     process.env.BETTER_AUTH_URL = "http://app.localhost:3100";
-    process.env.BETTER_AUTH_SECRET = "test-secret-that-is-long-enough-for-better-auth";
+    process.env.BETTER_AUTH_SECRET =
+      "test-secret-that-is-long-enough-for-better-auth";
     process.env.GOOGLE_CLIENT_ID = "test-google-client";
     process.env.GOOGLE_CLIENT_SECRET = "test-google-secret";
     await applyMigrations(database.pool, "db/migrations");
@@ -30,7 +31,11 @@ describe("owner context", () => {
   });
 
   afterAll(async () => {
-    await Promise.all(userIds.map((id) => testAuth.$context.then(({ test }) => test.deleteUser(id))));
+    await Promise.all(
+      userIds.map((id) =>
+        testAuth.$context.then(({ test }) => test.deleteUser(id)),
+      ),
+    );
     await closeApplicationPool?.();
     await database?.pool.end();
   });
@@ -75,7 +80,9 @@ describe("owner context", () => {
     headers.set("role", "admin");
     headers.set("shopId", "attacker-shop");
 
-    await expect(readOwnerContext(headers)).resolves.toEqual({ userId: user.id });
+    await expect(readOwnerContext(headers)).resolves.toEqual({
+      userId: user.id,
+    });
   });
 
   it("denies a session expired in persistent storage", async () => {
@@ -89,7 +96,7 @@ describe("owner context", () => {
     userIds.push(user.id);
     const login = await helpers.login({ userId: user.id });
     await database.pool.query(
-      'UPDATE "session" SET expires_at = now() - interval \'1 second\' WHERE id = $1',
+      "UPDATE \"session\" SET expires_at = now() - interval '1 second' WHERE id = $1",
       [login.session.id],
     );
 

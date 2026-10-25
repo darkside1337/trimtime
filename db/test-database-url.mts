@@ -1,9 +1,10 @@
 const expectedTestDatabaseUrl =
   "postgresql://trimtime_test:local_test_only@127.0.0.1:55432/trimtime_test";
 
-export function getTestDatabaseUrl(
-  env: { TEST_DATABASE_URL?: string; DATABASE_URL?: string },
-): string {
+export function getTestDatabaseUrl(env: {
+  TEST_DATABASE_URL?: string;
+  DATABASE_URL?: string;
+}): string {
   const url = env.TEST_DATABASE_URL;
 
   if (!url) {

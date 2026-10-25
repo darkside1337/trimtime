@@ -41,7 +41,12 @@ async function main() {
     if (action === "test") {
       execFileSync(
         process.execPath,
-        ["node_modules/vitest/vitest.mjs", "run", "--config", "vitest.database.config.mts"],
+        [
+          "node_modules/vitest/vitest.mjs",
+          "run",
+          "--config",
+          "vitest.database.config.mts",
+        ],
         { stdio: "inherit", env: process.env },
       );
     }

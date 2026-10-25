@@ -6,9 +6,9 @@ const safeUrl =
 
 describe("getTestDatabaseUrl", () => {
   it("requires an explicit test URL even when an application URL exists", () => {
-    expect(() =>
-      getTestDatabaseUrl({ DATABASE_URL: safeUrl }),
-    ).toThrow(/TEST_DATABASE_URL is required/);
+    expect(() => getTestDatabaseUrl({ DATABASE_URL: safeUrl })).toThrow(
+      /TEST_DATABASE_URL is required/,
+    );
   });
 
   it("accepts only the disposable loopback database URL", () => {

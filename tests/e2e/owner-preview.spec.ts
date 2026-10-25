@@ -1,4 +1,10 @@
-import { expect, marketingOrigin, ownerOrigin, test } from "./fixtures";
+import {
+  expect,
+  marketingOrigin,
+  openOwnerNavigation,
+  ownerOrigin,
+  test,
+} from "./fixtures";
 
 test("owner Activity is an authenticated, clearly labeled design preview", async ({
   page,
@@ -17,7 +23,7 @@ test("owner Activity is an authenticated, clearly labeled design preview", async
   ).toBeVisible();
   await expect(page.getByRole("note")).toContainText(/no messages were sent/i);
   await expect(
-    page.getByText("Preview Test Shop", { exact: false }).first(),
+    page.getByRole("main").getByText("Preview Test Shop", { exact: false }),
   ).toBeVisible();
   await expect(
     page.getByRole("main").getByText("America/New_York", { exact: true }),
@@ -160,6 +166,7 @@ test("calendar and Activity controls remain local preview state", async ({
           .__storageWrites,
     )),
   );
+  await openOwnerNavigation(page);
   await page.getByRole("link", { name: "Activity", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Booking activity & message status" }),

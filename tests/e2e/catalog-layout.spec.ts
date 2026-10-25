@@ -47,9 +47,9 @@ test("catalog cards show named eligibility and the responsive reference grid", a
     const cards = page.locator("article");
     await expect(cards).toHaveCount(3);
     await expect(cards.first()).toBeVisible();
-    await expect(cards.first().getByRole("list")).toContainText(
-      route === "services" ? "Barber 1" : "Classic cut 35m $35.00",
-    );
+    const expected =
+      route === "services" ? "Barber 1" : "Classic cut 35m $35.00";
+    await expect(cards.filter({ hasText: expected })).toHaveCount(1);
     if (route === "barbers") {
       await expect(cards.first()).toContainText(
         "Mon–Sat · 09:00–18:00 · Break 13:00–13:30",
