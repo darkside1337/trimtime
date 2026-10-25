@@ -26,10 +26,7 @@
     "viewBox": "0 0 512 256",
     "width": 512,
     "height": 256,
-    "translate": [
-      -254,
-      0
-    ],
+    "translate": [-254, 0],
     "measured_bbox_x": 16,
     "measured_bbox_width": 467.547
   },
@@ -37,14 +34,8 @@
     "viewBox": "0 0 600 480",
     "width": 600,
     "height": 480,
-    "symbol_translate": [
-      172,
-      16
-    ],
-    "wordmark_translate": [
-      -203.774,
-      232
-    ]
+    "symbol_translate": [172, 16],
+    "wordmark_translate": [-203.774, 232]
   },
   "source_sha256": {
     "symbol": "4873b009490a0cd9266c1bcf95fb8074b0afeb8b3de6f37f0a737168556b9297",

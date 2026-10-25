@@ -140,14 +140,15 @@ export function EventCalendarViews({
             ? "absolute -start-2 w-2 -top-px -bottom-px"
             : ""
       }
-      rowEventBeforeContent={(info) =>
-        !info.isStart && !info.isNarrow ? (
-          filledRightTriangle(
-            "size-full rotate-180 [[dir=rtl]_&]:rotate-0 text-(--fc-event-color)",
-          )
-        ) : (
-          <></>
-        ) // HACK for React vdom
+      rowEventBeforeContent={
+        (info) =>
+          !info.isStart && !info.isNarrow ? (
+            filledRightTriangle(
+              "size-full rotate-180 [[dir=rtl]_&]:rotate-0 text-(--fc-event-color)",
+            )
+          ) : (
+            <></>
+          ) // HACK for React vdom
       }
       rowEventAfterClass={(info) =>
         info.isEndResizable
@@ -159,14 +160,15 @@ export function EventCalendarViews({
             ? "absolute -end-2 w-2 -top-px -bottom-px"
             : ""
       }
-      rowEventAfterContent={(info) =>
-        !info.isEnd && !info.isNarrow ? (
-          filledRightTriangle(
-            "size-full [[dir=rtl]_&]:rotate-180 text-(--fc-event-color)",
-          )
-        ) : (
-          <></>
-        ) // HACK for React vdom
+      rowEventAfterContent={
+        (info) =>
+          !info.isEnd && !info.isNarrow ? (
+            filledRightTriangle(
+              "size-full [[dir=rtl]_&]:rotate-180 text-(--fc-event-color)",
+            )
+          ) : (
+            <></>
+          ) // HACK for React vdom
       }
       rowEventInnerClass={(info) =>
         cn(

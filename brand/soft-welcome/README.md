@@ -14,12 +14,12 @@ SHA-256 master hashes and dimensions are recorded in `asset-metadata.json`. The 
 
 ## Files and dimensions
 
-| Composition | Canvas | Treatments |
-| --- | --- | --- |
-| Symbol | 256 × 256 | `primary`, `mono`, `reversed`, `white` |
-| Horizontal | 1000 × 256 | `primary`, `mono`, `reversed`, `white` |
-| Wordmark | 512 × 256 | `ink`, `white` |
-| Stacked | 600 × 480 | `primary`, `mono`, `reversed`, `white` |
+| Composition | Canvas     | Treatments                             |
+| ----------- | ---------- | -------------------------------------- |
+| Symbol      | 256 × 256  | `primary`, `mono`, `reversed`, `white` |
+| Horizontal  | 1000 × 256 | `primary`, `mono`, `reversed`, `white` |
+| Wordmark    | 512 × 256  | `ink`, `white`                         |
+| Stacked     | 600 × 480  | `primary`, `mono`, `reversed`, `white` |
 
 The horizontal canvas intentionally preserves the approved source's spacing and right-hand canvas area. Wordmark-only uses an outer translation of `(-254, 0)` to crop the source lettering with a 16-unit left inset. Stacked uses translation only: symbol `(172, 16)`, wordmark `(-203.774, 232)`; individual element sizes and relative proportions are unchanged.
 

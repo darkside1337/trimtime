@@ -425,7 +425,9 @@
   font-size: 11px;
   color: var(--muted-foreground);
 }
-.tt-headingSpecimen div span { color: var(--secondary-foreground); }
+.tt-headingSpecimen div span {
+  color: var(--secondary-foreground);
+}
 .tt-headingSpecimen p,
 .tt-bodySpecimen p {
   font-size: 13px;
@@ -1183,99 +1185,455 @@
 }
 
 /* Soft Welcome: one established signature, presented in different contexts. */
-.tt-brandMark:has(img) { background: transparent; }
-.tt-brandMark img { width: 36px; height: 36px; }
-.tt-signatureHeading { display: flex; justify-content: space-between; align-items: end; gap: 24px; margin-bottom: 32px; }
-.tt-signatureEyebrow { display: block; margin-bottom: 10px; color: var(--muted-foreground); font-size: 11px; font-weight: 600; }
-.tt-signatureHeading h2 { font-size: clamp(30px, 3.4vw, 42px); font-weight: 700; letter-spacing: -.04em; line-height: 1.2; }
-.tt-signatureHeading p { margin-top: 12px; color: var(--muted-foreground); font-size: 13px; }
-.tt-signatureLink { display: inline-flex; align-items: center; gap: 8px; flex: 0 0 auto; font-size: 12px; font-weight: 600; }
-.tt-signatureLink svg { width: 14px; height: 14px; }
-.tt-signatureLink:hover { text-decoration: underline; text-underline-offset: 4px; }
-.tt-signatureHero { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 20px; }
-.tt-logoShowcase figure { margin: 0; min-width: 0; }
-.tt-signaturePrimary, .tt-signatureHeroMark { border-radius: var(--radius-surface); min-height: 340px; padding: 28px; }
-.tt-signaturePrimary { display: flex; flex-direction: column; justify-content: space-between; background: #f7f7f5; }
-.tt-signaturePrimary > figcaption, .tt-signatureApplications figcaption { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; font-weight: 600; }
-.tt-signaturePrimary > figcaption span, .tt-signatureApplications figcaption span { color: var(--muted-foreground); font-weight: 400; }
-.tt-signaturePrimary > img { display: block; width: 100%; height: auto; margin: 28px 0; }
-.tt-signaturePalette { display: flex; flex-wrap: wrap; gap: 12px 24px; }
-.tt-signaturePalette > span { display: inline-flex; align-items: center; gap: 7px; font-size: 10px; color: var(--muted-foreground); }
-.tt-signaturePalette i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
-.tt-signatureInkDot { background: #242424; }
-.tt-signatureMintDot { background: #b9eed4; border: 1px solid rgb(36 36 36 / 8%); }
-.tt-signaturePalette code { font-size: 9px; }
-.tt-signatureHeroMark { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 30px; background: #b9eed4; }
-.tt-signatureHeroMark img { width: 180px; max-width: 100%; height: auto; }
-.tt-signatureHeroMark figcaption { font-size: 11px; text-align: center; }
-.tt-signatureSubheading { margin: 48px 0 22px; }
-.tt-signatureSubheading h3 { font-size: 22px; font-weight: 700; line-height: 1.3; letter-spacing: -.035em; }
-.tt-signatureSubheading p { margin-top: 8px; font-size: 12px; color: var(--muted-foreground); }
-.tt-signatureConfigurations { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
-.tt-signatureConfigurations figure { border: 1px solid var(--border); border-radius: var(--radius-surface); padding: 24px; }
-.tt-signatureArtwork { display: flex; justify-content: center; align-items: center; height: 220px; }
-.tt-signatureArtwork img { max-width: 100%; max-height: 180px; width: auto; height: auto; }
-.tt-signatureConfigurations figure:first-child img { width: 136px; }
-.tt-signatureConfigurations figure:nth-child(2) img { width: 260px; }
-.tt-signatureConfigurations figure:nth-child(3) img { width: 250px; }
-.tt-signatureConfigurations figcaption strong, .tt-signatureSurface figcaption strong { display: block; font-size: 13px; font-weight: 600; }
-.tt-signatureConfigurations figcaption span, .tt-signatureSurface figcaption span { display: block; font-size: 11px; line-height: 1.6; margin-top: 5px; color: var(--muted-foreground); }
-.tt-signatureSurfaces { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
-.tt-signatureSurface { display: flex; flex-direction: column; justify-content: space-between; padding: 26px; border-radius: var(--radius-surface); min-height: 240px; }
-.tt-signatureSurface > img { width: min(100%, 400px); height: auto; margin: 20px auto 30px; }
-.tt-signatureSurface-warm { background: #f7f7f5; }
-.tt-signatureSurface-white { background: #fff; border: 1px solid var(--border); }
-.tt-signatureSurface-dark { background: #242424; color: #fff; }
-.tt-signatureSurface-dark figcaption span { color: #c5c5c2; }
-.tt-signatureSurface-mint { background: #b9eed4; }
-.tt-signatureSurface-mint figcaption span { color: #3b5a49; }
-.tt-signatureReversePair { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; padding: 28px; background: #242424; border-radius: var(--radius-surface); margin-top: 20px; }
-.tt-signatureReversePair > div { display: flex; flex-direction: column; justify-content: space-between; align-items: center; gap: 22px; min-width: 0; }
-.tt-signatureReversePair img { max-width: 100%; width: 180px; height: 150px; object-fit: contain; }
-.tt-signatureReversePair > div:first-child img { width: 96px; }
-.tt-signatureReversePair span { color: #c5c5c2; font-size: 10px; text-align: center; }
-.tt-signatureScale { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 24px 12px; padding: 28px; border: 1px solid var(--border); border-radius: var(--radius-surface); }
-.tt-signatureScale figure { flex: 1; min-width: 76px; }
-.tt-signatureScale figure > div { display: flex; height: 148px; align-items: center; justify-content: center; }
-.tt-signatureScale img { flex: 0 0 auto; }
-.tt-signatureScale figcaption { text-align: center; color: var(--muted-foreground); font-size: 11px; }
-.tt-signatureApplications { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 20px; margin-top: 20px; }
-.tt-signatureApplications figure { display: flex; flex-direction: column; min-height: 220px; padding: 24px; border-radius: var(--radius-surface); background: #f7f7f5; }
-.tt-signatureApplications img { display: block; width: min(100%, 540px); height: auto; margin: auto; }
-.tt-signatureCompact img { width: 160px; }
-.tt-signatureFiles { display: grid; grid-template-columns: 1fr 1fr; align-items: start; gap: 32px; margin-top: 40px; padding: 30px 0 10px; border-top: 1px solid var(--border); scroll-margin-top: 132px; }
-.tt-signatureFiles h3 { font-size: 19px; font-weight: 700; letter-spacing: -.03em; }
-.tt-signatureFiles p { margin-top: 8px; font-size: 12px; color: var(--muted-foreground); }
-.tt-signatureDownloads { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-.tt-signatureDownloads a { display: flex; align-items: center; gap: 8px; padding: 12px 14px; background: var(--surface); border-radius: var(--radius-small); font-size: 11px; font-weight: 600; }
-.tt-signatureDownloads a span { margin-left: auto; color: var(--muted-foreground); font-size: 9px; font-weight: 400; }
-.tt-signatureDownloads svg { width: 12px; height: 12px; flex: 0 0 auto; }
-.tt-signatureDownloads a:hover { background: #b9eed4; }
+.tt-brandMark:has(img) {
+  background: transparent;
+}
+.tt-brandMark img {
+  width: 36px;
+  height: 36px;
+}
+.tt-signatureHeading {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 24px;
+  margin-bottom: 32px;
+}
+.tt-signatureEyebrow {
+  display: block;
+  margin-bottom: 10px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 600;
+}
+.tt-signatureHeading h2 {
+  font-size: clamp(30px, 3.4vw, 42px);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1.2;
+}
+.tt-signatureHeading p {
+  margin-top: 12px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+.tt-signatureLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 600;
+}
+.tt-signatureLink svg {
+  width: 14px;
+  height: 14px;
+}
+.tt-signatureLink:hover {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.tt-signatureHero {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 20px;
+}
+.tt-logoShowcase figure {
+  margin: 0;
+  min-width: 0;
+}
+.tt-signaturePrimary,
+.tt-signatureHeroMark {
+  border-radius: var(--radius-surface);
+  min-height: 340px;
+  padding: 28px;
+}
+.tt-signaturePrimary {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  background: #f7f7f5;
+}
+.tt-signaturePrimary > figcaption,
+.tt-signatureApplications figcaption {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.tt-signaturePrimary > figcaption span,
+.tt-signatureApplications figcaption span {
+  color: var(--muted-foreground);
+  font-weight: 400;
+}
+.tt-signaturePrimary > img {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 28px 0;
+}
+.tt-signaturePalette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+}
+.tt-signaturePalette > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+.tt-signaturePalette i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.tt-signatureInkDot {
+  background: #242424;
+}
+.tt-signatureMintDot {
+  background: #b9eed4;
+  border: 1px solid rgb(36 36 36 / 8%);
+}
+.tt-signaturePalette code {
+  font-size: 9px;
+}
+.tt-signatureHeroMark {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 30px;
+  background: #b9eed4;
+}
+.tt-signatureHeroMark img {
+  width: 180px;
+  max-width: 100%;
+  height: auto;
+}
+.tt-signatureHeroMark figcaption {
+  font-size: 11px;
+  text-align: center;
+}
+.tt-signatureSubheading {
+  margin: 48px 0 22px;
+}
+.tt-signatureSubheading h3 {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -0.035em;
+}
+.tt-signatureSubheading p {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.tt-signatureConfigurations {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+}
+.tt-signatureConfigurations figure {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-surface);
+  padding: 24px;
+}
+.tt-signatureArtwork {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 220px;
+}
+.tt-signatureArtwork img {
+  max-width: 100%;
+  max-height: 180px;
+  width: auto;
+  height: auto;
+}
+.tt-signatureConfigurations figure:first-child img {
+  width: 136px;
+}
+.tt-signatureConfigurations figure:nth-child(2) img {
+  width: 260px;
+}
+.tt-signatureConfigurations figure:nth-child(3) img {
+  width: 250px;
+}
+.tt-signatureConfigurations figcaption strong,
+.tt-signatureSurface figcaption strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+}
+.tt-signatureConfigurations figcaption span,
+.tt-signatureSurface figcaption span {
+  display: block;
+  font-size: 11px;
+  line-height: 1.6;
+  margin-top: 5px;
+  color: var(--muted-foreground);
+}
+.tt-signatureSurfaces {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+.tt-signatureSurface {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 26px;
+  border-radius: var(--radius-surface);
+  min-height: 240px;
+}
+.tt-signatureSurface > img {
+  width: min(100%, 400px);
+  height: auto;
+  margin: 20px auto 30px;
+}
+.tt-signatureSurface-warm {
+  background: #f7f7f5;
+}
+.tt-signatureSurface-white {
+  background: #fff;
+  border: 1px solid var(--border);
+}
+.tt-signatureSurface-dark {
+  background: #242424;
+  color: #fff;
+}
+.tt-signatureSurface-dark figcaption span {
+  color: #c5c5c2;
+}
+.tt-signatureSurface-mint {
+  background: #b9eed4;
+}
+.tt-signatureSurface-mint figcaption span {
+  color: #3b5a49;
+}
+.tt-signatureReversePair {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+  padding: 28px;
+  background: #242424;
+  border-radius: var(--radius-surface);
+  margin-top: 20px;
+}
+.tt-signatureReversePair > div {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  gap: 22px;
+  min-width: 0;
+}
+.tt-signatureReversePair img {
+  max-width: 100%;
+  width: 180px;
+  height: 150px;
+  object-fit: contain;
+}
+.tt-signatureReversePair > div:first-child img {
+  width: 96px;
+}
+.tt-signatureReversePair span {
+  color: #c5c5c2;
+  font-size: 10px;
+  text-align: center;
+}
+.tt-signatureScale {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 24px 12px;
+  padding: 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-surface);
+}
+.tt-signatureScale figure {
+  flex: 1;
+  min-width: 76px;
+}
+.tt-signatureScale figure > div {
+  display: flex;
+  height: 148px;
+  align-items: center;
+  justify-content: center;
+}
+.tt-signatureScale img {
+  flex: 0 0 auto;
+}
+.tt-signatureScale figcaption {
+  text-align: center;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.tt-signatureApplications {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 20px;
+  margin-top: 20px;
+}
+.tt-signatureApplications figure {
+  display: flex;
+  flex-direction: column;
+  min-height: 220px;
+  padding: 24px;
+  border-radius: var(--radius-surface);
+  background: #f7f7f5;
+}
+.tt-signatureApplications img {
+  display: block;
+  width: min(100%, 540px);
+  height: auto;
+  margin: auto;
+}
+.tt-signatureCompact img {
+  width: 160px;
+}
+.tt-signatureFiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: start;
+  gap: 32px;
+  margin-top: 40px;
+  padding: 30px 0 10px;
+  border-top: 1px solid var(--border);
+  scroll-margin-top: 132px;
+}
+.tt-signatureFiles h3 {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+.tt-signatureFiles p {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.tt-signatureDownloads {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.tt-signatureDownloads a {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border-radius: var(--radius-small);
+  font-size: 11px;
+  font-weight: 600;
+}
+.tt-signatureDownloads a span {
+  margin-left: auto;
+  color: var(--muted-foreground);
+  font-size: 9px;
+  font-weight: 400;
+}
+.tt-signatureDownloads svg {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+}
+.tt-signatureDownloads a:hover {
+  background: #b9eed4;
+}
 @media (max-width: 900px) {
-  .tt-signatureConfigurations { gap: 14px; }
-  .tt-signatureConfigurations figure { padding: 18px; }
-  .tt-signatureFiles { grid-template-columns: 1fr; gap: 20px; }
-  .tt-signaturePrimary, .tt-signatureHeroMark { min-height: 290px; padding: 22px; }
+  .tt-signatureConfigurations {
+    gap: 14px;
+  }
+  .tt-signatureConfigurations figure {
+    padding: 18px;
+  }
+  .tt-signatureFiles {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+  .tt-signaturePrimary,
+  .tt-signatureHeroMark {
+    min-height: 290px;
+    padding: 22px;
+  }
 }
 @media (max-width: 640px) {
-  .tt-signatureHeading { flex-direction: column; align-items: start; gap: 16px; margin-bottom: 24px; }
-  .tt-signatureHero { grid-template-columns: 1fr; gap: 14px; }
-  .tt-signaturePrimary { min-height: 250px; padding: 20px; }
-  .tt-signatureHeroMark { min-height: 220px; gap: 12px; }
-  .tt-signatureHeroMark img { width: 140px; }
-  .tt-signatureConfigurations { grid-template-columns: 1fr; gap: 14px; }
-  .tt-signatureArtwork { height: 180px; }
-  .tt-signatureConfigurations figure { padding: 20px; }
-  .tt-signatureSurfaces { grid-template-columns: 1fr; gap: 14px; }
-  .tt-signatureSurface { min-height: 220px; padding: 22px; }
-  .tt-signatureReversePair { grid-template-columns: 1fr; gap: 32px; padding: 28px 22px; }
-  .tt-signatureReversePair img { height: 110px; }
-  .tt-signatureReversePair > div:last-child img { height: 160px; }
-  .tt-signatureScale { padding: 20px; justify-content: center; }
-  .tt-signatureScale figure { flex: 0 0 calc(50% - 6px); }
-  .tt-signatureScale figure > div { height: 140px; }
-  .tt-signatureApplications { grid-template-columns: 1fr; gap: 14px; }
-  .tt-signatureFiles { margin-top: 30px; }
-  .tt-signatureSubheading { margin-top: 36px; }
+  .tt-signatureHeading {
+    flex-direction: column;
+    align-items: start;
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .tt-signatureHero {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .tt-signaturePrimary {
+    min-height: 250px;
+    padding: 20px;
+  }
+  .tt-signatureHeroMark {
+    min-height: 220px;
+    gap: 12px;
+  }
+  .tt-signatureHeroMark img {
+    width: 140px;
+  }
+  .tt-signatureConfigurations {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .tt-signatureArtwork {
+    height: 180px;
+  }
+  .tt-signatureConfigurations figure {
+    padding: 20px;
+  }
+  .tt-signatureSurfaces {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .tt-signatureSurface {
+    min-height: 220px;
+    padding: 22px;
+  }
+  .tt-signatureReversePair {
+    grid-template-columns: 1fr;
+    gap: 32px;
+    padding: 28px 22px;
+  }
+  .tt-signatureReversePair img {
+    height: 110px;
+  }
+  .tt-signatureReversePair > div:last-child img {
+    height: 160px;
+  }
+  .tt-signatureScale {
+    padding: 20px;
+    justify-content: center;
+  }
+  .tt-signatureScale figure {
+    flex: 0 0 calc(50% - 6px);
+  }
+  .tt-signatureScale figure > div {
+    height: 140px;
+  }
+  .tt-signatureApplications {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .tt-signatureFiles {
+    margin-top: 30px;
+  }
+  .tt-signatureSubheading {
+    margin-top: 36px;
+  }
 }
-.tt-signatureAllFiles { margin-top: 18px; }
+.tt-signatureAllFiles {
+  margin-top: 18px;
+}

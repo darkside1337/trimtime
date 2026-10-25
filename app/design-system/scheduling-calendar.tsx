@@ -21,7 +21,12 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
 import {
   Select,
   SelectContent,
@@ -317,8 +322,7 @@ export default function SchedulingCalendar({
           eventContent={appointmentContent}
           eventDidMount={({ el, event }) => {
             const appointment = event.extendedProps.appointment as
-              | DemoAppointment
-              | undefined;
+              DemoAppointment | undefined;
             if (!appointment) return;
             el.dataset.appointmentId = appointment.id;
             el.setAttribute(
@@ -328,8 +332,7 @@ export default function SchedulingCalendar({
           }}
           eventClick={({ event, el }) => {
             const appointment = event.extendedProps.appointment as
-              | DemoAppointment
-              | undefined;
+              DemoAppointment | undefined;
             if (appointment) {
               returnFocus.current = el;
               setDialog({ kind: "details", appointment });
@@ -451,8 +454,8 @@ function AppointmentDetails({ appointment }: { appointment: DemoAppointment }) {
         </div>
       </dl>
       <p className="tt-schedule-dialog-note">
-        Fictional details for this component reference. No booking or notification has
-        been sent.
+        Fictional details for this component reference. No booking or
+        notification has been sent.
       </p>
       <DialogFooter>
         <DialogClose render={<Button variant="outline" />}>
