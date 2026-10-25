@@ -1,5 +1,6 @@
 import { test, expect, ownerOrigin, captureState } from "./fixtures";
 import { addReadyCatalog } from "./publication-fixtures";
+import { chooseBookingOptions } from "./booking-flow-helpers";
 
 test("readiness blocks an incomplete draft and explains the next setup steps", async ({
   page,
@@ -33,7 +34,7 @@ test("readiness blocks an incomplete draft and explains the next setup steps", a
   }
 });
 
-test("publishes a ready shop, keeps the public preview truthful, and confirms unpublication", async ({
+test("publishes a ready shop, completes public booking, and confirms unpublication", async ({
   page,
   context,
   owners,
@@ -55,16 +56,36 @@ test("publishes a ready shop, keeps the public preview truthful, and confirms un
     page.getByText("Published · Public preview available"),
   ).toBeVisible();
 
-  await page.goto(
-    `http://${owner.subdomain}.localhost:3100/?serviceId=${serviceId}&barberId=${barberId}&date=2026-11-02`,
-  );
+  await page.goto(`http://${owner.subdomain}.localhost:3100/`);
   await expect(
-    page.getByRole("heading", { name: "Juniper Barber", level: 1 }),
+    page.getByRole("link", { name: "Juniper Barber" }),
+  ).toBeVisible();
+  await captureState(page, "publication-booking-initial", info);
+  await chooseBookingOptions(page, { serviceId, barberId, date: "2026-11-02" });
+  await page.getByRole("button", { name: /Date & time/ }).click();
+  await captureState(page, "publication-available-slots", info);
+  await page.getByRole("button", { name: "Your details", exact: true }).click();
+  await page.getByLabel("Name").fill("Ada Lovelace");
+  await page.getByLabel("Email").fill("ada@example.test");
+  await page.getByRole("button", { name: /Confirm booking/ }).click();
+  await expect(
+    page.getByRole("heading", { name: "Your chair is reserved." }),
   ).toBeVisible();
   await expect(
-    page.getByText("Booking submission is not available yet."),
+    page.getByRole("link", { name: "Open booking details" }),
   ).toBeVisible();
-  await expect(page.getByText("09:00 -05:00")).toBeVisible();
+  await expect(
+    page.getByText("ada@example.test", { exact: true }),
+  ).toBeVisible();
+  await captureState(page, "publication-booking-receipt", info);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS n FROM bookings WHERE shop_id=$1",
+        [owner.shopId],
+      )
+    ).rows[0].n,
+  ).toBe(1);
 
   await page.goto(`${ownerOrigin}/settings`);
   await page.getByRole("button", { name: "Unpublish shop" }).click();
@@ -83,11 +104,11 @@ test("publishes a ready shop, keeps the public preview truthful, and confirms un
   await expect(
     page.getByText("Unpublished draft · Public page is paused"),
   ).toBeVisible();
-  await page.goto(
-    `http://${owner.subdomain}.localhost:3100/?serviceId=${serviceId}&barberId=${barberId}&date=2026-11-02`,
-  );
+  await page.goto(`http://${owner.subdomain}.localhost:3100/`);
   await expect(
-    page.getByText("This shop is paused and isn’t accepting booking requests."),
+    page.getByText(
+      "Online booking is paused. Existing appointments and their private links are still available.",
+    ),
   ).toBeVisible();
   await expect(page.getByText("Cut", { exact: true })).toHaveCount(0);
   await captureState(page, "publication-paused", info);

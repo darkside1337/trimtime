@@ -46,3 +46,19 @@ export function classifyHost(
 export function hasOwnerOrigin(headers: Headers) {
   return headers.get("origin") === ownerOrigin;
 }
+
+export function hasRequestOrigin(headers: Headers) {
+  const host = headers.get("host")?.toLowerCase();
+  const origin = headers.get("origin");
+  if (!host || !origin) return false;
+  try {
+    const parsed = new URL(origin);
+    return (
+      (parsed.protocol === "https:" || parsed.protocol === "http:") &&
+      parsed.host.toLowerCase() === host &&
+      parsed.origin === origin
+    );
+  } catch {
+    return false;
+  }
+}

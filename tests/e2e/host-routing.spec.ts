@@ -95,9 +95,7 @@ test("rewritten navigation keeps canonical URLs and isolates owner responses", a
     await owners(otherContext, { shop: true, name: "Routing Private B" });
     const otherPage = await otherContext.newPage();
     await page.goto(ownerOrigin);
-    await expect(
-      page.getByRole("main").getByText("Routing Private A", { exact: true }),
-    ).toBeVisible();
+    await expect(page.getByRole("main")).toContainText("Routing Private A");
     await openOwnerNavigation(page);
     await page.getByRole("link", { name: "Settings", exact: true }).click();
     await expect(page).toHaveURL(`${ownerOrigin}/settings`);
@@ -117,7 +115,10 @@ test("rewritten navigation keeps canonical URLs and isolates owner responses", a
     );
     await page.goto(marketingOrigin);
     await expect(
-      page.getByText("A friendlier way to book a barber appointment."),
+      page.getByRole("heading", {
+        level: 1,
+        name: "Keep the whole shop on schedule.",
+      }),
     ).toBeVisible();
     await expect(
       page.getByText("Routing Private A", { exact: true }),

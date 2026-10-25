@@ -1,7 +1,8 @@
 import { classifyHost } from "@/server/hosts";
 
 async function guard(request: Request, method: "GET" | "POST") {
-  if (classifyHost(request.headers) !== "owner") return new Response("Not found", { status: 404 });
+  if (classifyHost(request.headers) !== "owner")
+    return new Response("Not found", { status: 404 });
   const [{ toNextJsHandler }, { auth }] = await Promise.all([
     import("better-auth/next-js"),
     import("@/server/auth"),

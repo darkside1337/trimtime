@@ -1,5 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { classifyHost, shopLabelForHost } from "@/server/hosts";
+import {
+  classifyHost,
+  hasRequestOrigin,
+  shopLabelForHost,
+} from "@/server/hosts";
 import { shopNotFound, shopUnavailable } from "@/server/shop-host-response";
 
 export async function proxy(request: NextRequest) {
@@ -20,6 +24,24 @@ export async function proxy(request: NextRequest) {
   if (surface === "shop") {
     const label = shopLabelForHost(request.headers);
     if (
+      /^\/manage\/[^/]+\/?$/.test(pathname) &&
+      (request.method === "GET" || request.method === "HEAD")
+    ) {
+      const response = NextResponse.next();
+      response.headers.set("Cache-Control", "private, no-store");
+      response.headers.set("Referrer-Policy", "no-referrer");
+      response.headers.set("X-Robots-Tag", "noindex, nofollow, noarchive");
+      return response;
+    }
+    if (
+      pathname === "/" &&
+      request.method === "POST" &&
+      request.headers.has("next-action") &&
+      hasRequestOrigin(request.headers)
+    ) {
+      return NextResponse.next();
+    }
+    if (
       !label ||
       pathname !== "/" ||
       (request.method !== "GET" && request.method !== "HEAD")
@@ -32,9 +54,7 @@ export async function proxy(request: NextRequest) {
     } catch {
       return shopUnavailable();
     }
-    const destination = request.nextUrl.clone();
-    destination.pathname = "/shop";
-    return NextResponse.rewrite(destination);
+    return NextResponse.next();
   }
 
   if (pathname === "/design-system" || pathname.startsWith("/design-system/")) {

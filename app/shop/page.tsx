@@ -1,254 +1,292 @@
+import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { Suspense } from "react";
-import {
-  getPublicShop,
-  previewPublicSlots,
-} from "@/features/shops/public-queries";
-import { PublicAvailabilityPreview } from "@/features/shops/components/public-availability-preview";
+import Image from "next/image";
+import { Barlow_Condensed } from "next/font/google";
+import { BookingFlow } from "@/features/bookings/components/booking-flow";
+import { getPublicShop } from "@/features/shops/public-queries";
+import type { WeeklySchedule } from "@/features/availability/types";
+import { shop as styles } from "@/features/bookings/components/shop-styles";
 
-type Search = Promise<Record<string, string | string[] | undefined>>;
+const display = Barlow_Condensed({
+  subsets: ["latin"],
+  weight: "700",
+  variable: "--font-shop-display",
+  display: "swap",
+});
 
-export default function PublicShopPage({
-  searchParams,
-}: {
-  searchParams: Search;
-}) {
+export const metadata: Metadata = {
+  title: "Book an appointment",
+  description: "Choose a barber and a time at your local shop.",
+};
+
+export default function PublicShopPage() {
   return (
-    <Suspense fallback={<main className="min-h-dvh" />}>
-      <PublicShopContent searchParams={searchParams} />
+    <Suspense
+      fallback={
+        <main
+          className={`${styles.page} ${display.variable}`}
+          aria-busy="true"
+        />
+      }
+    >
+      <PublicShopContent />
     </Suspense>
   );
 }
 
-async function PublicShopContent({ searchParams }: { searchParams: Search }) {
-  const [requestHeaders, params] = await Promise.all([headers(), searchParams]);
-  const shop = await getPublicShop(requestHeaders);
+async function PublicShopContent() {
+  const shop = await getPublicShop(await headers());
   if (!shop)
     return (
-      <main className="mx-auto grid min-h-dvh max-w-3xl content-center gap-4 px-6">
-        <h1 className="font-heading text-4xl font-bold">
-          Shop page unavailable
-        </h1>
-        <p>Check the address and try again.</p>
-      </main>
-    );
-  if (shop.status === "paused")
-    return (
-      <main className="mx-auto grid min-h-dvh max-w-3xl content-center gap-6 px-6 py-16">
-        <p className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
-          TrimTime · Fictional demo
-        </p>
-        <h1 className="font-heading text-5xl font-bold">{shop.name}</h1>
-        <p className="text-xl">
-          This shop is paused and isn’t accepting booking requests.
-        </p>
-        <section className="grid gap-2 rounded-xl border p-6">
-          <h2 className="font-heading text-xl font-semibold">Contact</h2>
-          <p>{shop.publicContact}</p>
-          <p className="text-sm text-muted-foreground">
-            Shop time zone: {shop.timeZone}
-          </p>
+      <main className={`${styles.page} ${display.variable}`}>
+        <section className={`${styles.messagePanel} ${styles.wrap}`}>
+          <p className={styles.eyebrow}>TrimTime · Fictional demo</p>
+          <h1 className={styles.displayHeading}>Shop page unavailable</h1>
+          <p>Check the address and try again.</p>
         </section>
-        <p className="text-sm text-muted-foreground">
-          TrimTime is a fictional portfolio demo. No booking is created from
-          this page.
-        </p>
       </main>
     );
-
-  const services = shop.services;
-  const requestedService = one(params.serviceId);
-  const invalidService = Boolean(
-    requestedService && !services.some((item) => item.id === requestedService),
-  );
-  const service =
-    services.find((item) => item.id === requestedService) ?? services[0];
-  const requestedBarber = one(params.barberId);
-  const barbers = service?.barbers ?? [];
-  const invalidBarber = Boolean(
-    requestedBarber && !barbers.some((item) => item.id === requestedBarber),
-  );
-  const barber =
-    barbers.find((item) => item.id === requestedBarber) ?? barbers[0];
-  const date = one(params.date) ?? "";
-  const dateIsValid =
-    /^\d{4}-\d{2}-\d{2}$/.test(date) &&
-    Number.isFinite(Date.parse(`${date}T00:00:00Z`)) &&
-    new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) === date;
-  const preview =
-    dateIsValid && service && barber && !invalidService && !invalidBarber
-      ? await previewPublicSlots(requestHeaders, {
-          serviceId: service.id,
-          barberId: barber.id,
-          date,
-        })
-      : null;
-  const money = new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  });
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-10 px-5 py-10 sm:px-8 sm:py-16">
-      <header className="grid gap-4 border-b pb-8">
-        <p className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
-          TrimTime · Fictional demo
-        </p>
-        <h1 className="font-heading text-5xl font-bold tracking-tight sm:text-6xl">
+    <main className={`${styles.page} ${display.variable}`}>
+      <div className={styles.noticeBar}>
+        <span>Fictional shop · Real attention to detail</span>
+        <span>Bookings are saved securely · No account needed</span>
+      </div>
+      <header className={`${styles.siteHeader} ${styles.wrap}`}>
+        <a className={styles.wordmark} href="#top" aria-label={shop.name}>
           {shop.name}
-        </h1>
-        <p className="max-w-2xl text-lg text-muted-foreground">
-          Explore services and preview available starts. No account is needed to
-          view this page.
-        </p>
-        <p className="text-sm">
-          {shop.address} · {shop.publicContact} · Shop time zone:{" "}
-          {shop.timeZone}
-        </p>
+          <span className={styles.greenDot}>.</span>
+        </a>
+        <nav aria-label="Shop navigation" className={styles.siteNav}>
+          {shop.status === "published" ? (
+            <a href="#booking">Book a chair</a>
+          ) : null}
+          <a href="#shop-contact">The shop</a>
+          <span>{shop.publicContact}</span>
+        </nav>
       </header>
-      <section className="grid gap-5" aria-labelledby="services-heading">
-        <h2 id="services-heading" className="font-heading text-3xl font-bold">
-          Services
-        </h2>
-        {!services.length ? (
-          <p className="rounded-xl bg-muted p-6">
-            No services are currently offered.
-          </p>
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-2">
-            {services.map((item) => (
-              <article
-                key={item.id}
-                className="grid gap-2 rounded-xl border p-5"
-              >
-                <h3 className="font-heading text-xl font-semibold">
-                  {item.name}
-                </h3>
-                <p>
-                  {money.format(Number(item.priceUsd))} · {item.durationMinutes}{" "}
-                  minutes
-                </p>
-                <p className="text-sm text-muted-foreground">
-                  {item.barbers.map(({ name }) => name).join(", ") ||
-                    "No active barber is currently assigned."}
-                </p>
-              </article>
-            ))}
-          </div>
-        )}
-      </section>
-      <section className="grid gap-5" aria-labelledby="preview-heading">
-        <div>
-          <h2 id="preview-heading" className="font-heading text-3xl font-bold">
-            Availability preview
-          </h2>
-          <p className="mt-2 text-muted-foreground">
-            Booking submission is not available yet. A preview does not hold a
-            start.
-          </p>
-        </div>
-        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
-          <div className="grid gap-5">
-            {services.length > 0 && (
-              <PublicAvailabilityPreview
-                services={services}
-                initialServiceId={service?.id}
-                initialBarberId={barber?.id}
-                date={dateIsValid ? date : ""}
-              />
-            )}
-            {invalidService || invalidBarber ? (
-              <p role="alert" className="rounded-xl border p-5">
-                That selection is no longer available. Choose the service and
-                barber again.
-              </p>
-            ) : !date ? (
-              <p className="rounded-xl border p-5">
-                Choose a date to preview eligible starts.
-              </p>
-            ) : !dateIsValid ? (
-              <p role="alert" className="rounded-xl border p-5">
-                Choose a valid date.
-              </p>
-            ) : !service || !barber ? (
-              <p className="rounded-xl border p-5">
-                Choose a service with an active barber to preview starts.
-              </p>
-            ) : !preview ? (
-              <p role="status" className="rounded-xl border p-5">
-                That selection is no longer available. Choose the service and
-                barber again.
-              </p>
-            ) : preview.slots.length ? (
-              <ul
-                aria-label="Eligible starts"
-                className="grid gap-2 sm:grid-cols-3"
-              >
-                {preview.slots.map((slot) => (
-                  <li key={slot.start} className="rounded-lg border p-4">
-                    <time dateTime={slot.start}>
-                      {slot.localStart} {slot.offset}
-                    </time>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="rounded-xl border p-5">
-                No eligible starts are available on this date.
-              </p>
-            )}
-          </div>
-          <aside
-            className="grid gap-4 rounded-xl border-t-4 border-foreground bg-muted p-5"
-            aria-label="Preview selection summary"
-          >
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-                Preview selection
-              </p>
-              <h3 className="mt-3 font-heading text-2xl font-bold">
-                {shop.name}
-              </h3>
-            </div>
-            <dl className="grid gap-3 text-sm">
-              <div className="flex justify-between gap-4">
-                <dt className="text-muted-foreground">Service</dt>
-                <dd className="text-right">
-                  {service?.name ?? "Choose a service"}
-                </dd>
-              </div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-muted-foreground">Barber</dt>
-                <dd className="text-right">
-                  {barber?.name ?? "Choose a barber"}
-                </dd>
-              </div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-muted-foreground">Date</dt>
-                <dd className="text-right">
-                  {dateIsValid ? date : "Choose a date"}
-                </dd>
-              </div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-muted-foreground">Time zone</dt>
-                <dd className="text-right">{shop.timeZone}</dd>
-              </div>
-            </dl>
-            <p className="border-t pt-4 text-sm text-muted-foreground">
-              Availability is informational. No start is held and no appointment
-              is created.
+
+      {shop.status === "paused" ? (
+        <>
+          <section className={`${styles.paused} ${styles.wrap}`} id="top">
+            <p className={styles.eyebrow}>TrimTime · Fictional demo</p>
+            <h1 className={styles.displayHeading}>
+              We’re taking a booking break.
+            </h1>
+            <p>
+              Online booking is paused. Existing appointments and their private
+              links are still available.
             </p>
-          </aside>
-        </div>
-      </section>
-      <footer className="mt-auto border-t pt-6 text-sm text-muted-foreground">
-        Fictional portfolio demo · Availability is informational and no
-        appointment is created.
-      </footer>
+            <p className={styles.supporting}>
+              For help, contact the shop at{" "}
+              <strong>{shop.publicContact}</strong>. Shop time zone:{" "}
+              {shop.timeZone}.
+            </p>
+          </section>
+          <ShopFooter
+            name={shop.name}
+            publicContact={shop.publicContact}
+            timeZone={shop.timeZone}
+          />
+        </>
+      ) : (
+        <>
+          <section
+            className={`${styles.hero} ${styles.wrap}`}
+            id="top"
+            aria-labelledby="shop-title"
+          >
+            <div className={styles.heroCopy}>
+              <h1 className={styles.heroTitle} id="shop-title">
+                A GOOD CUT.
+                <br />
+                YOUR KIND
+                <br />
+                OF PLACE<span className={styles.greenDot}>.</span>
+              </h1>
+              <p className={styles.heroText}>
+                {shop.name} is your place for a good cut, a great barber, and a
+                little time for yourself. Choose a service and book directly
+                with the shop.
+              </p>
+              <a className={styles.primaryLink} href="#booking">
+                Book an appointment <span aria-hidden="true">↗</span>
+              </a>
+              <p className={styles.addressLine}>{shop.address}</p>
+            </div>
+            <figure className={styles.heroPhoto}>
+              {/* This is the approved Doop photo, copied locally for production use. */}
+              <Image
+                src="/brand/barbershop.jpg"
+                alt="A barber shaving a reclining customer"
+                width={1600}
+                height={1067}
+                sizes="(max-width: 767px) calc(100vw - 40px), (max-width: 1024px) calc((100vw - 64px) / 2), 640px"
+                preload
+                className={styles.heroImage}
+              />
+              <figcaption className={styles.heroPhotoCaption}>
+                <span>The chair is yours.</span>
+                <span>Illustrative barbershop photography</span>
+              </figcaption>
+            </figure>
+          </section>
+          <div className={styles.promiseBar}>
+            <strong>Cuts. Beards. Good company.</strong>
+            <span>Choose your barber</span>
+            <span>No account needed</span>
+            <span>Pay at the shop</span>
+          </div>
+          <section
+            className={`${styles.bookingSection} ${styles.wrap}`}
+            id="booking"
+          >
+            <header className={styles.bookingIntro}>
+              <div>
+                <h2 className={styles.displayHeading}>
+                  Make time for a fresh start.
+                </h2>
+                <p>Your cut. Your barber. Your time.</p>
+              </div>
+              <p className={styles.disclosure}>
+                All prices in USD
+                <br />
+                All times in {shop.timeZone}
+              </p>
+            </header>
+            <BookingFlow
+              services={shop.services}
+              shopName={shop.name}
+              publicContact={shop.publicContact}
+              timeZone={shop.timeZone}
+            />
+          </section>
+          <ShopFooter
+            name={shop.name}
+            address={shop.address}
+            publicContact={shop.publicContact}
+            timeZone={shop.timeZone}
+            recurringHours={shop.recurringHours}
+          />
+        </>
+      )}
     </main>
   );
 }
 
-function one(value: string | string[] | undefined) {
-  return Array.isArray(value) ? value[0] : value;
+function ShopFooter({
+  name,
+  address,
+  publicContact,
+  timeZone,
+  recurringHours,
+}: {
+  name: string;
+  address?: string;
+  publicContact: string;
+  timeZone: string;
+  recurringHours?: WeeklySchedule | null;
+}) {
+  const weekdays = [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+  ];
+  const formatMinute = (minute: number) => {
+    if (minute === 1440) return "12:00 AM";
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: "UTC",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(new Date(Date.UTC(1970, 0, 1, 0, minute)));
+  };
+  const openWindows = (day: WeeklySchedule[number]) => {
+    return day.working.flatMap((range) => {
+      let windows = [range];
+      for (const pause of day.breaks) {
+        windows = windows.flatMap((window) => {
+          if (pause.end <= window.start || pause.start >= window.end)
+            return [window];
+          return [
+            ...(pause.start > window.start
+              ? [{ start: window.start, end: pause.start }]
+              : []),
+            ...(pause.end < window.end
+              ? [{ start: pause.end, end: window.end }]
+              : []),
+          ];
+        });
+      }
+      return windows;
+    });
+  };
+  return (
+    <>
+      <section className={styles.footerCallout} id="shop-contact">
+        <h2 className={styles.footerCalloutTitle}>
+          See you
+          <br />
+          in the chair.
+        </h2>
+        <div>
+          <h3 className={styles.footerInfoTitle}>Find {name}</h3>
+          {address ? <p>{address}</p> : null}
+          <p>{publicContact}</p>
+          <p className={styles.supporting}>Shop time zone: {timeZone}</p>
+          {recurringHours ? (
+            <details className="mt-6 max-w-xl border-y border-[#e6e6e2] py-4 text-sm">
+              <summary className="cursor-pointer font-semibold">
+                Recurring shop hours
+              </summary>
+              <p className="my-3 text-xs text-[#72726e]">
+                Recurring hours after breaks, in {timeZone}. Date-specific
+                exceptions may apply.
+              </p>
+              <dl className="grid gap-2 text-xs">
+                {recurringHours.map((day, index) => (
+                  <div
+                    key={weekdays[index]}
+                    className="grid grid-cols-[6rem_1fr] gap-3"
+                  >
+                    <dt className="text-[#72726e]">{weekdays[index]}</dt>
+                    <dd className="m-0">
+                      {openWindows(day).length
+                        ? openWindows(day)
+                            .map(
+                              (range) =>
+                                `${formatMinute(range.start)}–${formatMinute(range.end)}`,
+                            )
+                            .join(", ")
+                        : "Closed"}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </details>
+          ) : null}
+        </div>
+      </section>
+      <footer className={`${styles.footer} ${styles.wrap}`}>
+        <span className={styles.footerWordmark}>
+          {name}
+          <span className={styles.greenDot}>.</span>
+        </span>
+        <a
+          href={new URL(
+            "/sign-in",
+            process.env.APP_ORIGIN ?? "http://app.localhost:3100",
+          ).toString()}
+          className={styles.signInLink}
+        >
+          Owner sign in
+        </a>
+      </footer>
+    </>
+  );
 }

@@ -3,8 +3,10 @@ import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { barberServices, barbers, services } from "@/db/schema/catalog";
 import { shops } from "@/db/schema/shops";
+import { shopSchedules } from "@/db/schema/availability";
 import { classifyHost, shopLabelForHost } from "@/server/hosts";
 import { previewPublishedShopSlots } from "@/features/availability/queries";
+import type { WeeklySchedule } from "@/features/availability/types";
 
 export type PublicShopView =
   | { status: "paused"; name: string; publicContact: string; timeZone: string }
@@ -14,6 +16,7 @@ export type PublicShopView =
       address: string;
       publicContact: string;
       timeZone: string;
+      recurringHours: WeeklySchedule | null;
       services: {
         id: string;
         name: string;
@@ -62,6 +65,11 @@ export async function getPublicShop(
         publicContact: shop.publicContact,
         timeZone: shop.timeZone,
       };
+    const [schedule] = await tx
+      .select({ week: shopSchedules.week })
+      .from(shopSchedules)
+      .where(eq(shopSchedules.shopId, shop.id))
+      .limit(1);
     const rows = await tx
       .select({
         id: services.id,
@@ -122,6 +130,7 @@ export async function getPublicShop(
       address: shop.address,
       publicContact: shop.publicContact,
       timeZone: shop.timeZone,
+      recurringHours: schedule?.week ?? null,
       services: [...grouped.values()],
     };
   });
