@@ -7,6 +7,10 @@ import type { ZodError } from "zod";
 import { barbers, barberServices, services } from "@/db/schema/catalog";
 import type { ActionResult } from "@/lib/action-result";
 import type { OwnerContext } from "@/server/owner-context";
+import {
+  BookingProtectionError,
+  hasProtectedBooking,
+} from "@/features/bookings/protection";
 import { saveServiceSchema } from "./schemas";
 import type { ServiceInput, ServiceView } from "./types";
 
@@ -88,6 +92,30 @@ export async function saveService(
               message: "Archived services cannot be changed.",
             },
           };
+        const assignments = await tx
+          .select({ barberId: barberServices.barberId })
+          .from(barberServices)
+          .innerJoin(
+            barbers,
+            and(
+              eq(barbers.shopId, barberServices.shopId),
+              eq(barbers.id, barberServices.barberId),
+              eq(barbers.archived, false),
+            ),
+          )
+          .where(
+            and(
+              eq(barberServices.shopId, shopId),
+              eq(barberServices.serviceId, id),
+            ),
+          );
+        for (const { barberId } of assignments) {
+          if (
+            !parsed.data.barberIds.includes(barberId) &&
+            (await hasProtectedBooking(tx, { shopId, serviceId: id, barberId }))
+          )
+            throw new BookingProtectionError();
+        }
       }
       const [service] = await tx
         .insert(services)
@@ -125,7 +153,12 @@ export async function saveService(
         data: { ...parsed.data, id: service.id, archived: service.archived },
       };
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof BookingProtectionError)
+      return {
+        success: false,
+        error: { code: "BOOKING_CONFLICT", message: error.message },
+      };
     return {
       success: false,
       error: { code: "SAVE_FAILED", message: "Unable to save your service." },
@@ -211,6 +244,11 @@ async function updateServiceState(
             },
           };
       }
+      if (
+        change.archived &&
+        (await hasProtectedBooking(tx, { shopId, serviceId: id }))
+      )
+        throw new BookingProtectionError();
       const [service] = await tx
         .update(services)
         .set(change)
@@ -241,7 +279,12 @@ async function updateServiceState(
         },
       };
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof BookingProtectionError)
+      return {
+        success: false,
+        error: { code: "BOOKING_CONFLICT", message: error.message },
+      };
     return {
       success: false,
       error: { code: "SAVE_FAILED", message: "Unable to update your service." },

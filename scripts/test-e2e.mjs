@@ -15,6 +15,9 @@ const env = {
   APP_ORIGIN: "http://app.localhost:3100",
   MARKETING_ORIGIN: "http://localhost:3100",
   BETTER_AUTH_SECRET: "e2e-only-secret-that-is-long-enough-for-better-auth",
+  BOOKING_CAPABILITY_KEY_ID: "e2e-v1",
+  BOOKING_CAPABILITY_ENCRYPTION_KEY:
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
   GOOGLE_CLIENT_ID: "e2e-google-client",
   GOOGLE_CLIENT_SECRET: "e2e-google-secret",
 };

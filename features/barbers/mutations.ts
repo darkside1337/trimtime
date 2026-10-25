@@ -9,6 +9,10 @@ import type { OwnerContext } from "@/server/owner-context";
 import { saveBarberSchema } from "./schemas";
 import type { BarberView } from "@/features/catalog/types";
 import { copyShopScheduleToBarber } from "@/features/availability/copy-schedule";
+import {
+  BookingProtectionError,
+  hasProtectedBooking,
+} from "@/features/bookings/protection";
 
 function validationError(error: z.ZodError) {
   return {
@@ -83,6 +87,30 @@ export async function saveBarber(
               message: "Archived barbers cannot be changed.",
             },
           };
+        const assignments = await tx
+          .select({ serviceId: barberServices.serviceId })
+          .from(barberServices)
+          .innerJoin(
+            services,
+            and(
+              eq(services.shopId, barberServices.shopId),
+              eq(services.id, barberServices.serviceId),
+              eq(services.archived, false),
+            ),
+          )
+          .where(
+            and(
+              eq(barberServices.shopId, shopId),
+              eq(barberServices.barberId, id),
+            ),
+          );
+        for (const { serviceId } of assignments) {
+          if (
+            !parsed.data.serviceIds.includes(serviceId) &&
+            (await hasProtectedBooking(tx, { shopId, serviceId, barberId: id }))
+          )
+            throw new BookingProtectionError();
+        }
       }
       const [barber] = await tx
         .insert(barbers)
@@ -114,7 +142,12 @@ export async function saveBarber(
         },
       };
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof BookingProtectionError)
+      return {
+        success: false,
+        error: { code: "BOOKING_CONFLICT", message: error.message },
+      };
     return {
       success: false,
       error: { code: "SAVE_FAILED", message: "Unable to save your barber." },
@@ -147,6 +180,15 @@ export async function archiveBarber(
           success: false as const,
           error: { code: "SHOP_REQUIRED", message: "Set up your shop first." },
         };
+      if (await hasProtectedBooking(tx, { shopId, barberId: id }))
+        return {
+          success: false as const,
+          error: {
+            code: "BOOKING_CONFLICT",
+            message:
+              "Resolve this barber’s confirmed bookings before archiving.",
+          },
+        };
       const [barber] = await tx
         .update(barbers)
         .set({ archived: true })
@@ -173,7 +215,12 @@ export async function archiveBarber(
         },
       };
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof BookingProtectionError)
+      return {
+        success: false,
+        error: { code: "BOOKING_CONFLICT", message: error.message },
+      };
     return {
       success: false,
       error: { code: "SAVE_FAILED", message: "Unable to archive your barber." },

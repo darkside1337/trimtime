@@ -12,6 +12,11 @@ import {
   shopSchedules,
 } from "@/db/schema/availability";
 import { occupiedIntervals, timeBlocks } from "@/db/schema/occupancy";
+import { bookings } from "@/db/schema/bookings";
+import {
+  BookingProtectionError,
+  assertBookingsFitCurrentSchedules,
+} from "@/features/bookings/protection";
 import type { ActionResult } from "@/lib/action-result";
 import type { OwnerContext } from "@/server/owner-context";
 import type {
@@ -106,12 +111,18 @@ export async function saveShopSchedule(
           sql`INSERT INTO barber_schedules (shop_id, barber_id, week, revision) SELECT ${shopId}, id, ${JSON.stringify(parsed.data.week)}::jsonb, 1 FROM barbers WHERE shop_id = ${shopId} AND archived = false ON CONFLICT (shop_id, barber_id) DO NOTHING`,
         );
       }
+      await assertBookingsFitCurrentSchedules(tx, shopId);
       return {
         success: true as const,
         data: { week: parsed.data.week, revision: next },
       };
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof BookingProtectionError)
+      return {
+        success: false,
+        error: { code: "BOOKING_CONFLICT", message: error.message },
+      };
     return {
       success: false,
       error: { code: "SAVE_FAILED", message: "Unable to save shop hours." },
@@ -202,12 +213,18 @@ export async function saveBarberSchedule(
           target: [barberSchedules.shopId, barberSchedules.barberId],
           set: { week: parsed.data.week, revision: next },
         });
+      await assertBookingsFitCurrentSchedules(tx, shopId);
       return {
         success: true as const,
         data: { week: parsed.data.week, revision: next },
       };
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof BookingProtectionError)
+      return {
+        success: false,
+        error: { code: "BOOKING_CONFLICT", message: error.message },
+      };
     return {
       success: false,
       error: { code: "SAVE_FAILED", message: "Unable to save barber hours." },
@@ -336,6 +353,7 @@ async function saveDateSchedule(
               revision: next,
             },
           });
+        await assertBookingsFitCurrentSchedules(tx, shopId);
         return {
           success: true as const,
           data: {
@@ -379,12 +397,18 @@ async function saveDateSchedule(
           target: [shopDateSchedules.shopId, shopDateSchedules.date],
           set: { override: data.override, closed: data.closed, revision: next },
         });
+      await assertBookingsFitCurrentSchedules(tx, shopId);
       return {
         success: true as const,
         data: { override: data.override, closed: data.closed, revision: next },
       };
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof BookingProtectionError)
+      return {
+        success: false,
+        error: { code: "BOOKING_CONFLICT", message: error.message },
+      };
     return {
       success: false,
       error: {
@@ -464,6 +488,31 @@ export async function createTimeBlock(
         return {
           success: false as const,
           error: { code: "NOT_FOUND", message: "Active barber not found." },
+        };
+      const bookingConflict = await tx
+        .select({ id: bookings.id })
+        .from(bookings)
+        .innerJoin(
+          occupiedIntervals,
+          eq(occupiedIntervals.id, bookings.occupancyId),
+        )
+        .where(
+          and(
+            eq(bookings.shopId, shopId),
+            eq(bookings.barberId, barber.id),
+            eq(bookings.status, "confirmed"),
+            sql`${occupiedIntervals.startAt} < ${new Date(end.epochMilliseconds)}`,
+            sql`${occupiedIntervals.endAt} > ${new Date(start.epochMilliseconds)}`,
+          ),
+        )
+        .limit(1);
+      if (bookingConflict.length)
+        return {
+          success: false as const,
+          error: {
+            code: "BOOKING_CONFLICT",
+            message: "This block conflicts with a confirmed booking.",
+          },
         };
       const date = Temporal.PlainDate.from(parsed.data.date);
       const startLocal = start.toZonedDateTimeISO(timeZone);

@@ -40,6 +40,24 @@ function fits(
   return true;
 }
 
+export function fitsScheduleInterval({
+  start,
+  durationMinutes,
+  date,
+  timeZone,
+  shopDay,
+  barberDay,
+}: {
+  start: Temporal.Instant;
+  durationMinutes: number;
+  date: Temporal.PlainDate;
+  timeZone: string;
+  shopDay: DaySchedule;
+  barberDay: DaySchedule;
+}) {
+  return fits(start, durationMinutes, date, timeZone, shopDay, barberDay);
+}
+
 export function calculateSlots({
   date,
   timeZone,
