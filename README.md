@@ -51,6 +51,12 @@ process-level overrides take precedence over `.env`; the application rejects
 unconfigured hosts. Use the HTTPS setup below for real Google sign-in. The
 Playwright runner supplies its own origins on port 3100.
 
+`pnpm test:e2e` defaults `TRIMTIME_E2E_NOW` to `2026-10-31T12:00:00Z` for a
+deterministic server and browser clock. Set it to a UTC ISO instant ending in
+`Z` to override for focused time-sensitive runs. Keep the default for the full
+suite: an explicit `2026-11-02` clock makes the November 1 DST preview date
+past.
+
 Production builds and starts require explicit `MARKETING_ORIGIN` and
 `APP_ORIGIN` values. Each must be a bare HTTPS origin; one trailing slash is
 normalized away. Credentials, paths, queries, and fragments are rejected,
@@ -123,8 +129,34 @@ Do not commit the key or store it in PostgreSQL.
 
 ## Local email capture
 
-Mailpit is the selected sink for local development email capture. It is not
-currently installed or configured by the repository, and captured messages do
-not prove inbox delivery. SMTP port `1025` and web UI port `8025` are planned
-local examples only. Hosted v1 has no real email sender; real delivery is
-deferred to v2. Resend is a tentative v2 sender, not a finalized provider.
+Mailpit is pinned in `compose.dev.yml` and its optional `email` profile is not
+started by `pnpm db:dev:up`. Add these settings to your existing ignored `.env`
+(copy `.env.example` once only if you do not already have an `.env`):
+
+```dotenv
+EMAIL_MODE=mailpit
+MAILPIT_ORIGIN=http://127.0.0.1:8025
+```
+
+Then start the service with:
+
+```sh
+docker compose --project-name trimtime-dev -f compose.dev.yml up --detach mailpit
+```
+
+The web/API port `8025` binds only to loopback. Inspect captured messages at
+<http://127.0.0.1:8025>. Mailpit mode requires a loopback Mailpit URL and local
+application origins; invalid or hosted configuration, including any `VERCEL`
+environment, disables email. The dispatcher runs after booking commit and
+cannot undo the booking or its manage link. The global budget allows at most
+100 reservations per UTC day. A reservation is not proof that an HTTP send was
+invoked; uncertain reservations remain charged, and terminal work is never
+replayed automatically after a budget reset or Mailpit restart. Transport
+requests are best-effort and bounded to three seconds each.
+
+Use fictional customer data. “Captured locally” means the app verified the Mailpit-stored recipient and
+attempt-correlation header; it does not mean the message reached an inbox. The owner alert goes to the owner's stored account email and does not
+contain the customer manage token. Routine tests use the isolated HTTP double
+on `127.0.0.1:8027`; they must not contact this Mailpit instance. Hosted v1 has
+no real email sender. Real delivery, provider setup, retry/backoff, future-event
+templates, and manual resend remain deferred; Resend is tentative v2 only.

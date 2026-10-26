@@ -2,10 +2,12 @@ import "server-only";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { bookings } from "@/db/schema/bookings";
+import { notificationWork } from "@/db/schema/notification-work";
 import { shops } from "@/db/schema/shops";
 import type { ActionResult } from "@/lib/action-result";
 import { hashSecret } from "./capabilities";
 import type { ManagedBookingView, PublicBookingContext } from "./types";
+import { customerEmailSummary } from "@/features/notifications/customer-summary";
 
 const unavailable = {
   success: false,
@@ -37,9 +39,21 @@ export async function getManagedBooking(
         publicContact: shops.publicContact,
         address: shops.address,
         timeZone: shops.timeZone,
+        emailStatus: notificationWork.status,
+        emailReason: notificationWork.reason,
+        emailClaimedAt: notificationWork.claimedAt,
+        emailUpdatedAt: notificationWork.updatedAt,
       })
       .from(bookings)
       .innerJoin(shops, eq(shops.id, bookings.shopId))
+      .leftJoin(
+        notificationWork,
+        and(
+          eq(notificationWork.bookingId, bookings.id),
+          eq(notificationWork.kind, "customer_confirmation"),
+          eq(notificationWork.channel, "email"),
+        ),
+      )
       .where(
         and(
           eq(bookings.shopId, context.shopId),
@@ -76,6 +90,18 @@ export async function getManagedBooking(
           publicContact: row.publicContact,
           address: row.address,
           timeZone: row.timeZone,
+        },
+        notifications: {
+          email: customerEmailSummary(
+            {
+              status: row.emailStatus as
+                ManagedBookingView["notifications"]["email"]["status"] | null,
+              reason: row.emailReason,
+              claimedAt: row.emailClaimedAt,
+              updatedAt: row.emailUpdatedAt,
+            },
+            now,
+          ),
         },
         past: row.endAt.getTime() <= now.getTime(),
         changeCutoffPassed:

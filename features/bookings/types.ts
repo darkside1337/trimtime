@@ -1,3 +1,5 @@
+import type { CustomerEmailSummary } from "@/features/notifications/customer-summary";
+
 export type PublicBookingContext = {
   shopId: string;
 };
@@ -26,6 +28,7 @@ export type BookingFailureCode =
   | "UNAVAILABLE";
 
 export type ManagedBookingView = {
+  notifications: { email: CustomerEmailSummary };
   status: "confirmed" | "cancelled";
   startAt: string;
   endAt: string;
@@ -51,5 +54,8 @@ export type PublicBookingReceipt = {
   bookingId: string;
   manageUrl: string;
   booking: ManagedBookingView;
-  notifications: { email: "unavailable"; whatsapp: "unavailable" };
+  notifications: {
+    email: CustomerEmailSummary;
+    whatsapp: "unavailable";
+  };
 };

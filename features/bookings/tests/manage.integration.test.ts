@@ -13,6 +13,8 @@ describe("managed booking reads", () => {
     barber: randomUUID(),
     service: randomUUID(),
     booking: randomUUID(),
+    notification: randomUUID(),
+    ownerNotification: randomUUID(),
   };
   const token = randomBytes(32).toString("base64url");
 
@@ -47,6 +49,14 @@ describe("managed booking reads", () => {
       capability_ciphertext, capability_key_id, recovery_key_hash, recovery_payload_digest
     ) VALUES ($1,$2,$3,$4,'confirmed','2026-11-02T10:00Z','2026-11-02T10:30Z','Saved Cut',25,30,'Saved Barber','Ada','ada@example.test',false,'2026-11-02T08:00Z',$5,'ciphertext','test-v1','recovery-hash','payload-digest')`,
       [ids.booking, ids.shop, ids.service, ids.barber, hashSecret(token)],
+    );
+    await database.pool.query(
+      "INSERT INTO notification_work (id, booking_id, kind, channel, status, recipient) VALUES ($1,$2,'customer_confirmation','email','captured','ada@example.test')",
+      [ids.notification, ids.booking],
+    );
+    await database.pool.query(
+      "INSERT INTO notification_work (id, booking_id, kind, channel, status, recipient) VALUES ($1,$2,'owner_alert','email','failed',$3)",
+      [ids.ownerNotification, ids.booking, `${ids.user}@example.test`],
     );
   });
 
@@ -108,6 +118,28 @@ describe("managed booking reads", () => {
     await expect(getManagedBooking(context, token)).resolves.toMatchObject({
       success: true,
       data: { shop: { name: "Current Shop" } },
+    });
+  });
+
+  it("returns the customer confirmation status through the capability read", async () => {
+    const result = await getManagedBooking({ shopId: ids.shop }, token);
+    expect(result).toMatchObject({
+      success: true,
+      data: { notifications: { email: { status: "captured" } } },
+    });
+    expect(JSON.stringify(result)).not.toContain(`${ids.user}@example.test`);
+  });
+
+  it("hides customer status when the capability has been revoked", async () => {
+    await database.pool.query(
+      "UPDATE bookings SET capability_revoked_at=now() WHERE id=$1",
+      [ids.booking],
+    );
+    await expect(
+      getManagedBooking({ shopId: ids.shop }, token),
+    ).resolves.toMatchObject({
+      success: false,
+      error: { code: "UNAVAILABLE" },
     });
   });
 

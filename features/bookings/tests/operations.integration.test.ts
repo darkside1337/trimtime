@@ -168,7 +168,14 @@ describe("public booking operations", () => {
           barber: { name: "Sam" },
           customer: { email: "ada@example.test" },
         },
-        notifications: { email: "unavailable", whatsapp: "unavailable" },
+        notifications: {
+          email: {
+            status: "unavailable",
+            reason: "email_unavailable",
+            updatedAt: expect.any(String),
+          },
+          whatsapp: "unavailable",
+        },
       },
     });
     if (!created.success) return;

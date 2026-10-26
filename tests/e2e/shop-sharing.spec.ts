@@ -84,6 +84,12 @@ test("the displayed QR encodes the canonical public URL and downloads as SVG", a
   }
   await page.goto(decoded!.data);
   await expect(
-    page.getByText("This shop is paused and isn’t accepting booking requests."),
+    page.getByRole("heading", { name: "We’re taking a booking break." }),
   ).toBeVisible();
+  await expect(
+    page.getByText(
+      "Online booking is paused. Existing appointments and their private links are still available.",
+    ),
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Book a chair" })).toHaveCount(0);
 });

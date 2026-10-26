@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { Barlow_Condensed } from "next/font/google";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -14,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import type { ManagedBookingView } from "../types";
+import { customerEmailStatusCopy } from "@/features/notifications/customer-summary";
 import { shop as styles } from "./shop-styles";
 
 const display = Barlow_Condensed({
@@ -489,6 +491,7 @@ export function ManageBooking({
   past: boolean;
 }) {
   const { date, range } = appointmentTime(booking);
+  const router = useRouter();
   const cancelled = booking.status === "cancelled";
   const viewOnly = cancelled || past;
   const heading = cancelled
@@ -498,7 +501,15 @@ export function ManageBooking({
       : "Confirmed";
   const [screen, setScreen] = useState<PreviewScreen>("details");
   const [dialog, setDialog] = useState<PreviewDialog>(null);
+  const [refreshingStatus, startRefresh] = useTransition();
+  const [refreshRequested, setRefreshRequested] = useState(false);
   const screenHeadingRef = useRef<HTMLHeadingElement>(null);
+
+  function refreshMessageStatus() {
+    if (refreshingStatus) return;
+    setRefreshRequested(true);
+    startRefresh(() => router.refresh());
+  }
 
   useEffect(() => {
     if (screen === "details")
@@ -650,8 +661,26 @@ export function ManageBooking({
                       ? "Your appointment starts within 12 hours. Contact the shop if your plans change."
                       : "Customer changes are not available yet. Contact the shop if your plans change."}
                 </p>
-                <p className="mt-2 text-[#72726e]">
-                  Email and WhatsApp delivery are currently unavailable.
+                <p className="mt-2 text-[#72726e]" role="status">
+                  {customerEmailStatusCopy(booking.notifications.email)}
+                </p>
+                <Button
+                  aria-busy={refreshingStatus}
+                  aria-disabled={refreshingStatus}
+                  className="mt-3 aria-disabled:opacity-50"
+                  onClick={refreshMessageStatus}
+                  variant="outline"
+                >
+                  {refreshingStatus
+                    ? "Refreshing status…"
+                    : "Refresh message status"}
+                </Button>
+                <p aria-live="polite" className="sr-only" role="status">
+                  {refreshRequested
+                    ? refreshingStatus
+                      ? "Refreshing message status."
+                      : "Refresh request finished. Check the message status above."
+                    : ""}
                 </p>
               </div>
             </>

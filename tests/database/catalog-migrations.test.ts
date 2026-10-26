@@ -44,7 +44,7 @@ describe("catalog migrations", () => {
       "barbers_shop_id_id_key",
       "services_shop_id_id_key",
     ]);
-    expect(ledger.rows[0].count).toBe(7);
+    expect(ledger.rows[0].count).toBe(8);
     expect(after.rows[0].count).toBe(before.rows[0].count);
   });
 });

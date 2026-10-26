@@ -1,0 +1,133 @@
+import { z } from "zod";
+
+export type BookingMessageSnapshot = {
+  id: string;
+  customerName: string;
+  customerEmail: string;
+  customerPhone?: string | null;
+  serviceName: string;
+  servicePriceUsd: string;
+  serviceDurationMinutes: number;
+  barberName: string;
+  startAt: Date | string;
+  endAt: Date | string;
+  shop: {
+    name: string;
+    address: string;
+    publicContact: string;
+    timeZone: string;
+  };
+};
+
+export type OutboundMessage = {
+  to: string;
+  from: { email: "noreply@trimtime.test"; name: "TrimTime Demo" };
+  subject: string;
+  text: string;
+};
+
+const recipientSchema = z.string().trim().toLowerCase().pipe(z.email());
+const demoNotice =
+  "Fictional TrimTime demo. This message is captured locally in Mailpit; inbox delivery is not enabled.";
+
+function safeHeader(value: string) {
+  if (/[\r\n]/.test(value)) throw new Error("Invalid message header value.");
+  return value;
+}
+
+function formatTime(value: Date | string, timeZone: string) {
+  const date = new Date(value);
+  const formatted = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+  const timeZoneOffset = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    timeZoneName: "longOffset",
+  })
+    .formatToParts(date)
+    .find(({ type }) => type === "timeZoneName")?.value;
+  const offset =
+    timeZoneOffset === "GMT"
+      ? "UTC+00:00"
+      : timeZoneOffset?.replace(/^GMT/, "UTC");
+  return `${formatted} ${timeZone} (${offset})`;
+}
+
+function formatUsd(value: string) {
+  const [whole, fraction = ""] = value.split(".");
+  return `$${whole}.${fraction.slice(0, 2).padEnd(2, "0")}`;
+}
+
+function bookingDetails(booking: BookingMessageSnapshot) {
+  return [
+    `Service: ${booking.serviceName} — ${formatUsd(booking.servicePriceUsd)} USD (${booking.serviceDurationMinutes} minutes)`,
+    `Barber: ${booking.barberName}`,
+    `Start: ${formatTime(booking.startAt, booking.shop.timeZone)}`,
+    `End: ${formatTime(booking.endAt, booking.shop.timeZone)}`,
+  ];
+}
+
+function createMessage(
+  recipient: string,
+  subject: string,
+  text: string,
+): OutboundMessage {
+  return {
+    to: recipientSchema.parse(recipient),
+    from: { email: "noreply@trimtime.test", name: "TrimTime Demo" },
+    subject: safeHeader(subject),
+    text,
+  };
+}
+
+export function renderCustomerConfirmation(input: {
+  booking: BookingMessageSnapshot;
+  recipient: string;
+  manageUrl: string;
+}): OutboundMessage {
+  const { booking } = input;
+  return createMessage(
+    input.recipient,
+    `Booking confirmed — ${safeHeader(booking.shop.name)}`,
+    [
+      `Hello ${booking.customerName},`,
+      "",
+      demoNotice,
+      "",
+      ...bookingDetails(booking),
+      "",
+      `Shop: ${booking.shop.name}`,
+      `Address: ${booking.shop.address}`,
+      `Contact: ${booking.shop.publicContact}`,
+      `Manage your booking: ${input.manageUrl}`,
+      "Online changes are not available within 12 hours of your start. Contact the shop for help; this message does not confirm a cancellation or reschedule.",
+    ].join("\n"),
+  );
+}
+
+export function renderOwnerAlert(input: {
+  booking: BookingMessageSnapshot;
+  recipient: string;
+  activityUrl: string;
+}): OutboundMessage {
+  const { booking } = input;
+  return createMessage(
+    input.recipient,
+    `New customer booking — ${safeHeader(booking.shop.name)}`,
+    [
+      `Hello ${booking.shop.name},`,
+      "",
+      demoNotice,
+      "",
+      `Customer: ${booking.customerName} <${booking.customerEmail}>`,
+      ...bookingDetails(booking),
+      `Booking ID: ${booking.id}`,
+      `Owner activity: ${input.activityUrl}`,
+    ].join("\n"),
+  );
+}

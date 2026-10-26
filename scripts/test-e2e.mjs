@@ -5,6 +5,7 @@ import { verifyOwnedTestDatabase } from "../db/test-database.mts";
 import { resolve } from "node:path";
 
 process.loadEnvFile(".env.test");
+process.env.TRIMTIME_E2E_NOW ??= "2026-10-31T12:00:00Z";
 const databaseUrl = verifyOwnedTestDatabase();
 const env = {
   ...process.env,
@@ -21,7 +22,16 @@ const env = {
     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
   GOOGLE_CLIENT_ID: "e2e-google-client",
   GOOGLE_CLIENT_SECRET: "e2e-google-secret",
+  EMAIL_MODE:
+    process.env.TRIMTIME_E2E_EMAIL_MODE === "mailpit-double"
+      ? "mailpit"
+      : "unavailable",
 };
+if (process.env.TRIMTIME_E2E_EMAIL_MODE === "mailpit-double") {
+  env.MAILPIT_ORIGIN = "http://127.0.0.1:8027";
+} else {
+  delete env.MAILPIT_ORIGIN;
+}
 if (process.env.TRIMTIME_E2E_NOW) {
   const preload = resolve("tests/support/fixed-clock.mjs");
   const check = `${process.env.TRIMTIME_E2E_NOW}`;

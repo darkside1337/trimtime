@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { createPublicBookingAction, getBookingSlotsAction } from "../actions";
 import type { PublicBookingReceipt } from "../types";
+import { customerEmailStatusCopy } from "@/features/notifications/customer-summary";
 import { bookingStyles as styles } from "./shop-styles";
 
 type Service = {
@@ -144,8 +145,8 @@ function Receipt({
         </a>
         <p>Anyone with this link can view this booking. Keep it private.</p>
       </section>
-      <p className={styles.deliveryNote}>
-        Email and WhatsApp messages are not sent in this demo. For changes,
+      <p className={styles.deliveryNote} role="status">
+        {customerEmailStatusCopy(receipt.notifications.email)} For changes,
         contact the shop at {publicContact}.
       </p>
       <button
@@ -924,8 +925,9 @@ export function BookingFlow({
                   }
                 />
                 <small>
-                  Email is required to create the booking. Email delivery is
-                  unavailable in this demo.
+                  Email is required to create the booking. A confirmation may be
+                  captured locally when configured; inbox delivery is not
+                  enabled.
                 </small>
               </label>
               <label className={styles.field}>

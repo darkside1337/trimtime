@@ -12,6 +12,9 @@ import {
 import { barberServices, barbers, services } from "@/db/schema/catalog";
 import { bookings } from "@/db/schema/bookings";
 import { notificationWork } from "@/db/schema/notification-work";
+import { resolveEmailConfig } from "@/features/notifications/config";
+import { notificationContentIdentity } from "@/features/notifications/content-identity";
+import { customerEmailSummary } from "@/features/notifications/customer-summary";
 import { publicRateEvents, publicRateKeys } from "@/db/schema/public-limits";
 import { occupiedIntervals } from "@/db/schema/occupancy";
 import { shops } from "@/db/schema/shops";
@@ -102,6 +105,7 @@ function savedView(
     publicContact: string;
     address: string;
     timeZone: string;
+    notifications: ManagedBookingView["notifications"];
   },
   now: Date,
 ): ManagedBookingView {
@@ -129,6 +133,7 @@ function savedView(
       address: row.address,
       timeZone: row.timeZone,
     },
+    notifications: row.notifications,
     past: endAt.getTime() <= now.getTime(),
     changeCutoffPassed:
       row.status !== "confirmed" ||
@@ -143,16 +148,37 @@ async function receiptFor(
   now: Date,
 ): Promise<PublicBookingReceipt | null> {
   const result = await tx.execute(
-    sql`SELECT b.id, b.status, b.start_at AS "startAt", b.end_at AS "endAt", b.service_name AS "serviceName", b.service_price_usd AS "servicePriceUsd", b.service_duration_minutes AS "serviceDurationMinutes", b.barber_name AS "barberName", b.customer_name AS "customerName", b.customer_email AS "customerEmail", b.customer_phone AS "customerPhone", b.whatsapp_opt_in AS "whatsappOptIn", s.name AS "shopName", s.public_contact AS "publicContact", s.address AS "address", s.time_zone AS "timeZone" FROM bookings b JOIN shops s ON s.id = b.shop_id WHERE b.id = ${bookingId}`,
+    sql`SELECT b.id, b.status, b.start_at AS "startAt", b.end_at AS "endAt", b.service_name AS "serviceName", b.service_price_usd AS "servicePriceUsd", b.service_duration_minutes AS "serviceDurationMinutes", b.barber_name AS "barberName", b.customer_name AS "customerName", b.customer_email AS "customerEmail", b.customer_phone AS "customerPhone", b.whatsapp_opt_in AS "whatsappOptIn", s.name AS "shopName", s.public_contact AS "publicContact", s.address AS "address", s.time_zone AS "timeZone", w.status AS "emailStatus", w.reason AS "emailReason", w.claimed_at AS "emailClaimedAt", w.updated_at AS "emailUpdatedAt"
+      FROM bookings b JOIN shops s ON s.id = b.shop_id LEFT JOIN notification_work w ON w.booking_id=b.id AND w.kind='customer_confirmation' AND w.channel='email' WHERE b.id = ${bookingId}`,
   );
   const row = result.rows[0] as
-    (Parameters<typeof savedView>[0] & { id: string }) | undefined;
+    | (Parameters<typeof savedView>[0] & {
+        id: string;
+        emailStatus:
+          PublicBookingReceipt["notifications"]["email"]["status"] | null;
+        emailReason: string | null;
+        emailClaimedAt: Date | null;
+        emailUpdatedAt: Date | null;
+      })
+    | undefined;
   if (!row) return null;
+  const email = customerEmailSummary(
+    {
+      status: row.emailStatus,
+      reason: row.emailReason,
+      claimedAt: row.emailClaimedAt,
+      updatedAt: row.emailUpdatedAt,
+    },
+    now,
+  );
   return {
     bookingId: row.id,
     manageUrl,
-    booking: savedView(row, now),
-    notifications: { email: "unavailable", whatsapp: "unavailable" },
+    booking: savedView({ ...row, notifications: { email } }, now),
+    notifications: {
+      email,
+      whatsapp: "unavailable",
+    },
   };
 }
 
@@ -221,10 +247,11 @@ export async function createPublicBooking(
     );
   const now = new Date();
   const digest = payloadDigest(parsed.data);
+  const emailConfig = resolveEmailConfig(process.env);
   try {
     return await db.transaction(async (tx) => {
       const locked = await tx.execute(
-        sql`SELECT id, name, subdomain, public_contact, time_zone, published, time_zone_locked_at FROM shops WHERE id = ${context.shopId} FOR UPDATE`,
+        sql`SELECT s.id, s.name, s.subdomain, s.public_contact, s.time_zone, s.published, s.time_zone_locked_at, u.email AS owner_email FROM shops s JOIN "user" u ON u.id = s.owner_id WHERE s.id = ${context.shopId} FOR UPDATE OF s`,
       );
       const shop = locked.rows[0] as
         | {
@@ -235,6 +262,7 @@ export async function createPublicBooking(
             time_zone: string;
             published: boolean;
             time_zone_locked_at: Date | null;
+            owner_email: string;
           }
         | undefined;
       if (!shop || !shop.published)
@@ -465,20 +493,40 @@ export async function createPublicBooking(
         recoveryKeyHash: hashSecret(parsed.data.recoveryKey),
         recoveryPayloadDigest: digest,
       });
-      const work = [
+      const contentIdentity = notificationContentIdentity({
+        id: bookingId,
+        startAt: start,
+        endAt: end,
+        serviceName: service.name,
+        servicePriceUsd: service.priceUsd,
+        serviceDurationMinutes: duration,
+        barberName: barber.name,
+        customerName: parsed.data.contact.name,
+        customerEmail: parsed.data.contact.email,
+        customerPhone: parsed.data.contact.phone ?? null,
+      });
+      const work: (typeof notificationWork.$inferInsert)[] = [
         {
           id: randomUUID(),
           bookingId,
           kind: "customer_confirmation",
           channel: "email",
-          status: "unavailable",
+          status:
+            emailConfig.mode === "mailpit" ? "not_attempted" : "unavailable",
+          recipient: parsed.data.contact.email,
+          contentIdentity,
+          reason: emailConfig.mode === "mailpit" ? null : emailConfig.reason,
         },
         {
           id: randomUUID(),
           bookingId,
           kind: "owner_alert",
           channel: "email",
-          status: "unavailable",
+          status:
+            emailConfig.mode === "mailpit" ? "not_attempted" : "unavailable",
+          recipient: shop.owner_email,
+          contentIdentity,
+          reason: emailConfig.mode === "mailpit" ? null : emailConfig.reason,
         },
       ];
       if (parsed.data.contact.whatsappOptIn)
@@ -488,6 +536,9 @@ export async function createPublicBooking(
           kind: "customer_confirmation",
           channel: "whatsapp",
           status: "unavailable",
+          recipient: parsed.data.contact.phone ?? null,
+          contentIdentity,
+          reason: "channel_unavailable",
         });
       await tx.insert(notificationWork).values(work);
       if (!shop.time_zone_locked_at)

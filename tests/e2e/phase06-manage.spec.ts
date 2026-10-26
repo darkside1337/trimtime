@@ -130,7 +130,7 @@ test("saved booking details survive catalog edits and unpublication without read
       .getByText("123 Example Street", { exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByText("Email and WhatsApp delivery are currently unavailable."),
+    page.getByText(/Email confirmations are unavailable in this demo/i),
   ).toBeVisible();
   for (const viewport of [
     { width: 1440, height: 1000, label: "desktop" },
@@ -337,6 +337,9 @@ test("wrong-shop, expired, revoked, and unknown links share the unavailable view
   unavailableViews.push(await page.locator("main").innerText());
   await expect(page.getByText("Ada Lovelace")).toHaveCount(0);
   await expect(page.getByText("Cut", { exact: true })).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Refresh message status" }),
+  ).toHaveCount(0);
   expect(new Set(unavailableViews).size).toBe(1);
 });
 
@@ -373,7 +376,9 @@ test("cutoff, cancelled, and past appointments show live view-only guidance", as
     [owner.shopId],
   );
   await page.reload();
-  await expect(page.getByRole("status")).toContainText("Cancelled");
+  await expect(
+    page.getByRole("status").filter({ hasText: "Cancelled" }),
+  ).toBeVisible();
   await captureState(page, "manage-cancelled", info);
 
   await database.pool.query(
@@ -385,7 +390,9 @@ test("cutoff, cancelled, and past appointments show live view-only guidance", as
     ],
   );
   await page.reload();
-  await expect(page.getByRole("status")).toContainText("Past, unmarked");
+  await expect(
+    page.getByRole("status").filter({ hasText: "Past, unmarked" }),
+  ).toBeVisible();
   await expect(page.getByText("Completed", { exact: true })).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Open change preview" }),

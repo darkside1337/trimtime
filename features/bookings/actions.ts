@@ -1,6 +1,7 @@
 "use server";
 
 import { headers } from "next/headers";
+import { after } from "next/server";
 import type { ActionResult } from "@/lib/action-result";
 import { resolvePublicRequest } from "@/server/public-request";
 import { classifyHost, hasRequestOrigin } from "@/server/hosts";
@@ -12,6 +13,7 @@ import type {
 import { createPublicBooking } from "./mutations";
 import { getManagedBooking } from "./queries";
 import { previewPublicSlots } from "@/features/shops/public-queries";
+import { dispatchInitialBookingNotifications } from "@/features/notifications/dispatch";
 
 export async function getBookingSlotsAction(input: {
   serviceId: string;
@@ -43,7 +45,16 @@ export async function createPublicBookingAction(
       },
     };
   const context = await resolvePublicRequest(requestHeaders);
-  return createPublicBooking(context, input);
+  const result = await createPublicBooking(context, input);
+  if (result.success) {
+    const { bookingId } = result.data;
+    after(() =>
+      dispatchInitialBookingNotifications(bookingId).catch(() => {
+        console.error("Booking notification dispatch failed.", { bookingId });
+      }),
+    );
+  }
+  return result;
 }
 
 export async function getManagedBookingAction(

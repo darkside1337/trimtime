@@ -56,6 +56,13 @@ type Owners = (
 ) => Promise<Owner>;
 
 export const test = base.extend<{ owners: Owners }, { database: Database }>({
+  page: async ({ page }, run) => {
+    if (process.env.TRIMTIME_E2E_NOW)
+      await page.clock.install({
+        time: new Date(process.env.TRIMTIME_E2E_NOW),
+      });
+    await run(page);
+  },
   database: [
     async ({}, run) => {
       const url = verifyOwnedTestDatabase();
@@ -119,11 +126,6 @@ export const test = base.extend<{ owners: Owners }, { database: Database }>({
       for (const id of ids) await helpers.deleteUser(id);
     }
   },
-});
-
-test.beforeEach(async ({ page }) => {
-  if (process.env.TRIMTIME_E2E_NOW)
-    await page.clock.install({ time: new Date(process.env.TRIMTIME_E2E_NOW) });
 });
 
 export { expect };

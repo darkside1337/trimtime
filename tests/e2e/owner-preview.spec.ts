@@ -1,12 +1,13 @@
 import {
   expect,
+  captureState,
   marketingOrigin,
   openOwnerNavigation,
   ownerOrigin,
   test,
 } from "./fixtures";
 
-test("owner Activity is an authenticated, clearly labeled design preview", async ({
+test("owner Activity shows a real empty state for a shop without notification records", async ({
   page,
   context,
   owners,
@@ -17,19 +18,28 @@ test("owner Activity is an authenticated, clearly labeled design preview", async
   await expect(
     page.getByRole("heading", { name: "Booking activity & message status" }),
   ).toBeVisible();
-  await expect(page.getByText("Design preview", { exact: true })).toBeVisible();
   await expect(
-    page.getByText("Sample activity", { exact: true }),
+    page.getByText("Live notification records", { exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole("note")).toContainText(/no messages were sent/i);
+  await expect(
+    page.getByText("No notification records yet for this shop."),
+  ).toBeVisible();
   await expect(
     page.getByRole("main").getByText("Preview Test Shop", { exact: false }),
   ).toBeVisible();
   await expect(
     page.getByRole("main").getByText("America/New_York", { exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("96.4% accepted", { exact: true })).toBeVisible();
-  await expect(page.getByText("Sample · accepted").first()).toBeVisible();
+  await expect(page.getByText("96.4% accepted", { exact: true })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByText("Sample · accepted", { exact: true }),
+  ).toHaveCount(0);
+  for (const width of [1440, 768, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    await captureState(page, `phase07-activity-empty-${width}`, test.info());
+  }
 });
 
 test("calendar and Activity controls remain local preview state", async ({
@@ -171,38 +181,19 @@ test("calendar and Activity controls remain local preview state", async ({
   await expect(
     page.getByRole("heading", { name: "Booking activity & message status" }),
   ).toBeVisible();
-  await page.getByLabel("Search activity").fill("Lina");
   await expect(
-    page.getByText("Customer cancellation · owner alert example"),
-  ).toBeVisible();
-  await page.getByLabel("Search activity").fill("maya@example.test");
-  await expect(
-    page.getByText("Booking confirmation · email example"),
+    page.getByText("No notification records yet for this shop."),
   ).toBeVisible();
   await expect(
-    page.getByText("Customer cancellation · owner alert example"),
-  ).toBeHidden();
-  await page.getByLabel("Search activity").clear();
-  await page.getByRole("button", { name: "Event details" }).first().click();
+    page.getByRole("button", { name: "Resend unavailable" }),
+  ).toBeDisabled();
   await expect(
-    page.getByRole("dialog", { name: "Sample event details" }),
-  ).toContainText("not a real booking");
-  await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "Show payload" }).first().click();
+    page.getByRole("button", { name: "Export unavailable" }),
+  ).toBeDisabled();
+  await page.getByLabel("Search activity").fill("no matches");
   await expect(
-    page.getByRole("dialog", { name: "Sample payload" }),
-  ).toContainText("Example payload");
-  await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "Preview resend" }).first().click();
-  await expect(
-    page.getByRole("dialog", { name: "Resend preview" }),
-  ).toContainText("No provider is called");
-  await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "Export log" }).click();
-  await expect(
-    page.getByRole("dialog", { name: "Export preview" }),
-  ).toContainText("no file was generated");
-  await page.keyboard.press("Escape");
+    page.getByText("No notification records yet for this shop."),
+  ).toBeVisible();
   storageWrites.push(
     ...(await page.evaluate(
       () =>

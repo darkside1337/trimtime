@@ -18,8 +18,28 @@ test("shows truthful contact and unavailable-message disclosures for a guest boo
   ).toBeVisible();
   await page.goto(`http://${owner.subdomain}.localhost:3100/`);
 
-  await chooseBookingOptions(page, { serviceId, barberId, date: "2026-11-02" });
-  await expect(page.getByText(/Email delivery is unavailable/i)).toBeVisible();
+  const bookingDate = (
+    process.env.TRIMTIME_E2E_NOW ?? new Date().toISOString()
+  ).slice(0, 10);
+  const weekday = (new Date(`${bookingDate}T12:00:00Z`).getUTCDay() + 6) % 7;
+  const week = Array.from({ length: 7 }, (_, day) => ({
+    working: day === weekday ? [{ start: 540, end: 600 }] : [],
+    breaks: [],
+  }));
+  await database.pool.query(
+    "UPDATE shop_schedules SET week = $2::jsonb WHERE shop_id = $1",
+    [owner.shopId, JSON.stringify(week)],
+  );
+  await database.pool.query(
+    "UPDATE barber_schedules SET week = $3::jsonb WHERE shop_id = $1 AND barber_id = $2",
+    [owner.shopId, barberId, JSON.stringify(week)],
+  );
+  await chooseBookingOptions(page, { serviceId, barberId, date: bookingDate });
+  await expect(
+    page.getByText(
+      /A confirmation may be captured locally when configured; inbox delivery is not enabled/i,
+    ),
+  ).toBeVisible();
 
   const name = page.getByLabel("Name");
   await name.focus();
@@ -62,7 +82,7 @@ test("shows truthful contact and unavailable-message disclosures for a guest boo
   ).toBeFocused();
   await expect(page.getByText(emailAddress, { exact: true })).toBeVisible();
   await expect(
-    page.getByText(/Email and WhatsApp messages are not sent/i),
+    page.getByText(/Email confirmations are unavailable in this demo/i),
   ).toBeVisible();
 });
 
