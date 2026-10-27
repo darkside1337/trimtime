@@ -382,7 +382,7 @@ function AppointmentFormContent({
             >
               Booking &amp; schedule details
             </h2>
-            <div className="grid gap-3 min-[521px]:grid-cols-2">
+            <div className="grid items-start gap-3 min-[521px]:grid-cols-2">
               <Field
                 label="Service"
                 required

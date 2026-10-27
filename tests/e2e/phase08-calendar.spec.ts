@@ -491,6 +491,25 @@ test("new appointment preserves week and barber context through entry, cancel, a
     "2026-11-09",
   );
   const entryDialog = page.getByRole("dialog", { name: "New appointment" });
+  await expect(
+    entryDialog.getByRole("link", { name: "Open full page" }),
+  ).toHaveCount(0);
+  const { dateBox, timeBox } = await entryDialog.evaluate((dialog) => {
+    const date = dialog.querySelector<HTMLInputElement>('input[name="date"]')!;
+    const time = dialog.querySelector<HTMLInputElement>('input[name="time"]')!;
+    const dateRect = date.getBoundingClientRect();
+    const timeRect = time.getBoundingClientRect();
+    return {
+      dateBox: { y: dateRect.y, height: dateRect.height },
+      timeBox: { y: timeRect.y, height: timeRect.height },
+    };
+  });
+  if (page.viewportSize()!.width >= 521) {
+    expect(Math.abs(dateBox.y - timeBox.y)).toBeLessThanOrEqual(1);
+    expect(Math.abs(dateBox.height - timeBox.height)).toBeLessThanOrEqual(1);
+  } else {
+    expect(dateBox.y + dateBox.height).toBeLessThan(timeBox.y);
+  }
   await expect(entryDialog.locator("form select").nth(1)).toHaveValue(
     owner.barberId!,
   );
