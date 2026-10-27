@@ -49,10 +49,19 @@ export type Owner = {
   subdomain: string;
   shopId: string;
   cookie: string;
+  appointmentId?: string;
+  barberId?: string;
+  serviceId?: string;
 };
 type Owners = (
   context: BrowserContext,
-  options?: { shop?: boolean; name?: string },
+  options?: {
+    shop?: boolean;
+    name?: string;
+    appointment?: boolean;
+    published?: boolean;
+    createSetup?: boolean;
+  },
 ) => Promise<Owner>;
 
 export const test = base.extend<{ owners: Owners }, { database: Database }>({
@@ -115,6 +124,48 @@ export const test = base.extend<{ owners: Owners }, { database: Database }>({
               owner.subdomain,
             ],
           );
+          if (options.published)
+            await database.pool.query(
+              "UPDATE shops SET published=true WHERE id=$1",
+              [owner.shopId],
+            );
+          if (options.appointment) {
+            const { seedOwnerAppointment } =
+              await import("./owner-booking-fixtures");
+            const seeded = await seedOwnerAppointment(database.pool, owner);
+            Object.assign(owner, seeded);
+          }
+          if (options.createSetup) {
+            const barberId = `barber-${randomUUID()}`;
+            const serviceId = `service-${randomUUID()}`;
+            await database.pool.query(
+              "INSERT INTO barbers (id,shop_id,name) VALUES ($1,$2,'Manual Barber')",
+              [barberId, owner.shopId],
+            );
+            await database.pool.query(
+              "INSERT INTO services (id,shop_id,name,price_usd,duration_minutes,offered) VALUES ($1,$2,'Walk-in Cut',25,35,true)",
+              [serviceId, owner.shopId],
+            );
+            await database.pool.query(
+              "INSERT INTO barber_services (shop_id,barber_id,service_id) VALUES ($1,$2,$3)",
+              [owner.shopId, barberId, serviceId],
+            );
+            const week = JSON.stringify(
+              Array.from({ length: 7 }, () => ({
+                working: [{ start: 0, end: 1440 }],
+                breaks: [],
+              })),
+            );
+            await database.pool.query(
+              "INSERT INTO shop_schedules (shop_id,week,revision) VALUES ($1,$2::jsonb,1)",
+              [owner.shopId, week],
+            );
+            await database.pool.query(
+              "INSERT INTO barber_schedules (shop_id,barber_id,week,revision) VALUES ($1,$2,$3::jsonb,1)",
+              [owner.shopId, barberId, week],
+            );
+            Object.assign(owner, { barberId, serviceId });
+          }
         }
         return owner;
       });

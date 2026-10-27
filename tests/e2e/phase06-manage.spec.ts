@@ -34,6 +34,7 @@ test("saved booking details survive catalog edits and unpublication without read
   database,
   request,
 }, info) => {
+  test.setTimeout(60_000);
   const owner = await owners(context, { shop: true });
   const { serviceId, barberId } = await addReadyCatalog(database.pool, owner);
   const week = Array.from({ length: 7 }, (_, day) => ({

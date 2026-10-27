@@ -23,12 +23,24 @@ const env = {
   GOOGLE_CLIENT_ID: "e2e-google-client",
   GOOGLE_CLIENT_SECRET: "e2e-google-secret",
   EMAIL_MODE:
-    process.env.TRIMTIME_E2E_EMAIL_MODE === "mailpit-double"
+    process.env.TRIMTIME_E2E_EMAIL_MODE === "mailpit-double" ||
+    process.env.TRIMTIME_E2E_EMAIL_MODE === "mailpit-real" ||
+    process.env.TRIMTIME_E2E_EMAIL_MODE === "mailpit-outage"
       ? "mailpit"
       : "unavailable",
 };
 if (process.env.TRIMTIME_E2E_EMAIL_MODE === "mailpit-double") {
   env.MAILPIT_ORIGIN = "http://127.0.0.1:8027";
+} else if (
+  process.env.TRIMTIME_E2E_EMAIL_MODE === "mailpit-real" ||
+  process.env.TRIMTIME_E2E_EMAIL_MODE === "mailpit-outage"
+) {
+  if (!process.env.TRIMTIME_E2E_MAILPIT_ORIGIN) {
+    throw new Error(
+      "TRIMTIME_E2E_MAILPIT_ORIGIN is required for mailpit-real mode.",
+    );
+  }
+  env.MAILPIT_ORIGIN = process.env.TRIMTIME_E2E_MAILPIT_ORIGIN;
 } else {
   delete env.MAILPIT_ORIGIN;
 }
