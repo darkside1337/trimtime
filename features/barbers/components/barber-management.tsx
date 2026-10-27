@@ -11,7 +11,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { archiveBarberAction, saveBarberAction } from "../actions";
 import type { BarberView, ServiceView } from "@/features/catalog/types";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { ActionResult } from "@/lib/action-result";
 import { OwnerArchiveDialog } from "@/components/owner-archive-dialog";
@@ -196,14 +196,19 @@ export function BarberManagement({
                         Archived schedules are read-only
                       </p>
                     ) : (
-                      <Button
-                        render={<Link href="/availability" />}
-                        variant="outline"
-                        size="sm"
+                      <Link
+                        className={buttonVariants({
+                          variant: "outline",
+                          size: "sm",
+                        })}
+                        data-slot="button"
+                        data-size="sm"
+                        data-variant="outline"
+                        href="/availability"
                       >
                         <PencilIcon data-icon="inline-start" />
                         Edit hours
-                      </Button>
+                      </Link>
                     )}
                   </div>
                   <p className="mt-2 font-medium">

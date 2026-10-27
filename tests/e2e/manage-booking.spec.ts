@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { test, expect } from "./fixtures";
+import { expect, ownerOrigin, test } from "./fixtures";
 
 test("unknown manage links stay private and uniformly unavailable", async ({
   page,
@@ -27,6 +27,112 @@ test("unknown manage links stay private and uniformly unavailable", async ({
   expect(rejectedWrite.headers()["cache-control"]).toBe("private, no-store");
   expect(rejectedWrite.headers()["referrer-policy"]).toBe("no-referrer");
   expect(rejectedWrite.headers()["x-robots-tag"]).toContain("noindex");
+});
+
+test("audited button links navigate as anchors without Base UI diagnostics", async ({
+  page,
+  context,
+  owners,
+}) => {
+  test.skip(
+    process.env.TRIMTIME_E2E_SERVER !== "dev",
+    "Base UI emits this diagnostic only in development mode.",
+  );
+  const baseUiErrors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error" && message.text().startsWith("Base UI:"))
+      baseUiErrors.push(message.text());
+  });
+  const owner = await owners(context, { shop: true, appointment: true });
+  const calendarUrl = `${ownerOrigin}/?date=2026-11-02&view=day`;
+
+  await page.goto(calendarUrl);
+  await expect(
+    page.getByRole("heading", { name: "Calendar", level: 1 }),
+  ).toBeVisible();
+  await page.waitForLoadState("networkidle");
+  expect(baseUiErrors).toEqual([]);
+  const newAppointment = page.getByRole("link", { name: "New appointment" });
+  await expect(newAppointment).toHaveAttribute("href", /\/appointments\/new/);
+  expect(await newAppointment.evaluate((element) => element.tagName)).toBe("A");
+  await newAppointment.focus();
+  await expect(newAppointment).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/\/appointments\/new/);
+  await expect(
+    page.getByRole("dialog", { name: "New appointment" }),
+  ).toBeVisible();
+  await page.waitForLoadState("networkidle");
+  expect(baseUiErrors).toEqual([]);
+
+  await page.goto(calendarUrl);
+  const appointmentCard = page.getByRole("link", {
+    name: /Appointment: Fictional Guest, Saved Cut, Saved Barber/,
+  });
+  await expect(appointmentCard).toBeVisible();
+  await appointmentCard.click();
+  const appointmentDialog = page.getByRole("dialog", {
+    name: "Appointment details",
+  });
+  await expect(appointmentDialog).toBeVisible();
+  await page.waitForLoadState("networkidle");
+  expect(baseUiErrors).toEqual([]);
+  const dialogBackLink = appointmentDialog.getByRole("link", {
+    name: "Back to calendar",
+  });
+  expect(await dialogBackLink.evaluate((element) => element.tagName)).toBe("A");
+  await dialogBackLink.click();
+  await expect(page).toHaveURL(/\/\?date=2026-11-02&view=day/);
+
+  await page.goto(`${ownerOrigin}/barbers`);
+  await page.waitForLoadState("networkidle");
+  expect(baseUiErrors).toEqual([]);
+  const editHours = page.getByRole("link", { name: "Edit hours" }).first();
+  await expect(editHours).toHaveAttribute("href", "/availability");
+  expect(await editHours.evaluate((element) => element.tagName)).toBe("A");
+  await editHours.click();
+  await expect(page).toHaveURL(`${ownerOrigin}/availability`);
+  await page.waitForLoadState("networkidle");
+  expect(baseUiErrors).toEqual([]);
+
+  await page.goto(
+    `${ownerOrigin}/appointments/${owner.appointmentId}?date=2026-11-02&view=day`,
+  );
+  await expect(
+    page.getByRole("heading", { name: "Appointment details", level: 1 }),
+  ).toBeVisible();
+  await page.waitForLoadState("networkidle");
+  expect(baseUiErrors).toEqual([]);
+  const standaloneBackLink = page.getByRole("link", {
+    name: "Back to calendar",
+  });
+  await expect(standaloneBackLink).toHaveAttribute(
+    "href",
+    /\/\?date=2026-11-02&view=day/,
+  );
+  expect(await standaloneBackLink.evaluate((element) => element.tagName)).toBe(
+    "A",
+  );
+  await standaloneBackLink.click();
+  await expect(page).toHaveURL(/\/\?date=2026-11-02&view=day/);
+
+  const manageUrl = `http://${owner.subdomain}.localhost:3100/manage/${randomUUID()}`;
+  await page.goto(manageUrl);
+  await expect(
+    page.getByRole("heading", { name: "Booking link unavailable" }),
+  ).toBeVisible();
+  await page.waitForLoadState("networkidle");
+  expect(baseUiErrors).toEqual([]);
+  const shopLink = page
+    .getByRole("heading", { name: "Booking link unavailable" })
+    .locator("xpath=..")
+    .getByRole("link", { name: "Back to the shop" });
+  await expect(shopLink).toHaveAttribute("href", "/");
+  expect(await shopLink.evaluate((element) => element.tagName)).toBe("A");
+  await Promise.all([
+    page.waitForURL(new URL("/", manageUrl).href),
+    shopLink.click(),
+  ]);
 });
 
 test("contactless owner capability reads state that no email was provided", async ({

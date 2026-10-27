@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -49,9 +49,15 @@ export function AppointmentDialog({
         </div>
         <AppointmentDetails appointment={appointment} now={now} />
         <div className="flex justify-end">
-          <Button variant="outline" render={<Link href={calendarHref} />}>
+          <Link
+            className={buttonVariants({ variant: "outline" })}
+            data-slot="button"
+            data-size="default"
+            data-variant="outline"
+            href={calendarHref}
+          >
             Back to calendar
-          </Button>
+          </Link>
         </div>
       </DialogContent>
     </Dialog>
@@ -74,9 +80,15 @@ export function AppointmentDialogError({ message }: { message: string }) {
           <Button variant="outline" onClick={() => router.refresh()}>
             Try again
           </Button>
-          <Button variant="outline" render={<Link href="/" />}>
+          <Link
+            className={buttonVariants({ variant: "outline" })}
+            data-slot="button"
+            data-size="default"
+            data-variant="outline"
+            href="/"
+          >
             Back to calendar
-          </Button>
+          </Link>
         </div>
       </DialogContent>
     </Dialog>

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { Barlow_Condensed } from "next/font/google";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -750,9 +750,15 @@ export function UnavailableManageBooking() {
           This link may be missing, invalid, expired, or unavailable. No booking
           details can be shown.
         </p>
-        <Button className="mt-7" render={<Link href="/" />} variant="outline">
+        <Link
+          className={buttonVariants({ variant: "outline", className: "mt-7" })}
+          data-slot="button"
+          data-size="default"
+          data-variant="outline"
+          href="/"
+        >
           Back to the shop
-        </Button>
+        </Link>
       </section>
       <footer
         className={`${styles.footer} ${styles.wrap} mt-20 border-t border-[#e6e6e2]`}

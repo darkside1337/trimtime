@@ -3,7 +3,7 @@ import Link from "next/link";
 import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { Temporal } from "temporal-polyfill";
-import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { AppointmentDetails } from "@/features/bookings/components/appointment-details";
 import { getOwnAppointment } from "@/features/bookings/queries";
 import { readOwnerContext } from "@/server/owner-context";
@@ -66,9 +66,15 @@ async function AppointmentContent({
   return (
     <main className="mx-auto my-8 w-full max-w-3xl flex-1 rounded-3xl border border-border bg-background p-6 max-[520px]:my-0 max-[520px]:rounded-none max-[520px]:border-0 max-[520px]:px-5">
       <div className="mb-5 flex justify-end">
-        <Button variant="outline" render={<Link href={calendarHref} />}>
+        <Link
+          className={buttonVariants({ variant: "outline" })}
+          data-slot="button"
+          data-size="default"
+          data-variant="outline"
+          href={calendarHref}
+        >
           Back to calendar
-        </Button>
+        </Link>
       </div>
       <AppointmentDetails
         appointment={result.data}

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import type { OwnerCalendarView } from "../types";
 import { AppointmentLinkLoading } from "./appointment-link-loading";
 
@@ -111,13 +111,18 @@ export function OwnerCalendar({
             Shop time zone: {calendar.timeZone}
           </p>
         </div>
-        <Button
-          render={<Link href={newAppointmentHref(date, view, barberId)} />}
-          className="min-h-11 rounded-full px-[18px]"
+        <Link
+          className={buttonVariants({
+            className: "min-h-11 rounded-full px-[18px]",
+          })}
+          data-slot="button"
+          data-size="default"
+          data-variant="default"
+          href={newAppointmentHref(date, view, barberId)}
         >
           New appointment
           <AppointmentLinkLoading />
-        </Button>
+        </Link>
       </header>
       <div
         className="flex items-center justify-between gap-4 rounded-2xl bg-secondary px-4 py-3 max-[640px]:flex-col max-[640px]:items-start"
@@ -159,37 +164,38 @@ export function OwnerCalendar({
         aria-label="Calendar controls"
       >
         <div className="flex flex-wrap items-center gap-3 max-[640px]:w-full max-[640px]:justify-between">
-          <Button
-            variant="outline"
-            size="icon"
+          <a
+            className={buttonVariants({ variant: "outline", size: "icon" })}
+            data-slot="button"
+            data-size="icon"
+            data-variant="outline"
             aria-label="Previous date"
-            render={
-              <a href={params(addDays(date, -rangeStep), view, barberId)} />
-            }
+            href={params(addDays(date, -rangeStep), view, barberId)}
           >
             ‹
-          </Button>
+          </a>
           <strong aria-live="polite" className="min-w-[126px] text-center">
             {periodLabel}
           </strong>
-          <Button
-            variant="outline"
-            size="icon"
+          <a
+            className={buttonVariants({ variant: "outline", size: "icon" })}
+            data-slot="button"
+            data-size="icon"
+            data-variant="outline"
             aria-label="Next date"
-            render={
-              <a href={params(addDays(date, rangeStep), view, barberId)} />
-            }
+            href={params(addDays(date, rangeStep), view, barberId)}
           >
             ›
-          </Button>
-          <Button
-            variant="outline"
-            render={
-              <a href={params(dayNow(calendar.timeZone), view, barberId)} />
-            }
+          </a>
+          <a
+            className={buttonVariants({ variant: "outline" })}
+            data-slot="button"
+            data-size="default"
+            data-variant="outline"
+            href={params(dayNow(calendar.timeZone), view, barberId)}
           >
             Today
-          </Button>
+          </a>
         </div>
         <div className="flex flex-wrap items-center gap-3 max-[640px]:w-full max-[640px]:justify-between">
           <nav
