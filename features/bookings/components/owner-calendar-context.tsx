@@ -34,7 +34,7 @@ export type OwnerAppointmentDraft = {
 };
 
 type Dismissal = {
-  kind: "close" | "pop" | "navigate" | "full-page";
+  kind: "close" | "pop" | "navigate";
   href?: string;
 };
 type Phase = "idle" | "restoring" | "prompt" | "discarding";
@@ -47,7 +47,6 @@ type ContextValue = {
   setModalActive: (active: boolean) => void;
   requestClose: () => void;
   requestNavigation: (href: string) => void;
-  requestFullPageNavigation: (href: string) => void;
   isDirty: boolean;
 };
 
@@ -82,7 +81,6 @@ export function OwnerAppointmentProvider({
   }, [writeDraft]);
   const dirty =
     !!draft && JSON.stringify(draft.values) !== JSON.stringify(draft.baseline);
-
   const begin = useCallback(
     (next: Dismissal) => {
       if (phase.current === "prompt" || phase.current === "restoring") return;
@@ -93,9 +91,7 @@ export function OwnerAppointmentProvider({
       if (!isDirty) {
         clearDraft();
         phase.current = "idle";
-        if (next.kind === "full-page" && next.href)
-          window.location.assign(next.href);
-        else if (next.kind === "navigate" && next.href) router.push(next.href);
+        if (next.kind === "navigate" && next.href) router.push(next.href);
         else router.back();
         return;
       }
@@ -258,9 +254,7 @@ export function OwnerAppointmentProvider({
     pendingRef.current = null;
     setPromptOpen(false);
     clearDraft();
-    if (destination?.kind === "full-page" && destination.href) {
-      window.location.assign(destination.href);
-    } else if (destination?.kind === "navigate" && destination.href) {
+    if (destination?.kind === "navigate" && destination.href) {
       phase.current = "idle";
       router.push(destination.href);
     } else {
@@ -282,8 +276,6 @@ export function OwnerAppointmentProvider({
       setModalActive: markModalActive,
       requestClose: () => begin({ kind: "close" }),
       requestNavigation: (href: string) => begin({ kind: "navigate", href }),
-      requestFullPageNavigation: (href: string) =>
-        begin({ kind: "full-page", href }),
       isDirty: dirty,
     }),
     [

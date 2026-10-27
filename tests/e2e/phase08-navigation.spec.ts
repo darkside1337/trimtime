@@ -29,6 +29,9 @@ test("saved appointment opens in an intercepted dialog and direct navigation is 
   ).toContainText("Fictional Guest");
   await expect(page.getByRole("dialog")).toContainText("No email provided");
   await expect(page.getByRole("dialog")).not.toContainText("ciphertext-");
+  await expect(page.getByRole("link", { name: "Open full page" })).toHaveCount(
+    0,
+  );
 
   await page.goBack();
   await expect(page).toHaveURL(calendar);
@@ -48,7 +51,7 @@ test("saved appointment opens in an intercepted dialog and direct navigation is 
     page.getByRole("dialog", { name: "Appointment details" }),
   ).toBeVisible();
 
-  await page.getByRole("link", { name: "Open full page" }).click();
+  await page.reload();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(page.getByRole("main")).toContainText("Saved Cut");
   await page.reload();

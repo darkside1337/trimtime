@@ -24,18 +24,7 @@ export function AppointmentEntryDialog({
   initialBarberId?: string;
   calendarHref: string;
 }) {
-  const { requestClose, requestFullPageNavigation, isDirty } =
-    useAppointmentDismissal(true);
-  const returnContext = new URL(calendarHref, "http://local").searchParams;
-  const standaloneSearch = new URLSearchParams({
-    date: initialDate,
-    view: returnContext.get("view") ?? "day",
-    barber: initialBarberId || "all",
-    returnDate: returnContext.get("date") ?? initialDate,
-    returnView: returnContext.get("view") ?? "day",
-    returnBarber: returnContext.get("barber") ?? "all",
-  });
-  if (initialTime) standaloneSearch.set("time", initialTime);
+  const { requestClose } = useAppointmentDismissal(true);
   return (
     <Dialog
       open
@@ -53,23 +42,6 @@ export function AppointmentEntryDialog({
           Create an exact-minute manual appointment.
         </DialogDescription>
         <div className="flex justify-end gap-2 px-5 pt-5">
-          <Button
-            variant="outline"
-            size="sm"
-            render={
-              <a
-                href={`/appointments/new?${standaloneSearch}`}
-                onClick={(event) => {
-                  if (isDirty) {
-                    event.preventDefault();
-                    requestFullPageNavigation(event.currentTarget.href);
-                  }
-                }}
-              />
-            }
-          >
-            Open full page ↗
-          </Button>
           <Button
             variant="outline"
             size="icon"

@@ -4,13 +4,8 @@ import { useEffect } from "react";
 import { useOwnerAppointmentDraft } from "../components/owner-calendar-context";
 
 export function useAppointmentDismissal(modal = false) {
-  const {
-    requestClose,
-    requestNavigation,
-    requestFullPageNavigation,
-    setModalActive,
-    isDirty,
-  } = useOwnerAppointmentDraft();
+  const { requestClose, requestNavigation, setModalActive } =
+    useOwnerAppointmentDraft();
 
   useEffect(() => {
     if (!modal) return;
@@ -21,7 +16,5 @@ export function useAppointmentDismissal(modal = false) {
   return {
     requestClose,
     requestNavigation,
-    requestFullPageNavigation,
-    isDirty,
   };
 }

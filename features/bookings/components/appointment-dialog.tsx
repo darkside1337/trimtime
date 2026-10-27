@@ -40,17 +40,6 @@ export function AppointmentDialog({
         <div className="flex justify-end gap-2">
           <Button
             variant="outline"
-            size="sm"
-            render={
-              <a
-                href={`/appointments/${appointment.id}${new URL(calendarHref, "http://local").search}`}
-              />
-            }
-          >
-            Open full page ↗
-          </Button>
-          <Button
-            variant="outline"
             size="icon"
             aria-label="Close appointment details"
             onClick={() => router.back()}
