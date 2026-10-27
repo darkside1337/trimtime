@@ -1,6 +1,7 @@
 import { Suspense, type ReactNode } from "react";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
 import { OwnerManagementNav } from "@/components/owner-management-nav";
 import { OwnerPageFooter } from "@/components/owner-page-header";
 import { getOwnShop } from "@/features/shops/queries";
@@ -19,6 +20,7 @@ export default async function OwnerManagementLayout({
 }
 
 async function OwnerManagementFrame({ children }: { children: ReactNode }) {
+  await connection();
   const context = await readOwnerContext(await headers());
   if (!context) redirect("/sign-in");
 

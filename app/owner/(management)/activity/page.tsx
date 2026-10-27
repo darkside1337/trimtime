@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
 import { OwnerActivity } from "@/features/shops/components/owner-activity";
 import { getOwnShop } from "@/features/shops/queries";
 import { getOwnNotificationActivity } from "@/features/notifications/queries";
@@ -15,6 +16,7 @@ export default function ActivityPage() {
 }
 
 async function ActivityContent() {
+  await connection();
   const context = await readOwnerContext(await headers());
   if (!context) redirect("/sign-in");
   const shop = await getOwnShop(context);

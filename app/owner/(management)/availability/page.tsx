@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
 import { Suspense } from "react";
 import { AvailabilityManagement } from "@/features/availability/components/availability-management";
 import {
@@ -18,6 +19,7 @@ export default function AvailabilityPage() {
 }
 
 async function AvailabilityContent() {
+  await connection();
   const context = await readOwnerContext(await headers());
   if (!context) redirect("/sign-in");
   const [availability, overview, shop] = await Promise.all([

@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
 import { Suspense } from "react";
 import { Globe2, Clock3, LockKeyhole } from "lucide-react";
 import { SettingsForm } from "@/features/shops/components/settings-form";
@@ -20,6 +21,7 @@ export default function SettingsPage() {
   );
 }
 async function SettingsContent() {
+  await connection();
   const requestHeaders = await headers();
   const context = await readOwnerContext(requestHeaders);
   if (!context) redirect("/sign-in");

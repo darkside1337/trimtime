@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
 import { Suspense } from "react";
 import { BarberManagement } from "@/features/barbers/components/barber-management";
 import { getOwnSchedules } from "@/features/availability/queries";
@@ -18,6 +19,7 @@ export default function BarbersPage() {
 }
 
 async function BarbersContent() {
+  await connection();
   const context = await readOwnerContext(await headers());
   if (!context) redirect("/sign-in");
   const shop = await getOwnShop(context);

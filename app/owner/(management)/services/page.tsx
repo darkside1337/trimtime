@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
 import { Suspense } from "react";
 import { ServiceManagement } from "@/features/catalog/components/service-management";
 import { DesignPreviewNotice } from "@/features/shops/components/design-preview-notice";
@@ -17,6 +18,7 @@ export default function ServicesPage() {
 }
 
 async function ServicesContent() {
+  await connection();
   const context = await readOwnerContext(await headers());
   if (!context) redirect("/sign-in");
   const shop = await getOwnShop(context);
