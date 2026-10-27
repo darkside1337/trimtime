@@ -100,3 +100,35 @@ export function customerEmailStatusCopy(summary: CustomerEmailSummary) {
       return "Email confirmations are unavailable in this demo. Your booking and private link are ready.";
   }
 }
+
+export function ownerEmailStatusCopy(summary: CustomerEmailSummary) {
+  if (summary.reason === "recipient_unavailable")
+    return "Email was skipped because no recipient was provided.";
+  if (summary.reason === "daily_limit_reached")
+    return "The shared local email allowance is full. The appointment remains saved.";
+  if (summary.reason === "message_rejected")
+    return "The local capture service rejected the email. The appointment remains saved.";
+  if (summary.reason === "capture_result_unknown")
+    return "The local capture result is unknown. The appointment remains saved.";
+  if (summary.reason === "capture_verification_unavailable")
+    return "The local capture service accepted the email; capture verification is unavailable.";
+  switch (summary.status) {
+    case "not_attempted":
+    case "sending":
+      return "Email confirmation is awaiting local capture.";
+    case "accepted":
+      return "Accepted by local capture; inbox delivery is not enabled.";
+    case "captured":
+      return "Captured locally; inbox delivery is not enabled.";
+    case "failed":
+      return "The email could not be captured. The appointment remains saved.";
+    case "skipped":
+      return "Email was skipped. The appointment remains saved.";
+    case "suppressed":
+      return "Email was not sent. The appointment remains saved.";
+    case "unknown":
+      return "The local capture result is unknown. The appointment remains saved.";
+    case "unavailable":
+      return "Email confirmation is unavailable in this demo. The appointment remains saved.";
+  }
+}

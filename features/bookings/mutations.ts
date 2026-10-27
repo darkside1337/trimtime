@@ -19,10 +19,14 @@ import { publicRateEvents, publicRateKeys } from "@/db/schema/public-limits";
 import { occupiedIntervals } from "@/db/schema/occupancy";
 import { shops } from "@/db/schema/shops";
 import type { ActionResult } from "@/lib/action-result";
-import { calculateSlots } from "@/features/availability/slots";
+import {
+  calculateSlots,
+  fitsScheduleInterval,
+} from "@/features/availability/slots";
 import { resolveDateSchedule } from "@/features/availability/restrictions";
 import type { WeeklySchedule } from "@/features/availability/types";
-import { createPublicBookingSchema } from "./schemas";
+import { createOwnerBookingSchema, createPublicBookingSchema } from "./schemas";
+import { fixedBookingPrice } from "./money";
 import {
   canonicalManageUrl,
   createBearerSecret,
@@ -36,7 +40,10 @@ import type {
   PublicBookingContext,
   PublicBookingInput,
   PublicBookingReceipt,
+  OwnerBookingReceipt,
 } from "./types";
+import type { OwnerContext } from "@/server/owner-context";
+import { getOwnAppointment } from "./queries";
 
 function failure(
   code: BookingFailureCode,
@@ -57,11 +64,6 @@ function payloadDigest(
       contact: input.contact,
     }),
   );
-}
-
-function fixedPrice(value: string) {
-  const [dollars, cents = ""] = value.split(".");
-  return `${dollars}.${cents.padEnd(2, "0")}`;
 }
 
 async function rateEvent(
@@ -98,7 +100,7 @@ function savedView(
     serviceDurationMinutes: number;
     barberName: string;
     customerName: string;
-    customerEmail: string;
+    customerEmail: string | null;
     customerPhone: string | null;
     whatsappOptIn: boolean;
     shopName: string;
@@ -191,7 +193,7 @@ async function recoverExisting(
 ) {
   const keyHash = hashSecret(recoveryKey);
   const result = await tx.execute(
-    sql`SELECT id, recovery_payload_digest, capability_hash, capability_ciphertext, capability_key_id, capability_revoked_at, end_at FROM bookings WHERE shop_id = ${shopId} AND recovery_key_hash = ${keyHash} LIMIT 1`,
+    sql`SELECT id, recovery_payload_digest, capability_hash, capability_ciphertext, capability_key_id, capability_revoked_at, end_at FROM bookings WHERE shop_id = ${shopId} AND creation_source='public' AND recovery_key_hash = ${keyHash} LIMIT 1`,
   );
   const row = result.rows[0] as
     | {
@@ -204,7 +206,14 @@ async function recoverExisting(
         end_at: Date;
       }
     | undefined;
-  if (!row) return { found: false as const };
+  if (!row) {
+    const collision = await tx.execute(
+      sql`SELECT id FROM bookings WHERE shop_id=${shopId} AND recovery_key_hash=${keyHash} LIMIT 1`,
+    );
+    return collision.rows.length
+      ? { found: true as const, receipt: null }
+      : { found: false as const };
+  }
   if (
     row.recovery_payload_digest !== digest ||
     row.capability_revoked_at ||
@@ -343,7 +352,8 @@ export async function createPublicBooking(
         );
       if (
         service.name !== parsed.data.reviewedOffer.name ||
-        fixedPrice(service.priceUsd) !== parsed.data.reviewedOffer.priceUsd ||
+        fixedBookingPrice(service.priceUsd) !==
+          parsed.data.reviewedOffer.priceUsd ||
         String(service.durationMinutes) !==
           parsed.data.reviewedOffer.durationMinutes
       )
@@ -574,6 +584,446 @@ export async function createPublicBooking(
     return failure(
       "UNAVAILABLE",
       "Booking is temporarily unavailable. Please try again later.",
+    );
+  }
+}
+
+export async function createOwnerBooking(
+  context: OwnerContext | null,
+  input: unknown,
+): Promise<ActionResult<OwnerBookingReceipt>> {
+  const unavailable = (code: string, message: string) => ({
+    success: false as const,
+    error: { code, message },
+  });
+  if (!context?.userId)
+    return unavailable("UNAUTHENTICATED", "Sign in to create appointments.");
+  const parsed = createOwnerBookingSchema.safeParse(input);
+  if (!parsed.success) {
+    const fieldMap: Record<string, string> = {
+      "contact.name": "customerName",
+      "contact.email": "email",
+      "contact.phone": "phone",
+      serviceId: "serviceId",
+      barberId: "barberId",
+      startAt: "time",
+    };
+    const fieldErrors: Record<string, string[]> = {};
+    for (const issue of parsed.error.issues) {
+      const key = fieldMap[issue.path.join(".")] ?? "form";
+      fieldErrors[key] = [...(fieldErrors[key] ?? []), issue.message];
+    }
+    return {
+      ...unavailable(
+        "VALIDATION_ERROR",
+        "Check the highlighted fields and try again.",
+      ),
+      fieldErrors,
+    };
+  }
+  const emailConfig = resolveEmailConfig(process.env);
+  let bookingId: string;
+  try {
+    const result = await db.transaction(async (tx) => {
+      const locked = await tx.execute(
+        sql`SELECT s.id,s.name,s.subdomain,s.public_contact,s.time_zone,s.time_zone_locked_at,u.email AS owner_email FROM shops s JOIN "user" u ON u.id=s.owner_id WHERE s.owner_id=${context.userId} FOR UPDATE OF s`,
+      );
+      const shop = locked.rows[0] as
+        | {
+            id: string;
+            name: string;
+            subdomain: string;
+            public_contact: string;
+            time_zone: string;
+            time_zone_locked_at: Date | null;
+            owner_email: string;
+          }
+        | undefined;
+      if (!shop)
+        return unavailable(
+          "SHOP_REQUIRED",
+          "Set up your shop before creating appointments.",
+        );
+      const now = new Date();
+      const keyHash = hashSecret(parsed.data.recoveryKey);
+      const digest = hashSecret(
+        JSON.stringify({
+          serviceId: parsed.data.serviceId,
+          barberId: parsed.data.barberId,
+          startAt: Temporal.Instant.from(parsed.data.startAt).toString(),
+          reviewedOffer: parsed.data.reviewedOffer,
+          contact: parsed.data.contact,
+        }),
+      );
+      const existing = await tx.execute(
+        sql`SELECT id,recovery_payload_digest,end_at,capability_hash,capability_ciphertext,capability_key_id,capability_revoked_at FROM bookings WHERE shop_id=${shop.id} AND creation_source='owner' AND recovery_key_hash=${keyHash} LIMIT 1`,
+      );
+      const recovered = existing.rows[0] as
+        | {
+            id: string;
+            recovery_payload_digest: string;
+            end_at: Date;
+            capability_hash: string;
+            capability_ciphertext: string;
+            capability_key_id: string;
+            capability_revoked_at: Date | null;
+          }
+        | undefined;
+      if (recovered) {
+        if (
+          recovered.recovery_payload_digest !== digest ||
+          recovered.capability_revoked_at ||
+          now.getTime() >=
+            new Date(recovered.end_at).getTime() + 168 * 60 * 60_000
+        )
+          return unavailable(
+            "RECOVERY_MISMATCH",
+            "This appointment attempt cannot be recovered.",
+          );
+        let token: string;
+        try {
+          token = decryptCapability(
+            recovered.capability_ciphertext,
+            recovered.capability_key_id,
+            `${shop.id}:${recovered.id}`,
+          );
+        } catch {
+          return unavailable(
+            "RECOVERY_MISMATCH",
+            "This appointment attempt cannot be recovered.",
+          );
+        }
+        if (hashSecret(token) !== recovered.capability_hash)
+          return unavailable(
+            "RECOVERY_MISMATCH",
+            "This appointment attempt cannot be recovered.",
+          );
+        return { success: true as const, bookingId: recovered.id };
+      }
+      const crossSourceKey = await tx.execute(
+        sql`SELECT id FROM bookings WHERE shop_id=${shop.id} AND recovery_key_hash=${keyHash} LIMIT 1`,
+      );
+      if (crossSourceKey.rows.length)
+        return unavailable(
+          "RECOVERY_MISMATCH",
+          "This appointment attempt cannot be recovered.",
+        );
+      const [service] = await tx
+        .select()
+        .from(services)
+        .where(
+          and(
+            eq(services.shopId, shop.id),
+            eq(services.id, parsed.data.serviceId),
+          ),
+        )
+        .limit(1);
+      const [barber] = await tx
+        .select()
+        .from(barbers)
+        .where(
+          and(
+            eq(barbers.shopId, shop.id),
+            eq(barbers.id, parsed.data.barberId),
+          ),
+        )
+        .limit(1);
+      const [assignment] = await tx
+        .select({ barberId: barberServices.barberId })
+        .from(barberServices)
+        .where(
+          and(
+            eq(barberServices.shopId, shop.id),
+            eq(barberServices.serviceId, parsed.data.serviceId),
+            eq(barberServices.barberId, parsed.data.barberId),
+          ),
+        )
+        .limit(1);
+      if (
+        !service ||
+        !barber ||
+        !assignment ||
+        service.archived ||
+        !service.offered ||
+        barber.archived
+      )
+        return unavailable(
+          "STALE_OFFER",
+          "That service or barber is no longer available. Review the current options.",
+        );
+      if (
+        service.name !== parsed.data.reviewedOffer.name ||
+        fixedBookingPrice(service.priceUsd) !==
+          parsed.data.reviewedOffer.priceUsd ||
+        String(service.durationMinutes) !==
+          parsed.data.reviewedOffer.durationMinutes
+      )
+        return unavailable(
+          "STALE_OFFER",
+          "The service details changed. Review the current price and duration.",
+        );
+      const duration = Number(service.durationMinutes);
+      const start = new Date(parsed.data.startAt);
+      const startInstant = Temporal.Instant.from(parsed.data.startAt);
+      const endInstant = startInstant.add({ minutes: duration });
+      if (
+        Temporal.Instant.compare(
+          endInstant,
+          Temporal.Instant.from(now.toISOString()),
+        ) <= 0
+      )
+        return unavailable(
+          "UNAVAILABLE_INTERVAL",
+          "Choose a future or ongoing appointment interval.",
+        );
+      const end = new Date(endInstant.epochMilliseconds);
+      const localDate = startInstant
+        .toZonedDateTimeISO(shop.time_zone)
+        .toPlainDate();
+      const [shopWeek] = await tx
+        .select({ week: shopSchedules.week })
+        .from(shopSchedules)
+        .where(eq(shopSchedules.shopId, shop.id))
+        .limit(1);
+      const [barberWeek] = await tx
+        .select({ week: barberSchedules.week })
+        .from(barberSchedules)
+        .where(
+          and(
+            eq(barberSchedules.shopId, shop.id),
+            eq(barberSchedules.barberId, barber.id),
+          ),
+        )
+        .limit(1);
+      if (!shopWeek || !barberWeek)
+        return unavailable(
+          "UNAVAILABLE_INTERVAL",
+          "Choose another available time.",
+        );
+      const [shopException] = await tx
+        .select()
+        .from(shopDateSchedules)
+        .where(
+          and(
+            eq(shopDateSchedules.shopId, shop.id),
+            eq(shopDateSchedules.date, localDate.toString()),
+          ),
+        )
+        .limit(1);
+      const [barberException] = await tx
+        .select()
+        .from(barberDateSchedules)
+        .where(
+          and(
+            eq(barberDateSchedules.shopId, shop.id),
+            eq(barberDateSchedules.barberId, barber.id),
+            eq(barberDateSchedules.date, localDate.toString()),
+          ),
+        )
+        .limit(1);
+      const weekday = localDate.dayOfWeek - 1;
+      const shopDay = resolveDateSchedule(
+        (shopWeek.week as WeeklySchedule)[weekday],
+        shopException
+          ? {
+              override: shopException.override,
+              closed: shopException.closed,
+              revision: shopException.revision,
+            }
+          : null,
+      );
+      const barberDay = resolveDateSchedule(
+        (barberWeek.week as WeeklySchedule)[weekday],
+        barberException
+          ? {
+              override: barberException.override,
+              closed: barberException.closed,
+              revision: barberException.revision,
+            }
+          : null,
+      );
+      if (
+        !fitsScheduleInterval({
+          start: startInstant,
+          durationMinutes: duration,
+          date: localDate,
+          timeZone: shop.time_zone,
+          shopDay,
+          barberDay,
+        })
+      )
+        return unavailable(
+          "UNAVAILABLE_INTERVAL",
+          "Choose another available time.",
+        );
+      const overlaps = await tx
+        .select({ id: occupiedIntervals.id })
+        .from(occupiedIntervals)
+        .where(
+          and(
+            eq(occupiedIntervals.shopId, shop.id),
+            eq(occupiedIntervals.barberId, barber.id),
+            sql`${occupiedIntervals.startAt}<${end}`,
+            sql`${occupiedIntervals.endAt}>${start}`,
+          ),
+        )
+        .limit(1);
+      if (overlaps.length)
+        return unavailable(
+          "UNAVAILABLE_INTERVAL",
+          "That time was just taken. Choose another available time.",
+        );
+      const id = randomUUID();
+      const occupancyId = randomUUID();
+      const token = createBearerSecret();
+      const encrypted = encryptCapability(token, `${shop.id}:${id}`);
+      const consentAt = parsed.data.contact.whatsappOptIn ? now : null;
+      await tx.insert(occupiedIntervals).values({
+        id: occupancyId,
+        shopId: shop.id,
+        barberId: barber.id,
+        startAt: start,
+        endAt: end,
+      });
+      await tx.insert(bookings).values({
+        id,
+        shopId: shop.id,
+        serviceId: service.id,
+        barberId: barber.id,
+        occupancyId,
+        status: "confirmed",
+        startAt: start,
+        endAt: end,
+        serviceName: service.name,
+        servicePriceUsd: service.priceUsd,
+        serviceDurationMinutes: duration,
+        barberName: barber.name,
+        customerName: parsed.data.contact.name,
+        customerEmail: parsed.data.contact.email ?? null,
+        customerPhone: parsed.data.contact.phone ?? null,
+        whatsappOptIn: parsed.data.contact.whatsappOptIn,
+        whatsappConsentAt: consentAt,
+        createdAt: now,
+        capabilityHash: hashSecret(token),
+        capabilityCiphertext: encrypted.ciphertext,
+        capabilityKeyId: encrypted.keyId,
+        recoveryKeyHash: keyHash,
+        recoveryPayloadDigest: digest,
+        creationSource: "owner",
+      });
+      const identity = notificationContentIdentity({
+        id,
+        startAt: start,
+        endAt: end,
+        serviceName: service.name,
+        servicePriceUsd: service.priceUsd,
+        serviceDurationMinutes: duration,
+        barberName: barber.name,
+        customerName: parsed.data.contact.name,
+        customerEmail: parsed.data.contact.email ?? null,
+        customerPhone: parsed.data.contact.phone ?? null,
+      });
+      const recipient = parsed.data.contact.email ?? null;
+      await tx.insert(notificationWork).values([
+        {
+          id: randomUUID(),
+          bookingId: id,
+          kind: "customer_confirmation",
+          channel: "email",
+          status: !recipient
+            ? "skipped"
+            : emailConfig.mode === "mailpit"
+              ? "not_attempted"
+              : "unavailable",
+          recipient,
+          contentIdentity: identity,
+          reason: !recipient
+            ? "recipient_missing"
+            : emailConfig.mode === "mailpit"
+              ? null
+              : emailConfig.reason,
+        },
+        ...(parsed.data.contact.whatsappOptIn && parsed.data.contact.phone
+          ? [
+              {
+                id: randomUUID(),
+                bookingId: id,
+                kind: "customer_confirmation" as const,
+                channel: "whatsapp" as const,
+                status: "unavailable" as const,
+                recipient: parsed.data.contact.phone,
+                contentIdentity: identity,
+                reason: "channel_unavailable",
+              },
+            ]
+          : []),
+      ]);
+      if (!shop.time_zone_locked_at)
+        await tx
+          .update(shops)
+          .set({ timeZoneLockedAt: now })
+          .where(eq(shops.id, shop.id));
+      return { success: true as const, bookingId: id };
+    });
+    if (!result.success) return result;
+    bookingId = result.bookingId;
+    const work = await db
+      .select({
+        status: notificationWork.status,
+        reason: notificationWork.reason,
+        claimedAt: notificationWork.claimedAt,
+        updatedAt: notificationWork.updatedAt,
+        channel: notificationWork.channel,
+      })
+      .from(notificationWork)
+      .where(eq(notificationWork.bookingId, bookingId));
+    const emailWork = work.find((row) => row.channel === "email");
+    const appointment = await getOwnAppointment(context, bookingId);
+    if (!appointment.success)
+      return unavailable(
+        "UNAVAILABLE",
+        "Appointment was saved but could not be loaded. Retry with the same request.",
+      );
+    return {
+      success: true,
+      data: {
+        bookingId,
+        appointment: appointment.data,
+        notifications: {
+          email: customerEmailSummary(
+            {
+              status: emailWork?.status as
+                ManagedBookingView["notifications"]["email"]["status"] | null,
+              reason: emailWork?.reason ?? null,
+              claimedAt: emailWork?.claimedAt ?? null,
+              updatedAt: emailWork?.updatedAt ?? null,
+            },
+            new Date(),
+          ),
+          whatsapp: work.some((row) => row.channel === "whatsapp")
+            ? "unavailable"
+            : "not_requested",
+        },
+      },
+    };
+  } catch (error) {
+    const cause =
+      error instanceof Error && error.cause && typeof error.cause === "object"
+        ? error.cause
+        : error;
+    if (
+      cause &&
+      typeof cause === "object" &&
+      "code" in cause &&
+      cause.code === "23P01"
+    )
+      return unavailable(
+        "UNAVAILABLE_INTERVAL",
+        "That time was just taken. Choose another available time.",
+      );
+    return unavailable(
+      "UNAVAILABLE",
+      "Appointment is temporarily unavailable. Please try again.",
     );
   }
 }

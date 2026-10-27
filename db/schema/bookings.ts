@@ -37,9 +37,10 @@ export const bookings = pgTable(
     serviceDurationMinutes: integer("service_duration_minutes").notNull(),
     barberName: text("barber_name").notNull(),
     customerName: text("customer_name").notNull(),
-    customerEmail: text("customer_email").notNull(),
+    customerEmail: text("customer_email"),
     customerPhone: text("customer_phone"),
     whatsappOptIn: boolean("whatsapp_opt_in").notNull(),
+    creationSource: text("creation_source").notNull().default("public"),
     whatsappConsentAt: timestamp("whatsapp_consent_at", {
       withTimezone: true,
       mode: "date",
@@ -81,6 +82,10 @@ export const bookings = pgTable(
     check(
       "bookings_status_check",
       sql`${table.status} IN ('confirmed', 'cancelled')`,
+    ),
+    check(
+      "bookings_creation_source_check",
+      sql`${table.creationSource} IN ('public', 'owner')`,
     ),
     check("bookings_interval_check", sql`${table.startAt} < ${table.endAt}`),
     check(

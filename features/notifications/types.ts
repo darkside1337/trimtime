@@ -12,6 +12,7 @@ export type NotificationStatus =
 export type NotificationActivityRow = {
   id: string;
   bookingId: string;
+  creationSource: "public" | "owner";
   kind: "customer_confirmation" | "owner_alert";
   channel: "email" | "whatsapp";
   status: NotificationStatus;

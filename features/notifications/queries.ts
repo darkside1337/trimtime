@@ -16,7 +16,7 @@ export async function getOwnNotificationActivity(
     };
 
   const result = await db.execute(sql`
-    SELECT w.id, w.booking_id AS "bookingId", w.kind, w.channel,
+    SELECT w.id, w.booking_id AS "bookingId", b.creation_source AS "creationSource", w.kind, w.channel,
       CASE WHEN w.status = 'sending' AND w.claimed_at < ${now}::timestamptz - INTERVAL '30 seconds'
         THEN 'unknown' ELSE w.status END AS status,
       w.recipient,
@@ -40,6 +40,7 @@ export async function getOwnNotificationActivity(
     return {
       id: String(item.id),
       bookingId: String(item.bookingId),
+      creationSource: item.creationSource as "public" | "owner",
       kind: item.kind as "customer_confirmation" | "owner_alert",
       channel: item.channel as "email" | "whatsapp",
       status: item.status as NotificationActivityView["rows"][number]["status"],

@@ -124,7 +124,7 @@ async function authorize(input: {
       serviceDurationMinutes: Number(rawBooking.serviceDurationMinutes),
       barberName: String(rawBooking.barberName),
       customerName: String(rawBooking.customerName),
-      customerEmail: String(rawBooking.customerEmail),
+      customerEmail: rawBooking.customerEmail as string | null,
       customerPhone: rawBooking.customerPhone as string | null,
       capabilityHash: String(rawBooking.capabilityHash),
       capabilityCiphertext: String(rawBooking.capabilityCiphertext),

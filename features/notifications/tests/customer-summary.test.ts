@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   customerEmailStatusCopy,
   customerEmailSummary,
+  ownerEmailStatusCopy,
 } from "@/features/notifications/customer-summary";
 
 describe("customer notification summary", () => {
@@ -74,5 +75,15 @@ describe("customer notification summary", () => {
       reason: "message_rejected",
       updatedAt: null,
     });
+  });
+
+  it("uses owner appointment copy without claiming a customer link", () => {
+    const copy = ownerEmailStatusCopy({
+      status: "skipped",
+      reason: "recipient_unavailable",
+      updatedAt: null,
+    });
+    expect(copy).toContain("no recipient was provided");
+    expect(copy).not.toMatch(/private link|manage link/i);
   });
 });

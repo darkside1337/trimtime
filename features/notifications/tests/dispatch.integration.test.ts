@@ -33,6 +33,7 @@ describe("initial notification dispatch", () => {
   let saveShopSchedule: typeof import("@/features/availability/mutations").saveShopSchedule;
   let setOwnShopPublication: typeof import("@/features/shops/mutations").setOwnShopPublication;
   let createPublicBooking: typeof import("@/features/bookings/mutations").createPublicBooking;
+  let createOwnerBooking: typeof import("@/features/bookings/mutations").createOwnerBooking;
   let getManagedBooking: typeof import("@/features/bookings/queries").getManagedBooking;
   let dispatch: typeof import("../dispatch").dispatchInitialBookingNotifications;
   let getActivity: typeof import("../queries").getOwnNotificationActivity;
@@ -70,6 +71,7 @@ describe("initial notification dispatch", () => {
     ({ saveService } = await import("@/features/catalog/mutations"));
     ({ saveShopSchedule } = await import("@/features/availability/mutations"));
     ({ createPublicBooking } = await import("@/features/bookings/mutations"));
+    ({ createOwnerBooking } = await import("@/features/bookings/mutations"));
     ({ getManagedBooking } = await import("@/features/bookings/queries"));
     ({ dispatchInitialBookingNotifications: dispatch } =
       await import("../dispatch"));
@@ -181,6 +183,26 @@ describe("initial notification dispatch", () => {
     return result.data;
   }
 
+  async function ownerBooking(
+    ids: Awaited<ReturnType<typeof fixture>>,
+    email: string,
+  ) {
+    const result = await createOwnerBooking(ids.context, {
+      serviceId: ids.serviceId,
+      barberId: ids.barberId,
+      startAt: "2026-11-02T10:07:00.000Z",
+      reviewedOffer: { name: "Cut", priceUsd: "25.00", durationMinutes: "30" },
+      contact: { name: "Manual Guest", email, whatsappOptIn: false },
+      recoveryKey: randomUUID()
+        .replaceAll("-", "")
+        .padEnd(43, "a")
+        .slice(0, 43),
+    });
+    if (!result.success)
+      throw new Error(`Owner booking fixture failed: ${result.error.code}`);
+    return result.data;
+  }
+
   async function setBudget(day: string, count: number) {
     if (budgetDays.has(day)) {
       await database.pool.query(
@@ -262,6 +284,186 @@ describe("initial notification dispatch", () => {
     await expect(
       getManagedBooking({ shopId: ids.shopId }, token),
     ).resolves.toMatchObject({ success: true, data: { status: "confirmed" } });
+  });
+
+  it.each(["captured", "accepted"] as const)(
+    "dispatches owner-created email work with %s status and no owner alert",
+    async (status) => {
+      const ids = await fixture();
+      const created = await ownerBooking(ids, `${status}-manual@example.test`);
+      const calls: string[] = [];
+      await dispatchTracked(created.bookingId, {
+        send: async ({ message, onInvoked }) => {
+          calls.push(message.to);
+          await onInvoked();
+          return status === "captured"
+            ? captured
+            : {
+                status: "accepted",
+                reason: "capture_verification_unavailable",
+                captureId: null,
+                invoked: true,
+              };
+        },
+      });
+      expect(calls).toEqual([`${status}-manual@example.test`]);
+      expect(
+        (await rows(ids)).map(({ kind, channel, status: workStatus }) => ({
+          kind,
+          channel,
+          status: workStatus,
+        })),
+      ).toEqual([{ kind: "customer_confirmation", channel: "email", status }]);
+      expect(
+        (
+          await database.pool.query("SELECT status FROM bookings WHERE id=$1", [
+            created.bookingId,
+          ])
+        ).rows,
+      ).toEqual([{ status: "confirmed" }]);
+      expect(
+        (
+          await database.pool.query(
+            "SELECT count(*)::int AS count FROM notification_attempts a JOIN notification_work w ON w.id=a.work_id WHERE w.booking_id=$1",
+            [created.bookingId],
+          )
+        ).rows[0].count,
+      ).toBe(1);
+    },
+  );
+
+  it("recovers duplicate owner submissions without allocating a second email attempt", async () => {
+    const ids = await fixture();
+    const recoveryKey = randomUUID()
+      .replaceAll("-", "")
+      .padEnd(43, "a")
+      .slice(0, 43);
+    const payload = {
+      serviceId: ids.serviceId,
+      barberId: ids.barberId,
+      startAt: "2026-11-02T10:07:00.000Z",
+      reviewedOffer: { name: "Cut", priceUsd: "25.00", durationMinutes: "30" },
+      contact: {
+        name: "Manual Guest",
+        email: "duplicate-manual@example.test",
+        whatsappOptIn: false,
+      },
+      recoveryKey,
+    };
+    const [first, duplicate] = await Promise.all([
+      createOwnerBooking(ids.context, payload),
+      createOwnerBooking(ids.context, payload),
+    ]);
+    expect(first.success).toBe(true);
+    expect(duplicate).toEqual(first);
+    if (!first.success) return;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let calls = 0;
+    const send = async ({ onInvoked }: SendInput) => {
+      calls++;
+      await onInvoked();
+      await gate;
+      return captured;
+    };
+    const dispatched = dispatchTracked(first.data.bookingId, { send });
+    try {
+      await vi.waitFor(async () => {
+        expect((await rows(ids))[0].status).toBe("sending");
+      });
+      await dispatchTracked(first.data.bookingId, { send });
+    } finally {
+      release();
+    }
+    await dispatched;
+    expect(calls).toBe(1);
+    expect((await rows(ids)).map(({ status }) => status)).toEqual(["captured"]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM notification_attempts a JOIN notification_work w ON w.id=a.work_id WHERE w.booking_id=$1",
+          [first.data.bookingId],
+        )
+      ).rows[0].count,
+    ).toBe(1);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM bookings WHERE id=$1",
+          [first.data.bookingId],
+        )
+      ).rows[0].count,
+    ).toBe(1);
+  });
+
+  it.each(["rejected", "interrupted"] as const)(
+    "keeps an owner-created booking and truthful work status when email is %s",
+    async (outcome) => {
+      const ids = await fixture();
+      const created = await ownerBooking(ids, `${outcome}-manual@example.test`);
+      let calls = 0;
+      await dispatchTracked(created.bookingId, {
+        send: async ({ onInvoked }) => {
+          calls++;
+          await onInvoked();
+          if (outcome === "interrupted")
+            throw new Error("transport interrupted");
+          return {
+            status: "failed",
+            reason: "permanent_rejection",
+            captureId: null,
+            invoked: true,
+          };
+        },
+      });
+      expect(calls).toBe(1);
+      expect(
+        (await rows(ids)).map(({ status, reason }) => ({ status, reason })),
+      ).toEqual([
+        outcome === "interrupted"
+          ? { status: "unknown", reason: "transport_interrupted" }
+          : { status: "failed", reason: "permanent_rejection" },
+      ]);
+      expect(
+        (
+          await database.pool.query("SELECT status FROM bookings WHERE id=$1", [
+            created.bookingId,
+          ])
+        ).rows,
+      ).toEqual([{ status: "confirmed" }]);
+    },
+  );
+
+  it("keeps an owner-created booking saved when email budget is exhausted", async () => {
+    const ids = await fixture();
+    const created = await ownerBooking(ids, "budget-manual@example.test");
+    await setBudget("2026-11-03", 100);
+    let calls = 0;
+    await dispatchTracked(created.bookingId, {
+      send: async () => {
+        calls++;
+        return captured;
+      },
+    });
+    expect(calls).toBe(0);
+    expect(
+      (await rows(ids)).map(({ status, reason, attempt }) => ({
+        status,
+        reason,
+        attempt,
+      })),
+    ).toEqual([
+      { status: "skipped", reason: "daily_budget_exhausted", attempt: null },
+    ]);
+    expect(
+      (
+        await database.pool.query("SELECT status FROM bookings WHERE id=$1", [
+          created.bookingId,
+        ])
+      ).rows,
+    ).toEqual([{ status: "confirmed" }]);
   });
 
   it.each([
@@ -1001,6 +1203,53 @@ describe("initial notification dispatch", () => {
     expect(activity.find((row) => row.kind === "owner_alert")?.status).toBe(
       "captured",
     );
+  });
+
+  it("skips a NULL customer recipient without stringifying it or allocating an attempt", async () => {
+    const ids = await fixture();
+    const created = await booking(ids, "missing-recipient@example.test");
+    const source = (
+      await database.pool.query(
+        `SELECT id, start_at AS "startAt", end_at AS "endAt", service_name AS "serviceName",
+        service_price_usd AS "servicePriceUsd", service_duration_minutes AS "serviceDurationMinutes",
+        barber_name AS "barberName", customer_name AS "customerName", customer_phone AS "customerPhone"
+       FROM bookings WHERE id=$1`,
+        [created.bookingId],
+      )
+    ).rows[0];
+    const identity = notificationContentIdentity({
+      ...source,
+      customerEmail: null,
+      servicePriceUsd: String(source.servicePriceUsd),
+      serviceDurationMinutes: Number(source.serviceDurationMinutes),
+    });
+    await database.pool.query(
+      "UPDATE bookings SET customer_email=NULL WHERE id=$1",
+      [created.bookingId],
+    );
+    await database.pool.query(
+      `UPDATE notification_work SET content_identity=$2,
+        recipient=CASE WHEN kind='customer_confirmation' THEN NULL ELSE recipient END
+       WHERE booking_id=$1`,
+      [created.bookingId, identity],
+    );
+    let sends = 0;
+    await dispatchTracked(created.bookingId, {
+      send: async ({ onInvoked }) => {
+        sends++;
+        await onInvoked();
+        return captured;
+      },
+    });
+    expect(sends).toBe(1);
+    expect(
+      (await rows(ids)).find((row) => row.kind === "customer_confirmation"),
+    ).toMatchObject({
+      status: "skipped",
+      reason: "recipient_missing",
+      recipient: null,
+      attempt: null,
+    });
   });
 
   it("skips a missing owner recipient while the customer confirmation succeeds", async () => {

@@ -3,7 +3,7 @@ import { z } from "zod";
 export type BookingMessageSnapshot = {
   id: string;
   customerName: string;
-  customerEmail: string;
+  customerEmail: string | null;
   customerPhone?: string | null;
   serviceName: string;
   servicePriceUsd: string;
@@ -124,7 +124,7 @@ export function renderOwnerAlert(input: {
       "",
       demoNotice,
       "",
-      `Customer: ${booking.customerName} <${booking.customerEmail}>`,
+      `Customer: ${booking.customerName}${booking.customerEmail ? ` <${booking.customerEmail}>` : " (no email provided)"}`,
       ...bookingDetails(booking),
       `Booking ID: ${booking.id}`,
       `Owner activity: ${input.activityUrl}`,

@@ -126,7 +126,7 @@ function Receipt({
         </div>
         <div>
           <dt>Email</dt>
-          <dd>{receipt.booking.customer.email}</dd>
+          <dd>{receipt.booking.customer.email ?? "No email provided"}</dd>
         </div>
         <div>
           <dt>Total</dt>

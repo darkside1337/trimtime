@@ -10,7 +10,7 @@ export function notificationContentIdentity(booking: {
   serviceDurationMinutes: number;
   barberName: string;
   customerName: string;
-  customerEmail: string;
+  customerEmail: string | null;
   customerPhone: string | null;
 }) {
   return hashSecret(

@@ -618,7 +618,7 @@ export function ManageBooking({
                   <dt className="text-xs text-[#72726e]">Reserved for</dt>
                   <dd>{booking.customer.name}</dd>
                   <dd className="wrap-anywhere text-xs">
-                    {booking.customer.email}
+                    {booking.customer.email ?? "No email provided"}
                   </dd>
                   {booking.customer.phone ? (
                     <dd className="text-xs">{booking.customer.phone}</dd>

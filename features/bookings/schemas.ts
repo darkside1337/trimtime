@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Temporal } from "temporal-polyfill";
 
 export const publicBookingContactSchema = z
   .object({
@@ -44,3 +45,43 @@ export const createPublicBookingSchema = z
 export type CreatePublicBookingInput = z.infer<
   typeof createPublicBookingSchema
 >;
+
+export const createOwnerBookingSchema = z
+  .object({
+    serviceId: z.string().min(1),
+    barberId: z.string().min(1),
+    startAt: z.iso.datetime({ offset: true }),
+    reviewedOffer: z
+      .object({
+        name: z.string().trim().min(1),
+        priceUsd: z.string().regex(/^\d+\.\d{2}$/),
+        durationMinutes: z.string().regex(/^\d+$/),
+      })
+      .strict(),
+    contact: z
+      .object({
+        name: z.string().trim().min(1, "Enter a name."),
+        email: z.string().trim().toLowerCase().pipe(z.email()).optional(),
+        phone: z.string().trim().min(1, "Enter a phone number.").optional(),
+        whatsappOptIn: z.boolean(),
+      })
+      .strict()
+      .refine((contact) => !contact.whatsappOptIn || Boolean(contact.phone), {
+        path: ["phone"],
+        message: "Enter a phone number to receive WhatsApp updates.",
+      }),
+    recoveryKey: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  })
+  .strict()
+  .refine(
+    ({ startAt }) =>
+      Temporal.Instant.from(startAt).epochNanoseconds %
+        BigInt(60_000_000_000) ===
+      BigInt(0),
+    {
+      path: ["startAt"],
+      message: "Choose a start on an exact minute.",
+    },
+  );
+
+export type CreateOwnerBookingInput = z.infer<typeof createOwnerBookingSchema>;

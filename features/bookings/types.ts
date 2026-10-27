@@ -36,7 +36,7 @@ export type ManagedBookingView = {
   barber: { name: string };
   customer: {
     name: string;
-    email: string;
+    email: string | null;
     phone: string | null;
     whatsappOptIn: boolean;
   };
@@ -57,5 +57,65 @@ export type PublicBookingReceipt = {
   notifications: {
     email: CustomerEmailSummary;
     whatsapp: "unavailable";
+  };
+};
+
+export type OwnerCalendarAppointment = {
+  id: string;
+  status: "confirmed" | "cancelled";
+  startAt: string;
+  endAt: string;
+  service: { name: string; priceUsd: string; durationMinutes: number };
+  barber: { id: string; name: string; archived: boolean };
+  customer: { name: string };
+};
+
+export type OwnerCalendarView = {
+  timeZone: string;
+  range: { startAt: string; endAt: string };
+  barbers: { id: string; name: string; archived: boolean }[];
+  appointments: OwnerCalendarAppointment[];
+};
+
+export type OwnerAppointmentView = {
+  id: string;
+  status: "confirmed" | "cancelled";
+  startAt: string;
+  endAt: string;
+  service: { name: string; priceUsd: string; durationMinutes: number };
+  barber: { id: string; name: string; archived: boolean };
+  customer: {
+    name: string;
+    email: string | null;
+    phone: string | null;
+    whatsappOptIn: boolean;
+  };
+  shop: {
+    name: string;
+    publicContact: string;
+    address: string;
+    timeZone: string;
+  };
+  notifications: { email: CustomerEmailSummary };
+};
+
+export type OwnerAppointmentChoices = {
+  timeZone: string;
+  barbers: { id: string; name: string }[];
+  services: {
+    id: string;
+    name: string;
+    priceUsd: string;
+    durationMinutes: number;
+    barberIds: string[];
+  }[];
+};
+
+export type OwnerBookingReceipt = {
+  bookingId: string;
+  appointment: OwnerAppointmentView;
+  notifications: {
+    email: CustomerEmailSummary;
+    whatsapp: "unavailable" | "not_requested";
   };
 };
