@@ -4,6 +4,12 @@ import { resolveServerOrigins } from "./server/origin-config.mts";
 const { marketingOrigin, appOrigin } = resolveServerOrigins(process.env);
 
 const nextConfig: NextConfig = {
+  ...(process.env.TRIMTIME_E2E_SERVER === "dev"
+    ? {
+        distDir: ".next-e2e-dev",
+        typescript: { tsconfigPath: ".e2e-dev-config/tsconfig.json" },
+      }
+    : {}),
   allowedDevOrigins: ["localtest.me", "*.localtest.me"],
   async rewrites() {
     const marketingHostname = new URL(marketingOrigin).hostname.replaceAll(

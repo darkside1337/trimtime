@@ -40,7 +40,10 @@ export default defineConfig({
       : []),
     {
       stdout: "pipe",
-      command: "node_modules/.bin/next start --hostname 0.0.0.0 --port 3100",
+      command:
+        process.env.TRIMTIME_E2E_SERVER === "dev"
+          ? "node_modules/.bin/next dev --hostname 0.0.0.0 --port 3100"
+          : "node_modules/.bin/next start --hostname 0.0.0.0 --port 3100",
       url: "http://localhost:3100",
       reuseExistingServer: false,
       timeout: 120_000,
