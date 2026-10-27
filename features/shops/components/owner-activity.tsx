@@ -254,7 +254,11 @@ export function OwnerActivity({
                 </span>
                 <div className={c.eventCopy}>
                   <h3>
-                    {title(event)} <span>#{event.id}</span>
+                    {title(event)}{" "}
+                    {event.creationSource === "owner" && (
+                      <span>Manual appointment</span>
+                    )}{" "}
+                    <span>#{event.id}</span>
                   </h3>
                   <p>
                     Booking #{event.bookingId} · {event.channel}
@@ -263,6 +267,12 @@ export function OwnerActivity({
                     Updated {date(event.updatedAt, shop.timeZone)} ·{" "}
                     {event.recipient ?? "No authorized recipient"}
                   </small>
+                  {event.creationSource === "owner" && !event.recipient && (
+                    <small>
+                      No email recipient was provided; no notification channel
+                      is available.
+                    </small>
+                  )}
                 </div>
                 <span className={c.eventStatus}>{statusLabel(event)}</span>
                 <div className={c.eventActions}>
@@ -306,6 +316,14 @@ export function OwnerActivity({
               <div>
                 <dt>Message</dt>
                 <dd>{title(row)}</dd>
+              </div>
+              <div>
+                <dt>Creation</dt>
+                <dd>
+                  {row.creationSource === "owner"
+                    ? "Manual appointment"
+                    : "Public booking"}
+                </dd>
               </div>
               <div>
                 <dt>Booking ID</dt>

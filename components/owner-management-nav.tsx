@@ -24,6 +24,7 @@ import { OwnerSignOut } from "./owner-auth-controls";
 import { Button } from "./ui/button";
 import { cn } from "@/lib/utils";
 import { TrimTimeLogo } from "./trimtime-logo";
+import { useOwnerAppointmentDraft } from "@/features/bookings/components/owner-calendar-context";
 
 const destinations = [
   { key: "today", label: "Calendar", href: "/", icon: CalendarDays },
@@ -51,6 +52,19 @@ export function OwnerManagementNav({
     destinations.find(({ key }) => key === segment)?.key ?? "today";
   const [open, setOpen] = useState(false);
   const closeButton = useRef<HTMLButtonElement>(null);
+  const { isDirty, requestNavigation, clearDraft } = useOwnerAppointmentDraft();
+
+  function handleNavigation(
+    event: React.MouseEvent<HTMLAnchorElement>,
+    href: string,
+  ) {
+    if (isDirty) {
+      event.preventDefault();
+      requestNavigation(href);
+    } else {
+      clearDraft();
+    }
+  }
 
   useEffect(() => {
     const desktop = window.matchMedia("(min-width: 901px)");
@@ -72,6 +86,7 @@ export function OwnerManagementNav({
             <Link
               key={key}
               href={href}
+              onClick={(event) => handleNavigation(event, href)}
               aria-current={current === key ? "page" : undefined}
               className={cn(
                 "flex min-h-11 items-center gap-3 rounded-xl px-3 py-2 font-semibold no-underline hover:bg-background aria-[current=page]:bg-secondary",
@@ -142,7 +157,10 @@ export function OwnerManagementNav({
                 <Link
                   key={key}
                   href={href}
-                  onClick={() => setOpen(false)}
+                  onClick={(event) => {
+                    handleNavigation(event, href);
+                    setOpen(false);
+                  }}
                   aria-current={current === key ? "page" : undefined}
                   className={cn(
                     "flex min-h-11 shrink-0 items-center gap-3 rounded-xl px-3 py-2 text-sm font-semibold no-underline hover:bg-muted aria-[current=page]:bg-secondary",

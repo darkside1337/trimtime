@@ -375,6 +375,12 @@ a:focus-visible {
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  [data-slot="dialog-overlay"],
+  [data-slot="dialog-content"] {
+    animation-name: none !important;
+    transition-property: none !important;
+  }
+
   [data-slot] {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;

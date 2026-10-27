@@ -1,6 +1,5 @@
 "use client";
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 const signInError = "Google sign-in could not start. Please try again.";
@@ -61,13 +60,12 @@ export function OwnerAuthControls({
   );
 }
 export function OwnerSignOut() {
-  const router = useRouter();
   return (
     <Button
       variant="outline"
       onClick={() =>
         authClient.signOut({
-          fetchOptions: { onSuccess: () => router.push("/sign-in") },
+          fetchOptions: { onSuccess: () => window.location.reload() },
         })
       }
     >
