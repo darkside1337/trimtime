@@ -24,7 +24,7 @@ import type {
   WeeklySchedule,
 } from "./types";
 import { getDateAvailabilitySchema } from "./schemas";
-import { resolveDateSchedule } from "./restrictions";
+import { resolveScheduleForDate } from "./schedule-resolution";
 
 export type AvailabilityData = {
   timeZone: string;
@@ -482,6 +482,88 @@ export async function getOwnAvailabilityOverview(
   });
 }
 
+type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+async function queryAvailabilitySlots(
+  tx: Transaction,
+  params: {
+    shopId: string;
+    timeZone: string;
+    serviceId: string;
+    barberId: string;
+    date: string;
+  },
+): Promise<ReturnType<typeof calculateSlots> | null> {
+  const [service] = await tx
+    .select({ id: services.id, durationMinutes: services.durationMinutes })
+    .from(services)
+    .where(
+      and(
+        eq(services.id, params.serviceId),
+        eq(services.shopId, params.shopId),
+        eq(services.offered, true),
+        eq(services.archived, false),
+      ),
+    )
+    .limit(1);
+  const [barber] = await tx
+    .select({ id: barbers.id })
+    .from(barbers)
+    .innerJoin(
+      barberServices,
+      and(
+        eq(barberServices.shopId, barbers.shopId),
+        eq(barberServices.barberId, barbers.id),
+      ),
+    )
+    .where(
+      and(
+        eq(barbers.id, params.barberId),
+        eq(barbers.shopId, params.shopId),
+        eq(barbers.archived, false),
+        eq(barberServices.serviceId, params.serviceId),
+      ),
+    )
+    .limit(1);
+  if (!service || !barber) return null;
+  const { shopDay, barberDay } = await resolveScheduleForDate(tx, {
+    shopId: params.shopId,
+    barberId: params.barberId,
+    date: params.date,
+  });
+  const [dateStart, dateEnd] = dateBounds(params.date, params.timeZone);
+  const occupiedRows = await tx
+    .select({
+      startAt: occupiedIntervals.startAt,
+      endAt: occupiedIntervals.endAt,
+    })
+    .from(occupiedIntervals)
+    .where(
+      and(
+        eq(occupiedIntervals.shopId, params.shopId),
+        eq(occupiedIntervals.barberId, params.barberId),
+        sql`${occupiedIntervals.startAt} < ${dateEnd}`,
+        sql`${occupiedIntervals.endAt} > ${dateStart}`,
+      ),
+    );
+  const now = new Date().toISOString();
+  const durationMinutes = Number(service.durationMinutes);
+  return durationMinutes > (dateEnd.getTime() - dateStart.getTime()) / 60_000
+    ? []
+    : calculateSlots({
+        date: params.date,
+        timeZone: params.timeZone,
+        now,
+        durationMinutes,
+        shopDay,
+        barberDay,
+        occupied: occupiedRows.map(({ startAt, endAt }) => ({
+          start: startAt.toISOString(),
+          end: endAt.toISOString(),
+        })),
+      });
+}
+
 export async function previewOwnSlots(
   context: OwnerContext | null,
   input: unknown,
@@ -528,38 +610,14 @@ export async function previewOwnSlots(
             message: "Set up your shop before previewing availability.",
           },
         };
-      const [service] = await tx
-        .select({ id: services.id, durationMinutes: services.durationMinutes })
-        .from(services)
-        .where(
-          and(
-            eq(services.id, parsed.data.serviceId),
-            eq(services.shopId, shop.id),
-            eq(services.offered, true),
-            eq(services.archived, false),
-          ),
-        )
-        .limit(1);
-      const [barber] = await tx
-        .select({ id: barbers.id })
-        .from(barbers)
-        .innerJoin(
-          barberServices,
-          and(
-            eq(barberServices.shopId, barbers.shopId),
-            eq(barberServices.barberId, barbers.id),
-          ),
-        )
-        .where(
-          and(
-            eq(barbers.id, parsed.data.barberId),
-            eq(barbers.shopId, shop.id),
-            eq(barbers.archived, false),
-            eq(barberServices.serviceId, parsed.data.serviceId),
-          ),
-        )
-        .limit(1);
-      if (!service || !barber)
+      const slots = await queryAvailabilitySlots(tx, {
+        shopId: shop.id,
+        timeZone: shop.timeZone,
+        serviceId: parsed.data.serviceId,
+        barberId: parsed.data.barberId,
+        date: parsed.data.date,
+      });
+      if (!slots)
         return {
           success: false as const,
           error: {
@@ -567,89 +625,12 @@ export async function previewOwnSlots(
             message: "Choose an offered service and an active eligible barber.",
           },
         };
-      const [shopSchedule] = await tx
-        .select()
-        .from(shopSchedules)
-        .where(eq(shopSchedules.shopId, shop.id))
-        .limit(1);
-      const [barberSchedule] = await tx
-        .select()
-        .from(barberSchedules)
-        .where(
-          and(
-            eq(barberSchedules.shopId, shop.id),
-            eq(barberSchedules.barberId, barber.id),
-          ),
-        )
-        .limit(1);
-      const localDate = Temporal.PlainDate.from(parsed.data.date);
-      const index = localDate.dayOfWeek - 1;
-      const [shopDate] = await tx
-        .select()
-        .from(shopDateSchedules)
-        .where(
-          and(
-            eq(shopDateSchedules.shopId, shop.id),
-            eq(shopDateSchedules.date, parsed.data.date),
-          ),
-        )
-        .limit(1);
-      const [barberDate] = await tx
-        .select()
-        .from(barberDateSchedules)
-        .where(
-          and(
-            eq(barberDateSchedules.shopId, shop.id),
-            eq(barberDateSchedules.barberId, barber.id),
-            eq(barberDateSchedules.date, parsed.data.date),
-          ),
-        )
-        .limit(1);
-      const shopWeek = shopSchedule?.week ?? emptyWeek();
-      const barberWeek = barberSchedule?.week ?? emptyWeek();
-      const [dateStart, dateEnd] = dateBounds(parsed.data.date, shop.timeZone);
-      const occupiedRows = await tx
-        .select({
-          startAt: occupiedIntervals.startAt,
-          endAt: occupiedIntervals.endAt,
-        })
-        .from(occupiedIntervals)
-        .where(
-          and(
-            eq(occupiedIntervals.shopId, shop.id),
-            eq(occupiedIntervals.barberId, barber.id),
-            sql`${occupiedIntervals.startAt} < ${dateEnd}`,
-            sql`${occupiedIntervals.endAt} > ${dateStart}`,
-          ),
-        );
-      const now = new Date(Date.now()).toISOString();
-      const durationMinutes = Number(service.durationMinutes);
       return {
         success: true as const,
         data: {
           timeZone: shop.timeZone,
           date: parsed.data.date,
-          slots:
-            durationMinutes > (dateEnd.getTime() - dateStart.getTime()) / 60_000
-              ? []
-              : calculateSlots({
-                  date: parsed.data.date,
-                  timeZone: shop.timeZone,
-                  now,
-                  durationMinutes,
-                  shopDay: resolveDateSchedule(
-                    shopWeek[index] as DaySchedule,
-                    dateView(shopDate),
-                  ),
-                  barberDay: resolveDateSchedule(
-                    barberWeek[index] as DaySchedule,
-                    dateView(barberDate),
-                  ),
-                  occupied: occupiedRows.map(({ startAt, endAt }) => ({
-                    start: startAt.toISOString(),
-                    end: endAt.toISOString(),
-                  })),
-                }),
+          slots,
         },
       };
     });
@@ -680,117 +661,18 @@ export async function previewPublishedShopSlots(
       .where(and(eq(shops.id, shopId), eq(shops.published, true)))
       .limit(1);
     if (!shop) return null;
-    const [service] = await tx
-      .select({ id: services.id, durationMinutes: services.durationMinutes })
-      .from(services)
-      .where(
-        and(
-          eq(services.id, parsed.data.serviceId),
-          eq(services.shopId, shop.id),
-          eq(services.offered, true),
-          eq(services.archived, false),
-        ),
-      )
-      .limit(1);
-    const [barber] = await tx
-      .select({ id: barbers.id })
-      .from(barbers)
-      .innerJoin(
-        barberServices,
-        and(
-          eq(barberServices.shopId, barbers.shopId),
-          eq(barberServices.barberId, barbers.id),
-        ),
-      )
-      .where(
-        and(
-          eq(barbers.id, parsed.data.barberId),
-          eq(barbers.shopId, shop.id),
-          eq(barbers.archived, false),
-          eq(barberServices.serviceId, parsed.data.serviceId),
-        ),
-      )
-      .limit(1);
-    if (!service || !barber) return null;
-    const [shopSchedule] = await tx
-      .select()
-      .from(shopSchedules)
-      .where(eq(shopSchedules.shopId, shop.id))
-      .limit(1);
-    const [barberSchedule] = await tx
-      .select()
-      .from(barberSchedules)
-      .where(
-        and(
-          eq(barberSchedules.shopId, shop.id),
-          eq(barberSchedules.barberId, barber.id),
-        ),
-      )
-      .limit(1);
-    const index = Temporal.PlainDate.from(parsed.data.date).dayOfWeek - 1;
-    const [shopDate] = await tx
-      .select()
-      .from(shopDateSchedules)
-      .where(
-        and(
-          eq(shopDateSchedules.shopId, shop.id),
-          eq(shopDateSchedules.date, parsed.data.date),
-        ),
-      )
-      .limit(1);
-    const [barberDate] = await tx
-      .select()
-      .from(barberDateSchedules)
-      .where(
-        and(
-          eq(barberDateSchedules.shopId, shop.id),
-          eq(barberDateSchedules.barberId, barber.id),
-          eq(barberDateSchedules.date, parsed.data.date),
-        ),
-      )
-      .limit(1);
-    const [dateStart, dateEnd] = dateBounds(parsed.data.date, shop.timeZone);
-    const occupiedRows = await tx
-      .select({
-        startAt: occupiedIntervals.startAt,
-        endAt: occupiedIntervals.endAt,
-      })
-      .from(occupiedIntervals)
-      .where(
-        and(
-          eq(occupiedIntervals.shopId, shop.id),
-          eq(occupiedIntervals.barberId, barber.id),
-          sql`${occupiedIntervals.startAt} < ${dateEnd}`,
-          sql`${occupiedIntervals.endAt} > ${dateStart}`,
-        ),
-      );
-    const durationMinutes = Number(service.durationMinutes);
+    const slots = await queryAvailabilitySlots(tx, {
+      shopId: shop.id,
+      timeZone: shop.timeZone,
+      serviceId: parsed.data.serviceId,
+      barberId: parsed.data.barberId,
+      date: parsed.data.date,
+    });
+    if (!slots) return null;
     return {
       timeZone: shop.timeZone,
       date: parsed.data.date,
-      slots:
-        durationMinutes > (dateEnd.getTime() - dateStart.getTime()) / 60_000
-          ? []
-          : calculateSlots({
-              date: parsed.data.date,
-              timeZone: shop.timeZone,
-              now: new Date().toISOString(),
-              durationMinutes,
-              shopDay: resolveDateSchedule(
-                (shopSchedule?.week[index] as DaySchedule) ??
-                  emptyWeek()[index]!,
-                dateView(shopDate),
-              ),
-              barberDay: resolveDateSchedule(
-                (barberSchedule?.week[index] as DaySchedule) ??
-                  emptyWeek()[index]!,
-                dateView(barberDate),
-              ),
-              occupied: occupiedRows.map(({ startAt, endAt }) => ({
-                start: startAt.toISOString(),
-                end: endAt.toISOString(),
-              })),
-            }),
+      slots,
     };
   });
 }

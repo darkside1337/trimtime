@@ -3,16 +3,9 @@ import { Temporal } from "temporal-polyfill";
 import { and, asc, eq, gt } from "drizzle-orm";
 import { db } from "@/db";
 import { bookings } from "@/db/schema/bookings";
-import {
-  barberDateSchedules,
-  barberSchedules,
-  shopDateSchedules,
-  shopSchedules,
-} from "@/db/schema/availability";
 import { shops } from "@/db/schema/shops";
 import { fitsScheduleInterval } from "@/features/availability/slots";
-import { resolveDateSchedule } from "@/features/availability/restrictions";
-import type { WeeklySchedule } from "@/features/availability/types";
+import { resolveScheduleForDate } from "@/features/availability/schedule-resolution";
 import type { BookingConflict } from "@/lib/action-result";
 
 export async function protectedBookingConflicts(
@@ -102,75 +95,23 @@ export async function assertBookingsFitCurrentSchedules(
     const date = Temporal.Instant.from(booking.startAt.toISOString())
       .toZonedDateTimeISO(shop.timeZone)
       .toPlainDate();
-    const [shopWeek] = await tx
-      .select({ week: shopSchedules.week })
-      .from(shopSchedules)
-      .where(eq(shopSchedules.shopId, shopId))
-      .limit(1);
-    const [barberWeek] = await tx
-      .select({ week: barberSchedules.week })
-      .from(barberSchedules)
-      .where(
-        and(
-          eq(barberSchedules.shopId, shopId),
-          eq(barberSchedules.barberId, booking.barberId),
-        ),
-      )
-      .limit(1);
-    if (!shopWeek || !barberWeek) {
+    const schedule = await resolveScheduleForDate(tx, {
+      shopId,
+      barberId: booking.barberId,
+      date,
+    });
+    if (!schedule.hasWeeklySchedule) {
       conflicts.push(toConflict(booking));
       continue;
     }
-    const [shopException] = await tx
-      .select()
-      .from(shopDateSchedules)
-      .where(
-        and(
-          eq(shopDateSchedules.shopId, shopId),
-          eq(shopDateSchedules.date, date.toString()),
-        ),
-      )
-      .limit(1);
-    const [barberException] = await tx
-      .select()
-      .from(barberDateSchedules)
-      .where(
-        and(
-          eq(barberDateSchedules.shopId, shopId),
-          eq(barberDateSchedules.barberId, booking.barberId),
-          eq(barberDateSchedules.date, date.toString()),
-        ),
-      )
-      .limit(1);
-    const index = date.dayOfWeek - 1;
-    const shopDay = resolveDateSchedule(
-      (shopWeek.week as WeeklySchedule)[index],
-      shopException
-        ? {
-            override: shopException.override,
-            closed: shopException.closed,
-            revision: shopException.revision,
-          }
-        : null,
-    );
-    const barberDay = resolveDateSchedule(
-      (barberWeek.week as WeeklySchedule)[index],
-      barberException
-        ? {
-            override: barberException.override,
-            closed: barberException.closed,
-            revision: barberException.revision,
-          }
-        : null,
-    );
     if (
       !fitsScheduleInterval({
         start: Temporal.Instant.from(booking.startAt.toISOString()),
         durationMinutes: booking.duration,
         date,
         timeZone: shop.timeZone,
-        shopDay,
-        barberDay,
+        shopDay: schedule.shopDay,
+        barberDay: schedule.barberDay,
       })
     )
       conflicts.push(toConflict(booking));

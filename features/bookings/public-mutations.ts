@@ -3,12 +3,6 @@ import { randomUUID } from "node:crypto";
 import { Temporal } from "temporal-polyfill";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import {
-  barberDateSchedules,
-  barberSchedules,
-  shopDateSchedules,
-  shopSchedules,
-} from "@/db/schema/availability";
 import { barberServices, barbers, services } from "@/db/schema/catalog";
 import { bookings } from "@/db/schema/bookings";
 import { notificationWork } from "@/db/schema/notification-work";
@@ -20,8 +14,7 @@ import { occupiedIntervals } from "@/db/schema/occupancy";
 import { shops } from "@/db/schema/shops";
 import type { ActionResult } from "@/lib/action-result";
 import { calculateSlots } from "@/features/availability/slots";
-import { resolveDateSchedule } from "@/features/availability/restrictions";
-import type { WeeklySchedule } from "@/features/availability/types";
+import { resolveScheduleForDate } from "@/features/availability/schedule-resolution";
 import { createPublicBookingSchema } from "./schemas";
 import { fixedBookingPrice } from "./money";
 import {
@@ -366,68 +359,17 @@ export async function createPublicBooking(
       const localDate = Temporal.Instant.from(start.toISOString())
         .toZonedDateTimeISO(shop.time_zone)
         .toPlainDate();
-      const [shopWeek] = await tx
-        .select({ week: shopSchedules.week })
-        .from(shopSchedules)
-        .where(eq(shopSchedules.shopId, shop.id))
-        .limit(1);
-      const [barberWeek] = await tx
-        .select({ week: barberSchedules.week })
-        .from(barberSchedules)
-        .where(
-          and(
-            eq(barberSchedules.shopId, shop.id),
-            eq(barberSchedules.barberId, barber.id),
-          ),
-        )
-        .limit(1);
-      if (!shopWeek || !barberWeek)
+      const schedule = await resolveScheduleForDate(tx, {
+        shopId: shop.id,
+        barberId: barber.id,
+        date: localDate,
+      });
+      if (!schedule.hasWeeklySchedule)
         return failure(
           "UNAVAILABLE_INTERVAL",
           "Choose another available time.",
         );
-      const [shopException] = await tx
-        .select()
-        .from(shopDateSchedules)
-        .where(
-          and(
-            eq(shopDateSchedules.shopId, shop.id),
-            eq(shopDateSchedules.date, localDate.toString()),
-          ),
-        )
-        .limit(1);
-      const [barberException] = await tx
-        .select()
-        .from(barberDateSchedules)
-        .where(
-          and(
-            eq(barberDateSchedules.shopId, shop.id),
-            eq(barberDateSchedules.barberId, barber.id),
-            eq(barberDateSchedules.date, localDate.toString()),
-          ),
-        )
-        .limit(1);
-      const weekday = localDate.dayOfWeek - 1;
-      const shopDay = resolveDateSchedule(
-        (shopWeek.week as WeeklySchedule)[weekday],
-        shopException
-          ? {
-              override: shopException.override,
-              closed: shopException.closed,
-              revision: shopException.revision,
-            }
-          : null,
-      );
-      const barberDay = resolveDateSchedule(
-        (barberWeek.week as WeeklySchedule)[weekday],
-        barberException
-          ? {
-              override: barberException.override,
-              closed: barberException.closed,
-              revision: barberException.revision,
-            }
-          : null,
-      );
+      const { shopDay, barberDay } = schedule;
       const occupied = await tx
         .select({
           start: occupiedIntervals.startAt,

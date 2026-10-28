@@ -366,6 +366,27 @@ describe("availability operations", () => {
       data: { slots: [{ localStart: "09:15", end: "2026-11-02T14:50:00Z" }] },
     });
 
+    const { previewPublishedShopSlots } = await import("../queries");
+    const shop = await database.pool.query<{ id: string }>(
+      "UPDATE shops SET published = true WHERE owner_id = $1 RETURNING id",
+      [context.userId],
+    );
+    const publicInput = {
+      serviceId: service.data.id,
+      barberId: barber.data.id,
+      date: "2026-11-02",
+    };
+    expect(
+      await previewPublishedShopSlots(shop.rows[0].id, publicInput),
+    ).toEqual(slots.success ? slots.data : null);
+    await database.pool.query(
+      "UPDATE shops SET published = false WHERE id = $1",
+      [shop.rows[0].id],
+    );
+    expect(
+      await previewPublishedShopSlots(shop.rows[0].id, publicInput),
+    ).toBeNull();
+
     await database.pool.query(
       "UPDATE services SET duration_minutes = 50 WHERE id = $1",
       [service.data.id],
