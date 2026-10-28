@@ -51,3 +51,6 @@ next-env.d.ts
 /docs/.plans
 /docs/reports/
 /docs/refactors/
+
+
+/.playwright-mcp/
