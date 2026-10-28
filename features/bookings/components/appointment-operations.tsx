@@ -5,12 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { OwnerDiscardDialog } from "@/components/owner-discard-dialog";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { cancelOwnerBookingAction, moveOwnerBookingAction } from "../actions";
 import { fixedBookingPrice } from "../money";
 import { resolveOwnerStartChoices } from "../time";
@@ -23,6 +18,9 @@ import {
   type OwnerAppointmentDraftValues,
 } from "./owner-calendar-context";
 import { useAppointmentDismissal } from "../hooks/use-appointment-dismissal";
+import { AppointmentCancelDialogContent } from "./appointment-cancel-dialog";
+import { AppointmentMoveDialogContent } from "./appointment-move-dialog";
+import { createRecoveryKey } from "./recovery-key";
 
 export function AppointmentCalendarBackLink({ href }: { href: string }) {
   const { requestNavigation } = useAppointmentDismissal();
@@ -67,14 +65,6 @@ function localParts(instant: string, timeZone: string) {
     date: `${part("year")}-${part("month")}-${part("day")}`,
     time: `${part("hour")}:${part("minute")}`,
   };
-}
-
-function newRecoveryKey() {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  return btoa(String.fromCharCode(...bytes))
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replaceAll("=", "");
 }
 
 export function AppointmentOperations(props: AppointmentOperationsProps) {
@@ -146,7 +136,7 @@ function AppointmentOperationsForm({
   const recoveryKey =
     (mode === "cancel"
       ? savedCancelDraft?.recoveryKey
-      : savedDraft?.recoveryKey) ?? newRecoveryKey();
+      : savedDraft?.recoveryKey) ?? createRecoveryKey();
   const submittedPayload = savedDraft?.submittedPayload ?? null;
   const cancelPayload = savedCancelDraft?.submittedPayload ?? null;
   const service = choices.services.find((item) => item.id === values.serviceId);
@@ -384,180 +374,42 @@ function AppointmentOperationsForm({
           className="max-h-[calc(100dvh-2rem)] overflow-y-auto"
         >
           {mode === "move" ? (
-            <>
-              <DialogTitle>Move appointment</DialogTitle>
-              <DialogDescription>
-                Review the service, barber and exact local start time. The saved
-                appointment stays in place if the new time is unavailable.
-              </DialogDescription>
-              {error && (
-                <p role="alert" tabIndex={-1}>
-                  {error}
-                </p>
-              )}
-              {error && /changed|current service/i.test(error) && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    if (/Appointment changed/i.test(error)) {
-                      setReloadConfirmation(true);
-                    } else {
-                      setDraft({
-                        values,
-                        baseline,
-                        recoveryKey: newRecoveryKey(),
-                        submittedPayload: null,
-                        appointmentId: appointment.id,
-                        operationMode: "move",
-                      });
-                      setMode(null);
-                      router.refresh();
-                    }
-                  }}
-                >
-                  Reload saved appointment and review
-                </Button>
-              )}
-              {uncertain ? (
-                <Button type="button" disabled={busy} onClick={retryMove}>
-                  {busy ? "Recovering…" : "Retry same operation"}
-                </Button>
-              ) : (
-                <form onSubmit={submitMove} className="grid gap-4">
-                  <label className="grid gap-1 text-sm">
-                    Service
-                    <select
-                      aria-label="Service"
-                      value={values.serviceId}
-                      disabled={busy}
-                      onChange={(event) =>
-                        update({ serviceId: event.target.value })
-                      }
-                      className="min-h-11 rounded-xl border border-border bg-background px-3"
-                    >
-                      {choices.services.map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.name} · ${item.priceUsd}
-                          {item.hidden
-                            ? " · saved service, no longer offered"
-                            : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="grid gap-1 text-sm">
-                    Barber
-                    <select
-                      aria-label="Barber"
-                      value={values.barberId}
-                      disabled={busy || !barbers.length}
-                      onChange={(event) =>
-                        update({ barberId: event.target.value })
-                      }
-                      className="min-h-11 rounded-xl border border-border bg-background px-3"
-                    >
-                      <option value="">Choose a barber…</option>
-                      {barbers.map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="grid gap-1 text-sm">
-                    Date
-                    <input
-                      aria-label="Date"
-                      type="date"
-                      required
-                      value={values.date}
-                      disabled={busy}
-                      onChange={(event) =>
-                        update({ date: event.target.value, occurrence: "" })
-                      }
-                      className="min-h-11 rounded-xl border border-border bg-background px-3"
-                    />
-                  </label>
-                  <label className="grid gap-1 text-sm">
-                    Start time
-                    <input
-                      aria-label="Start time"
-                      type="time"
-                      required
-                      value={values.time}
-                      disabled={busy}
-                      onChange={(event) =>
-                        update({ time: event.target.value, occurrence: "" })
-                      }
-                      className="min-h-11 rounded-xl border border-border bg-background px-3"
-                    />
-                  </label>
-                  {starts.length > 1 && (
-                    <label className="grid gap-1 text-sm">
-                      Time occurrence
-                      <select
-                        aria-label="Time occurrence"
-                        required
-                        value={values.occurrence}
-                        onChange={(event) =>
-                          update({ occurrence: event.target.value })
-                        }
-                      >
-                        <option value="">Choose an occurrence…</option>
-                        {starts.map((item) => (
-                          <option key={item.startAt} value={item.startAt}>
-                            {item.offset} · {item.startAt}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
-                  <p className="text-xs text-muted-foreground">
-                    {service
-                      ? `${service.durationMinutes} minutes · $${service.priceUsd} USD · ${choices.timeZone}`
-                      : `Select a service · ${choices.timeZone}`}
-                  </p>
-                  <Button type="submit" disabled={busy || !dirty}>
-                    {busy ? "Saving…" : "Save move"}
-                  </Button>
-                </form>
-              )}
-            </>
+            <AppointmentMoveDialogContent
+              choices={choices}
+              values={values}
+              service={service}
+              barbers={barbers}
+              starts={starts}
+              dirty={dirty}
+              busy={busy}
+              error={error}
+              uncertain={uncertain}
+              onUpdate={update}
+              onSubmit={submitMove}
+              onRetry={retryMove}
+              onReloadSaved={() => setReloadConfirmation(true)}
+              onReviewCurrentOffer={() => {
+                setDraft({
+                  values,
+                  baseline,
+                  recoveryKey: createRecoveryKey(),
+                  submittedPayload: null,
+                  appointmentId: appointment.id,
+                  operationMode: "move",
+                });
+                setMode(null);
+                router.refresh();
+              }}
+            />
           ) : (
-            <>
-              <DialogTitle className="max-w-full pr-8">
-                Cancel appointment?
-              </DialogTitle>
-              <DialogDescription>
-                This releases the scheduled time and keeps the cancelled
-                appointment details and management link available until their
-                existing expiry.
-              </DialogDescription>
-              {error && <p role="alert">{error}</p>}
-              {cancelUncertain ? (
-                <Button type="button" disabled={busy} onClick={retryCancel}>
-                  {busy ? "Recovering…" : "Retry same operation"}
-                </Button>
-              ) : (
-                <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-                  <Button
-                    variant="outline"
-                    disabled={busy}
-                    onClick={() => setMode(null)}
-                  >
-                    Keep appointment
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    disabled={busy}
-                    onClick={cancel}
-                  >
-                    {busy ? "Cancelling…" : "Confirm cancellation"}
-                  </Button>
-                </div>
-              )}
-            </>
+            <AppointmentCancelDialogContent
+              error={error}
+              busy={busy}
+              uncertain={cancelUncertain}
+              onRetry={retryCancel}
+              onKeep={() => setMode(null)}
+              onConfirm={cancel}
+            />
           )}
         </DialogContent>
       </Dialog>

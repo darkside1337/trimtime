@@ -21,6 +21,7 @@ import {
   type OwnerAppointmentDraftValues,
 } from "./owner-calendar-context";
 import { useAppointmentDismissal } from "../hooks/use-appointment-dismissal";
+import { createRecoveryKey } from "./recovery-key";
 
 type Values = OwnerAppointmentDraftValues;
 
@@ -67,7 +68,7 @@ function AppointmentFormContent({
   };
   const baseline = useRef<Values>(draft?.baseline ?? initialValues);
   const recovery = useRef<{ key: string; submitted: string | null }>({
-    key: draft?.recoveryKey ?? makeRecoveryKey(),
+    key: draft?.recoveryKey ?? createRecoveryKey(),
     submitted: draft?.submittedPayload ?? null,
   });
   const [values, setValues] = useState<Values>(
@@ -163,7 +164,7 @@ function AppointmentFormContent({
       recovery.current.submitted !== null &&
       recovery.current.submitted !== serialized
     )
-      recovery.current.key = makeRecoveryKey();
+      recovery.current.key = createRecoveryKey();
     payload.recoveryKey = recovery.current.key;
     recovery.current.submitted = serialized;
     setDraft({
@@ -187,7 +188,7 @@ function AppointmentFormContent({
         : "No email provided · No email confirmation will be sent.";
       setSavedMessage(`Appointment saved. ${emailCopy}`);
       setErrorCode(null);
-      recovery.current.key = makeRecoveryKey();
+      recovery.current.key = createRecoveryKey();
       recovery.current.submitted = null;
       clearDraft();
       const destination = new URL(calendarHref, window.location.origin);
@@ -620,13 +621,4 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
       <strong className="text-right">{value}</strong>
     </div>
   );
-}
-
-function makeRecoveryKey() {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return btoa(String.fromCharCode(...bytes))
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/, "");
 }

@@ -241,6 +241,33 @@ test("owner move makes a changed service offer explicit before retry", async ({
   ).toBeVisible();
 });
 
+test("owner move keeps a hidden saved service available with an explicit label", async ({
+  page,
+  context,
+  owners,
+  database,
+}) => {
+  const owner = await owners(context, { shop: true, createSetup: true });
+  const bookingId = await createOwnerAppointment(owner);
+  await database.pool.query("UPDATE services SET offered=false WHERE id=$1", [
+    owner.serviceId,
+  ]);
+  await page.goto(`${ownerOrigin}/appointments/${bookingId}`);
+  await page.getByRole("button", { name: "Move appointment" }).click();
+  const service = page.getByLabel("Service");
+  await expect(service).toHaveValue(owner.serviceId!);
+  await expect(service.locator("option:checked")).toContainText(
+    "saved service, no longer offered",
+  );
+  await page.getByLabel("Start time").fill("10:07");
+  await page.getByRole("button", { name: "Save move" }).click();
+  await expect(
+    page.getByRole("main").getByRole("definition").filter({
+      hasText: "10:07–10:42",
+    }),
+  ).toBeVisible();
+});
+
 test("owner move preserves its draft when the booking revision becomes stale", async ({
   page,
   context,

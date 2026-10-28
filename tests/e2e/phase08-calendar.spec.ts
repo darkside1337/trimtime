@@ -786,6 +786,66 @@ test("server validation feedback stays attached to its field and keeps the enter
   expect(rows[0].count).toBe(0);
 });
 
+test("changed creation details rotate the recovery key after an interrupted response", async ({
+  page,
+  context,
+  owners,
+  database,
+}) => {
+  const owner = await owners(context, { shop: true, createSetup: true });
+  await page.goto(`${ownerOrigin}/?date=2026-11-02&view=day`);
+  await page.getByRole("link", { name: "New appointment" }).click();
+  await page.getByLabel("Customer name").fill("Rotation Guest");
+  await page.getByLabel(/^Service/).selectOption({ value: owner.serviceId! });
+  await page
+    .getByRole("dialog")
+    .locator("form select")
+    .nth(1)
+    .selectOption({ value: owner.barberId! });
+  await page
+    .getByRole("dialog")
+    .locator('form input[name="date"]')
+    .fill("2026-11-03");
+  await page.getByLabel("Start time").fill("13:07");
+  let interrupted = false;
+  await page.route("**/*", async (route) => {
+    const request = route.request();
+    if (
+      !interrupted &&
+      request.method() === "POST" &&
+      request.headers()["next-action"]
+    ) {
+      interrupted = true;
+      await route.fetch();
+      await route.abort();
+      return;
+    }
+    await route.continue();
+  });
+  await page.getByRole("button", { name: "Create appointment" }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "response was interrupted",
+  );
+  await page.unrouteAll({ behavior: "wait" });
+  await page.getByLabel("Start time").fill("14:07");
+  await page.getByRole("button", { name: "Create appointment" }).click();
+  await expect(page).toHaveURL(/created=[0-9a-f-]{36}/);
+  const { rows } = await database.pool.query(
+    "SELECT start_at FROM bookings WHERE shop_id=$1 ORDER BY start_at",
+    [owner.shopId],
+  );
+  expect(
+    rows.map((row) =>
+      new Intl.DateTimeFormat("en-GB", {
+        timeZone: "America/New_York",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      }).format(new Date(row.start_at)),
+    ),
+  ).toEqual(["13:07", "14:07"]);
+});
+
 test("appointment entry traps keyboard focus and respects reduced motion with a 3:1 focus ring @device", async ({
   page,
   context,
