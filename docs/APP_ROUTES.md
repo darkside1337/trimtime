@@ -53,6 +53,8 @@ Customer accounts, staff dashboards, payments, public booking lookup/recovery, a
 
 **Phase 08 route implementation (2026-10-27):** The canonical appointment paths above now have intercepted and standalone presentations. Calendar query state is represented in `date`, `view`, and optional `barber` parameters; appointments use the existing `/appointments/{appointmentId}` path. No public booking or customer-management route changed.
 
+**Phase 09 route implementation (2026-10-27):** Owner move/cancel actions remain on the existing appointment details route and reuse its Dialog/standalone presentations. Recent owner change events and customer-message status appear on the existing Activity route; resource/schedule conflict resolution links return to the owning Services, Barbers, or Availability page. No route was added. Automated local coverage exists, while the required executor walkthrough and Mailpit cancellation/outage evidence remain pending.
+
 ## 4. Maintenance
 
 Keep approved and proposed entries distinct. When a route or page boundary changes, record the explicit decision here and update affected journey, interaction, and architecture references. Route approval does not establish runtime acceptance; follow the PRD/SPEC verification scenarios before claiming implemented behavior.

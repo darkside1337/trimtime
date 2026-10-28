@@ -415,7 +415,7 @@ Break labels and dated reasons retain read-only sample fields with explicit no-s
 
 **Phase 09 reference context:** Appointment details for explicit move/cancel; reuse Services, Barbers and Availability from the shared index for protected-edit feedback.
 
-**Coverage and evidence limits:** Late-state permissions and stale-edit outcomes stay unresolved. Confirm failed replacement/input-preservation presentation in both Dialog and standalone views; fixture conflict lists do not prove real conflict resolution.
+**Coverage and evidence limits:** Phase 09 implementation selects move/cancel only for confirmed appointments whose saved end is after transaction time; ongoing bookings qualify. Stale revisions preserve the user's draft and require explicit reload/review. Automated desktop/tablet/phone browser coverage is recorded, but the executor has not completed the required Dialog/standalone visual and keyboard walkthrough, real conflict resolution, cancellation Mailpit capture, or outage/restart recheck. Conflict fixtures and screenshots do not prove those outcomes. Physical-device and dedicated screen-reader evidence remain unverified.
 
 **Phase 12 reference context:** Appointment details for future cancelled details and restoration in both presentations.
 
