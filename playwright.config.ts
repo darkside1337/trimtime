@@ -3,7 +3,7 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: true,
-  workers: process.env.TRIMTIME_E2E_EMAIL_MODE === "mailpit-double" ? 1 : 8,
+  workers: process.env.TRIMTIME_E2E_EMAIL_MODE === "mailpit-double" ? 1 : 4,
   reporter: "list",
   use: {
     baseURL: "http://localhost:3100",
