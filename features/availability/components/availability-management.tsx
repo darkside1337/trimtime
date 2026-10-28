@@ -1,18 +1,21 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { OwnerDiscardDialog } from "@/components/owner-discard-dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { DateAvailabilityManagement } from "./date-availability-management";
+import {
+  DateAvailabilityManagement,
+  type AvailabilityDateManagementHandle,
+} from "./date-availability-management";
 import { useRecurringSchedule } from "../hooks/use-recurring-schedule";
 import { useDiscardGuard } from "../hooks/use-discard-guard";
-import { isSameTarget, type ScheduleTarget, type Section } from "../types";
 import {
-  emitAvailabilityAdd,
-  emitAvailabilityEdit,
-  subscribeAvailabilityChanged,
-} from "../availability-events";
+  isSameTarget,
+  scheduleTargetFromValue,
+  type ScheduleTarget,
+  type Section,
+} from "../types";
 import { SlotPreviewPanel } from "./slot-preview-panel";
 import { UpcomingSavedExceptions } from "./upcoming-saved-exceptions";
 import { RecurringHoursPanel } from "./recurring-hours-panel";
@@ -51,6 +54,7 @@ export function AvailabilityManagement({
   initialOverview: AvailabilityOverview;
 }) {
   const [previewInvalidationKey, setPreviewInvalidationKey] = useState(0);
+  const dateManagementRef = useRef<AvailabilityDateManagementHandle>(null);
   const invalidatePreview = useCallback(() => {
     setPreviewInvalidationKey((key) => key + 1);
   }, []);
@@ -69,10 +73,6 @@ export function AvailabilityManagement({
   const [section, setSection] = useState<Section>("shop");
   const discardGuard = useDiscardGuard(dirty);
 
-  useEffect(() => {
-    const clearPreview = () => invalidatePreview();
-    return subscribeAvailabilityChanged(clearPreview);
-  }, [invalidatePreview]);
   const activeBarbers = data.barbers.filter((item) => !item.archived);
   const weeklyMinutes = weeklyOpenMinutes(data.shop.week);
   const activeBarberCount = data.barbers.filter(
@@ -88,7 +88,7 @@ export function AvailabilityManagement({
     const sameTarget = isSameTarget(next.target, target);
     if (!sameTarget || discard) recurring.applyTarget(next.target);
     setSection(next.section);
-    if (next.addDate) emitAvailabilityAdd();
+    if (next.addDate) dateManagementRef.current?.openAdd();
   }
 
   function navigate(
@@ -134,9 +134,9 @@ export function AvailabilityManagement({
   function handleEditException(
     exception: AvailabilityOverview["exceptions"][number],
   ) {
-    emitAvailabilityEdit({
+    dateManagementRef.current?.editException({
       date: exception.date,
-      target: exception.target,
+      target: scheduleTargetFromValue(exception.target),
       view: exception.kind === "block" ? "block" : "date",
     });
   }
@@ -235,7 +235,11 @@ export function AvailabilityManagement({
         tabIndex={0}
         hidden={section !== "dates"}
       >
-        <DateAvailabilityManagement initial={data} />
+        <DateAvailabilityManagement
+          ref={dateManagementRef}
+          initial={data}
+          onAvailabilityChanged={invalidatePreview}
+        />
         <UpcomingSavedExceptions
           exceptions={initialOverview.exceptions}
           onEdit={handleEditException}

@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useImperativeHandle,
+  useMemo,
+  useState,
+  type Ref,
+} from "react";
 import { useRouter } from "next/navigation";
 import { OwnerDiscardDialog } from "@/components/owner-discard-dialog";
 import { BookingConflictList } from "@/components/booking-conflict-list";
@@ -13,27 +19,30 @@ import { useDateAvailability } from "../hooks/use-date-availability";
 import { useTimeBlockDraft } from "../hooks/use-time-block-draft";
 import { useDateOverrideDraft } from "../hooks/use-date-override-draft";
 import { useDiscardGuard } from "../hooks/use-discard-guard";
-import {
-  emitAvailabilityChanged,
-  subscribeAvailabilityAdd,
-  subscribeAvailabilityEdit,
-} from "../availability-events";
 import { BarberTimeBlockEditor } from "./barber-time-block-editor";
 import { DateExceptionDialog } from "./date-exception-dialog";
 import { RemoveBlockDialog } from "./remove-block-dialog";
-import {
-  barberIdForTarget,
-  isSameTarget,
-  scheduleTargetFromValue,
-  type ScheduleTarget,
-} from "../types";
+import { barberIdForTarget, isSameTarget, type ScheduleTarget } from "../types";
 
 type ExceptionView = "date" | "block";
 
+export type AvailabilityDateManagementHandle = {
+  openAdd: () => void;
+  editException: (request: {
+    date: string;
+    target: ScheduleTarget;
+    view: ExceptionView;
+  }) => void;
+};
+
 export function DateAvailabilityManagement({
   initial,
+  ref,
+  onAvailabilityChanged,
 }: {
   initial: AvailabilityData;
+  ref?: Ref<AvailabilityDateManagementHandle>;
+  onAvailabilityChanged: () => void;
 }) {
   const router = useRouter();
   const [date, setDate] = useState("");
@@ -89,14 +98,6 @@ export function DateAvailabilityManagement({
     isSameTarget(loaded.target, dialogTarget),
   );
 
-  useEffect(() => {
-    return subscribeAvailabilityAdd(() => {
-      setDialogDate(date);
-      setDialogTarget(target);
-      setAddDialogOpen(true);
-    });
-  }, [date, target]);
-
   const load = useCallback(
     async (dateValue: string, targetValue: ScheduleTarget) => {
       const result = await loadAvailability(dateValue, targetValue);
@@ -130,17 +131,21 @@ export function DateAvailabilityManagement({
   );
   const guardDiscard = discardGuard.guard;
 
-  useEffect(() => {
-    return subscribeAvailabilityEdit((detail) => {
-      const next = {
-        date: detail.date,
-        target: scheduleTargetFromValue(detail.target),
-        view: detail.view ?? "date",
-      };
-      const open = () => openSelection(next, next.view);
-      guardDiscard(open, open, true);
-    });
-  }, [guardDiscard, openSelection]);
+  useImperativeHandle(
+    ref,
+    () => ({
+      openAdd() {
+        setDialogDate(date);
+        setDialogTarget(target);
+        setAddDialogOpen(true);
+      },
+      editException(next) {
+        const open = () => openSelection(next, next.view);
+        guardDiscard(open, open, true);
+      },
+    }),
+    [date, guardDiscard, openSelection, target],
+  );
 
   const reload = () => load(date, target);
 
@@ -148,7 +153,7 @@ export function DateAvailabilityManagement({
     successMessage?: string,
     reloadFailedMessage?: string,
   ) {
-    emitAvailabilityChanged();
+    onAvailabilityChanged();
     router.refresh();
     if (await reload()) {
       if (successMessage) setMessage(successMessage);

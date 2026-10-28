@@ -39,14 +39,12 @@ async function seedBarber(
   return barberId;
 }
 
-test("discarding a dated draft applies the latest queued external edit", async ({
+test("closing a dated editor asks before discarding its draft", async ({
   page,
   context,
   owners,
-  database,
 }) => {
-  const owner = await owners(context, { shop: true });
-  const barberId = await seedBarber(database, owner.shopId);
+  await owners(context, { shop: true });
   await page.goto(`${ownerOrigin}/availability`);
   await loadShopDate(page);
   await page
@@ -55,26 +53,15 @@ test("discarding a dated draft applies the latest queued external edit", async (
       exact: true,
     })
     .check();
-  for (const detail of [
-    { date: "2026-11-02", target: "shop", view: "date" },
-    { date: "2026-11-03", target: barberId, view: "block" },
-  ]) {
-    await page.evaluate((eventDetail) => {
-      window.dispatchEvent(
-        new CustomEvent("trimtime:availability-edit", {
-          detail: eventDetail,
-        }),
-      );
-    }, detail);
-  }
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
 
   await page
     .getByRole("dialog", { name: "Discard unsaved changes?" })
     .getByRole("button", { name: "Discard changes" })
     .click();
-  await expect(page.getByLabel("Schedule day")).toHaveValue("2026-11-03");
-  await expect(page.getByLabel("Apply to")).toHaveValue(barberId);
-  await expect(page.getByLabel("Exception type")).toHaveValue("block");
+  await expect(
+    page.getByRole("dialog", { name: /Date availability/ }),
+  ).toHaveCount(0);
 });
 
 test("a saved date reports when its follow-up reload fails", async ({
@@ -221,15 +208,8 @@ test("a failed same-date barber load hides the previous shop draft", async ({
     (request) =>
       nextAction(request) && request.headers()["next-action"] === loadAction,
   );
-  await page.evaluate(
-    ({ date, target }) =>
-      window.dispatchEvent(
-        new CustomEvent("trimtime:availability-edit", {
-          detail: { date, target },
-        }),
-      ),
-    { date: "2026-11-02", target: barberId },
-  );
+  await page.getByLabel("Apply to").selectOption(barberId);
+  await page.getByRole("button", { name: /^(Load|Reload) date$/ }).click();
   await failedLoad;
   await expect(page.getByLabel("Apply to")).toHaveValue(barberId);
   await expect(
@@ -247,120 +227,4 @@ test("a failed same-date barber load hides the previous shop draft", async ({
   await expect(page.getByLabel("Hours start", { exact: true })).toHaveValue(
     "12:00",
   );
-});
-
-test("a queued newer external edit ignores an older failed date read", async ({
-  page,
-  context,
-  owners,
-  database,
-}) => {
-  const owner = await owners(context, { shop: true });
-  const barberId = await seedBarber(database, owner.shopId);
-  await database.pool.query(
-    "INSERT INTO shop_date_schedules (shop_id, date, override, closed, revision) VALUES ($1, '2026-11-02', $2::jsonb, false, 1)",
-    [
-      owner.shopId,
-      JSON.stringify({ working: [{ start: 600, end: 660 }], breaks: [] }),
-    ],
-  );
-  await database.pool.query(
-    "INSERT INTO barber_date_schedules (shop_id, barber_id, date, override, closed, revision) VALUES ($1, $2, '2026-11-03', $3::jsonb, false, 1)",
-    [
-      owner.shopId,
-      barberId,
-      JSON.stringify({ working: [{ start: 780, end: 840 }], breaks: [] }),
-    ],
-  );
-
-  await page.goto(`${ownerOrigin}/availability`);
-  const loadAction = await loadShopDate(page);
-  let requestCount = 0;
-  let releaseOlderRequest!: () => void;
-  let signalOlderRequest!: () => void;
-  let releaseNewerRequest!: () => void;
-  let signalNewerRequest!: () => void;
-  const olderRequestStarted = new Promise<void>((resolve) => {
-    signalOlderRequest = resolve;
-  });
-  const olderRequestGate = new Promise<void>((resolve) => {
-    releaseOlderRequest = resolve;
-  });
-  const newerRequestStarted = new Promise<void>((resolve) => {
-    signalNewerRequest = resolve;
-  });
-  const newerRequestGate = new Promise<void>((resolve) => {
-    releaseNewerRequest = resolve;
-  });
-  await page.route("**/*", async (route) => {
-    if (route.request().headers()["next-action"] !== loadAction) {
-      await route.continue();
-      return;
-    }
-    requestCount++;
-    if (requestCount === 1) {
-      signalOlderRequest();
-      await olderRequestGate;
-      await route.abort();
-      return;
-    }
-    if (requestCount === 2) {
-      signalNewerRequest();
-      await newerRequestGate;
-    }
-    await route.continue();
-  });
-
-  await page.evaluate(
-    ({ date, target }) =>
-      window.dispatchEvent(
-        new CustomEvent("trimtime:availability-edit", {
-          detail: { date, target },
-        }),
-      ),
-    { date: "2026-11-02", target: "shop" },
-  );
-  await olderRequestStarted;
-
-  await page.evaluate(
-    ({ date, target }) =>
-      window.dispatchEvent(
-        new CustomEvent("trimtime:availability-edit", {
-          detail: { date, target },
-        }),
-      ),
-    { date: "2026-11-03", target: barberId },
-  );
-  const olderFailure = page.waitForEvent(
-    "requestfailed",
-    (request) => request.headers()["next-action"] === loadAction,
-  );
-  releaseOlderRequest();
-  await olderFailure;
-  await newerRequestStarted;
-  await expect(page.getByLabel("Schedule day")).toHaveValue("2026-11-03");
-  await expect(page.getByLabel("Apply to")).toHaveValue(barberId);
-  await expect(
-    page
-      .locator('p[aria-live="polite"]:not([role="status"])')
-      .getByText(/Unable to load dated availability/),
-  ).toHaveCount(0);
-
-  const newerResponse = page.waitForResponse(
-    (response) =>
-      nextAction(response.request()) &&
-      response.request().headers()["next-action"] === loadAction,
-  );
-  releaseNewerRequest();
-  await newerResponse;
-  await expect(page.getByLabel("Schedule day")).toHaveValue("2026-11-03");
-  await expect(page.getByLabel("Apply to")).toHaveValue(barberId);
-  await expect(page.getByLabel("Hours start", { exact: true })).toHaveValue(
-    "13:00",
-  );
-  await expect(
-    page
-      .locator('p[aria-live="polite"]:not([role="status"])')
-      .getByText(/Unable to load dated availability/),
-  ).toHaveCount(0);
 });

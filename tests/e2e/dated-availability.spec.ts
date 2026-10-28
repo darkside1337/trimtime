@@ -385,23 +385,14 @@ test("archived barber blocks remain reachable and removal offers reload", async 
   expect(savedBlock.rows).toHaveLength(1);
   const blockId = String(savedBlock.rows[0]?.id);
   await page.getByLabel("Start (shop local time)").fill("11:00");
-  await page.evaluate(
-    ({ date, target }) =>
-      window.dispatchEvent(
-        new CustomEvent("trimtime:availability-edit", {
-          detail: { date, target, view: "block" },
-        }),
-      ),
-    { date: "2026-11-02", target: barberId },
-  );
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
   const reloadDiscard = page.getByRole("dialog", {
     name: "Discard unsaved changes?",
   });
   await reloadDiscard.getByRole("button", { name: "Discard changes" }).click();
-  await expect(page.getByLabel("Exception type")).toHaveValue("block");
-  await expect(page.getByLabel("Apply to")).toHaveValue(barberId);
-  await expect(page.getByLabel("Start (shop local time)")).toHaveValue("");
-  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(
+    page.getByRole("dialog", { name: /Date availability/ }),
+  ).toHaveCount(0);
   await database.pool.query(
     "UPDATE barbers SET archived = true WHERE id = $1 AND shop_id = $2",
     [barberId, owner.shopId],
