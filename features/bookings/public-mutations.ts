@@ -3,26 +3,18 @@ import { randomUUID } from "node:crypto";
 import { Temporal } from "temporal-polyfill";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { bookings } from "@/db/schema/bookings";
-import { notificationWork } from "@/db/schema/notification-work";
 import { resolveEmailConfig } from "@/features/notifications/config";
-import { notificationContentIdentity } from "@/features/notifications/content-identity";
 import { customerEmailSummary } from "@/features/notifications/customer-summary";
 import { publicRateEvents, publicRateKeys } from "@/db/schema/public-limits";
 import { occupiedIntervals } from "@/db/schema/occupancy";
-import { shops } from "@/db/schema/shops";
 import type { ActionResult } from "@/lib/action-result";
 import { calculateSlots } from "@/features/availability/slots";
 import { resolveScheduleForDate } from "@/features/availability/schedule-resolution";
 import { createPublicBookingSchema } from "./schemas";
-import {
-  canonicalManageUrl,
-  createBearerSecret,
-  encryptCapability,
-  hashSecret,
-} from "./capabilities";
+import { canonicalManageUrl, hashSecret } from "./capabilities";
 import {
   findCreationReplay,
+  persistBookingCreation,
   resolveCreationOffer,
 } from "./creation-primitives";
 import type {
@@ -324,96 +316,58 @@ export async function createPublicBooking(
           "Choose another available time.",
         );
 
-      const bookingId = randomUUID();
-      const occupancyId = randomUUID();
-      const token = createBearerSecret();
-      const encrypted = encryptCapability(token, `${shop.id}:${bookingId}`);
-      const consentAt = parsed.data.contact.whatsappOptIn ? now : null;
-      await tx.insert(occupiedIntervals).values({
-        id: occupancyId,
-        shopId: shop.id,
-        barberId: barber.id,
-        startAt: start,
-        endAt: end,
-      });
-      await tx.insert(bookings).values({
-        id: bookingId,
-        shopId: shop.id,
-        serviceId: service.id,
-        barberId: barber.id,
-        occupancyId,
-        status: "confirmed",
-        startAt: start,
-        endAt: end,
-        serviceName: service.name,
-        servicePriceUsd: service.priceUsd,
-        serviceDurationMinutes: duration,
-        barberName: barber.name,
-        customerName: parsed.data.contact.name,
-        customerEmail: parsed.data.contact.email,
-        customerPhone: parsed.data.contact.phone ?? null,
-        whatsappOptIn: parsed.data.contact.whatsappOptIn,
-        whatsappConsentAt: consentAt,
-        createdAt: now,
-        capabilityHash: hashSecret(token),
-        capabilityCiphertext: encrypted.ciphertext,
-        capabilityKeyId: encrypted.keyId,
-        recoveryKeyHash: hashSecret(parsed.data.recoveryKey),
-        recoveryPayloadDigest: digest,
-      });
-      const contentIdentity = notificationContentIdentity({
-        id: bookingId,
-        startAt: start,
-        endAt: end,
-        serviceName: service.name,
-        servicePriceUsd: service.priceUsd,
-        serviceDurationMinutes: duration,
-        barberName: barber.name,
-        customerName: parsed.data.contact.name,
-        customerEmail: parsed.data.contact.email,
-        customerPhone: parsed.data.contact.phone ?? null,
-      });
-      const work: (typeof notificationWork.$inferInsert)[] = [
-        {
-          id: randomUUID(),
-          bookingId,
-          kind: "customer_confirmation",
-          channel: "email",
-          status:
-            emailConfig.mode === "mailpit" ? "not_attempted" : "unavailable",
-          recipient: parsed.data.contact.email,
-          contentIdentity,
-          reason: emailConfig.mode === "mailpit" ? null : emailConfig.reason,
+      const emailStatus =
+        emailConfig.mode === "mailpit" ? "not_attempted" : "unavailable";
+      const emailReason =
+        emailConfig.mode === "mailpit" ? null : emailConfig.reason;
+      const { bookingId, token } = await persistBookingCreation(tx, {
+        shop: {
+          id: shop.id,
+          timeZoneLockedAt: shop.time_zone_locked_at,
         },
-        {
-          id: randomUUID(),
-          bookingId,
-          kind: "owner_alert",
-          channel: "email",
-          status:
-            emailConfig.mode === "mailpit" ? "not_attempted" : "unavailable",
-          recipient: shop.owner_email,
-          contentIdentity,
-          reason: emailConfig.mode === "mailpit" ? null : emailConfig.reason,
+        service,
+        barber,
+        start,
+        end,
+        durationMinutes: duration,
+        contact: {
+          name: parsed.data.contact.name,
+          email: parsed.data.contact.email,
+          phone: parsed.data.contact.phone ?? null,
+          whatsappOptIn: parsed.data.contact.whatsappOptIn,
         },
-      ];
-      if (parsed.data.contact.whatsappOptIn)
-        work.push({
-          id: randomUUID(),
-          bookingId,
-          kind: "customer_confirmation",
-          channel: "whatsapp",
-          status: "unavailable",
-          recipient: parsed.data.contact.phone ?? null,
-          contentIdentity,
-          reason: "channel_unavailable",
-        });
-      await tx.insert(notificationWork).values(work);
-      if (!shop.time_zone_locked_at)
-        await tx
-          .update(shops)
-          .set({ timeZoneLockedAt: now })
-          .where(eq(shops.id, shop.id));
+        creationSource: "public",
+        recoveryKey: parsed.data.recoveryKey,
+        payloadDigest: digest,
+        now,
+        notifications: [
+          {
+            kind: "customer_confirmation",
+            channel: "email",
+            status: emailStatus,
+            recipient: parsed.data.contact.email,
+            reason: emailReason,
+          },
+          {
+            kind: "owner_alert",
+            channel: "email",
+            status: emailStatus,
+            recipient: shop.owner_email,
+            reason: emailReason,
+          },
+          ...(parsed.data.contact.whatsappOptIn
+            ? [
+                {
+                  kind: "customer_confirmation" as const,
+                  channel: "whatsapp" as const,
+                  status: "unavailable" as const,
+                  recipient: parsed.data.contact.phone ?? null,
+                  reason: "channel_unavailable",
+                },
+              ]
+            : []),
+        ],
+      });
       const receipt = await receiptFor(
         tx,
         bookingId,

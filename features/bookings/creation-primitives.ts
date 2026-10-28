@@ -1,9 +1,19 @@
 import "server-only";
+import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
+import { bookings } from "@/db/schema/bookings";
 import { barberServices, barbers, services } from "@/db/schema/catalog";
+import { notificationWork } from "@/db/schema/notification-work";
 import { occupiedIntervals } from "@/db/schema/occupancy";
-import { decryptCapability, hashSecret } from "./capabilities";
+import { shops } from "@/db/schema/shops";
+import { notificationContentIdentity } from "@/features/notifications/content-identity";
+import {
+  createBearerSecret,
+  decryptCapability,
+  encryptCapability,
+  hashSecret,
+} from "./capabilities";
 import { fixedBookingPrice } from "./money";
 
 export type BookingTransaction = Parameters<
@@ -159,4 +169,107 @@ export async function findOccupyingInterval(
     )
     .limit(1);
   return overlap?.id;
+}
+
+type CreationNotification = {
+  kind: "customer_confirmation" | "owner_alert";
+  channel: "email" | "whatsapp";
+  status: "unavailable" | "not_attempted" | "skipped";
+  recipient: string | null;
+  reason: string | null;
+};
+
+type CreationPersistence = {
+  shop: { id: string; timeZoneLockedAt: Date | null };
+  service: typeof services.$inferSelect;
+  barber: typeof barbers.$inferSelect;
+  start: Date;
+  end: Date;
+  durationMinutes: number;
+  contact: {
+    name: string;
+    email: string | null;
+    phone: string | null;
+    whatsappOptIn: boolean;
+  };
+  creationSource: "public" | "owner";
+  recoveryKey: string;
+  payloadDigest: string;
+  notifications: CreationNotification[];
+  now: Date;
+};
+
+/**
+ * Persists the reservation, capability, notification work, and first zone lock.
+ * Callers keep source-specific replay, validation, scheduling, receipt, and
+ * notification-channel policy around this shared transaction step.
+ */
+export async function persistBookingCreation(
+  tx: BookingTransaction,
+  params: CreationPersistence,
+): Promise<{ bookingId: string; token: string }> {
+  const bookingId = randomUUID();
+  const occupancyId = randomUUID();
+  const token = createBearerSecret();
+  const encrypted = encryptCapability(token, `${params.shop.id}:${bookingId}`);
+  const consentAt = params.contact.whatsappOptIn ? params.now : null;
+  await tx.insert(occupiedIntervals).values({
+    id: occupancyId,
+    shopId: params.shop.id,
+    barberId: params.barber.id,
+    startAt: params.start,
+    endAt: params.end,
+  });
+  await tx.insert(bookings).values({
+    id: bookingId,
+    shopId: params.shop.id,
+    serviceId: params.service.id,
+    barberId: params.barber.id,
+    occupancyId,
+    status: "confirmed",
+    startAt: params.start,
+    endAt: params.end,
+    serviceName: params.service.name,
+    servicePriceUsd: params.service.priceUsd,
+    serviceDurationMinutes: params.durationMinutes,
+    barberName: params.barber.name,
+    customerName: params.contact.name,
+    customerEmail: params.contact.email,
+    customerPhone: params.contact.phone,
+    whatsappOptIn: params.contact.whatsappOptIn,
+    whatsappConsentAt: consentAt,
+    createdAt: params.now,
+    capabilityHash: hashSecret(token),
+    capabilityCiphertext: encrypted.ciphertext,
+    capabilityKeyId: encrypted.keyId,
+    recoveryKeyHash: hashSecret(params.recoveryKey),
+    recoveryPayloadDigest: params.payloadDigest,
+    creationSource: params.creationSource,
+  });
+  const contentIdentity = notificationContentIdentity({
+    id: bookingId,
+    startAt: params.start,
+    endAt: params.end,
+    serviceName: params.service.name,
+    servicePriceUsd: params.service.priceUsd,
+    serviceDurationMinutes: params.durationMinutes,
+    barberName: params.barber.name,
+    customerName: params.contact.name,
+    customerEmail: params.contact.email,
+    customerPhone: params.contact.phone,
+  });
+  await tx.insert(notificationWork).values(
+    params.notifications.map((notification) => ({
+      id: randomUUID(),
+      bookingId,
+      contentIdentity,
+      ...notification,
+    })),
+  );
+  if (!params.shop.timeZoneLockedAt)
+    await tx
+      .update(shops)
+      .set({ timeZoneLockedAt: params.now })
+      .where(eq(shops.id, params.shop.id));
+  return { bookingId, token };
 }

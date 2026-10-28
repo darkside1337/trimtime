@@ -228,7 +228,7 @@ describe("public booking operations", () => {
             .query(`SELECT count(*)::int AS count
             FROM pg_stat_activity WHERE datname=current_database()
               AND wait_event_type='Lock' AND pid<>pg_backend_pid()
-              AND query ILIKE '%shops%' AND query LIKE '%FOR UPDATE%'`);
+              AND query ILIKE '%shops%' AND query ILIKE '%for update%'`);
           expect(waiting.rows[0].count).toBeGreaterThanOrEqual(1);
         },
         { timeout: 5000, interval: 50 },
@@ -240,7 +240,7 @@ describe("public booking operations", () => {
             .query(`SELECT count(*)::int AS count
             FROM pg_stat_activity WHERE datname=current_database()
               AND wait_event_type='Lock' AND pid<>pg_backend_pid()
-              AND query ILIKE '%shops%' AND query LIKE '%FOR UPDATE%'`);
+              AND query ILIKE '%shops%' AND query ILIKE '%for update%'`);
           expect(waiting.rows[0].count).toBeGreaterThanOrEqual(2);
         },
         { timeout: 5000, interval: 50 },
@@ -368,6 +368,96 @@ describe("public booking operations", () => {
         )
       ).rows[0].n,
     ).toBe(1);
+  });
+
+  it("keeps the first shop zone lock and source channels across public and owner creation", async () => {
+    const ids = await fixture();
+    const publicResult = await createPublicBooking(
+      { shopId: ids.shopId },
+      input(ids),
+    );
+    expect(publicResult).toMatchObject({ success: true });
+    if (!publicResult.success) return;
+    const firstLock = (
+      await database.pool.query(
+        "SELECT time_zone_locked_at FROM shops WHERE id=$1",
+        [ids.shopId],
+      )
+    ).rows[0].time_zone_locked_at as Date;
+
+    vi.setSystemTime(new Date("2026-11-02T09:00:00Z"));
+    const ownerResult = await createOwnerBooking(ids.context, {
+      serviceId: ids.serviceId,
+      barberId: ids.barberId,
+      startAt: "2026-11-02T11:00:00.000Z",
+      reviewedOffer: { name: "Cut", priceUsd: "25.00", durationMinutes: "30" },
+      contact: { name: "Walk-in Guest", whatsappOptIn: false },
+      recoveryKey: randomBytes(32).toString("base64url"),
+    });
+    expect(ownerResult).toMatchObject({ success: true });
+    if (!ownerResult.success) return;
+
+    const state = await database.pool.query(
+      `SELECT
+        (SELECT creation_source FROM bookings WHERE id=$1) AS public_source,
+        (SELECT creation_source FROM bookings WHERE id=$2) AS owner_source,
+        (SELECT time_zone_locked_at FROM shops WHERE id=$3) AS locked,
+        (SELECT count(*)::int FROM notification_work WHERE booking_id=$1 AND kind='owner_alert') AS public_owner_alerts,
+        (SELECT count(*)::int FROM notification_work WHERE booking_id=$2 AND kind='owner_alert') AS owner_owner_alerts,
+        (SELECT count(*)::int FROM notification_work WHERE booking_id=$1) AS public_work,
+        (SELECT count(*)::int FROM notification_work WHERE booking_id=$2) AS owner_work`,
+      [publicResult.data.bookingId, ownerResult.data.bookingId, ids.shopId],
+    );
+    expect(state.rows[0]).toEqual({
+      public_source: "public",
+      owner_source: "owner",
+      locked: firstLock,
+      public_owner_alerts: 1,
+      owner_owner_alerts: 0,
+      public_work: 2,
+      owner_work: 1,
+    });
+  });
+
+  it("rolls back public reservation intent and zone lock when work persistence fails", async () => {
+    const ids = await fixture();
+    const suffix = randomUUID().replaceAll("-", "");
+    const fn = `public_creation_reject_${suffix}`;
+    const trigger = `public_creation_reject_${suffix}`;
+    expect(ids.shopId).toMatch(/^[a-zA-Z0-9-]+$/);
+    await database.pool.query(
+      `CREATE FUNCTION ${fn}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF EXISTS (SELECT 1 FROM bookings b WHERE b.id = NEW.booking_id AND b.shop_id = '${ids.shopId}') THEN RAISE EXCEPTION 'public creation failure'; END IF; RETURN NEW; END; $$`,
+    );
+    await database.pool.query(
+      `CREATE TRIGGER ${trigger} BEFORE INSERT ON notification_work FOR EACH ROW EXECUTE FUNCTION ${fn}()`,
+    );
+    try {
+      await expect(
+        createPublicBooking({ shopId: ids.shopId }, input(ids)),
+      ).resolves.toMatchObject({
+        success: false,
+        error: { code: "UNAVAILABLE" },
+      });
+      const state = await database.pool.query(
+        `SELECT
+        (SELECT count(*)::int FROM bookings WHERE shop_id=$1) AS bookings,
+        (SELECT count(*)::int FROM occupied_intervals WHERE shop_id=$1) AS occupancy,
+        (SELECT count(*)::int FROM notification_work w JOIN bookings b ON b.id=w.booking_id WHERE b.shop_id=$1) AS work,
+        (SELECT time_zone_locked_at FROM shops WHERE id=$1) AS locked`,
+        [ids.shopId],
+      );
+      expect(state.rows[0]).toEqual({
+        bookings: 0,
+        occupancy: 0,
+        work: 0,
+        locked: null,
+      });
+    } finally {
+      await database.pool.query(
+        `DROP TRIGGER IF EXISTS ${trigger} ON notification_work`,
+      );
+      await database.pool.query(`DROP FUNCTION IF EXISTS ${fn}()`);
+    }
   });
 
   it("public creation replays only an identical request and keeps one reservation", async () => {
@@ -829,7 +919,7 @@ describe("public booking operations", () => {
           const waiting = await database.pool.query(
             `SELECT count(*)::int AS count FROM pg_stat_activity
              WHERE datname=current_database() AND wait_event_type='Lock'
-               AND query LIKE '%FROM shops WHERE owner_id=%FOR UPDATE%'`,
+               AND query ILIKE '%from "shops"%' AND query ILIKE '%for update%'`,
           );
           expect(waiting.rows[0].count).toBeGreaterThan(0);
         },
@@ -3913,7 +4003,7 @@ describe("public booking operations", () => {
               .query(`SELECT count(*)::int AS count
             FROM pg_stat_activity WHERE datname=current_database()
               AND wait_event_type='Lock' AND pid <> pg_backend_pid()
-              AND query LIKE '%FOR UPDATE%'`);
+              AND query ILIKE '%for update%'`);
             expect(waiting.rows[0].count).toBeGreaterThanOrEqual(2);
           },
           { timeout: 5000, interval: 50 },

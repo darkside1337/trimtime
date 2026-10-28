@@ -21,14 +21,11 @@ import {
   moveOwnerBookingSchema,
 } from "./schemas";
 import { fixedBookingPrice } from "./money";
-import {
-  createBearerSecret,
-  encryptCapability,
-  hashSecret,
-} from "./capabilities";
+import { hashSecret } from "./capabilities";
 import {
   findCreationReplay,
   findOccupyingInterval,
+  persistBookingCreation,
   resolveCreationOffer,
 } from "./creation-primitives";
 import {
@@ -632,6 +629,8 @@ export async function createOwnerBooking(
   let bookingId: string;
   try {
     const result = await db.transaction(async (tx) => {
+      // Retain SQL for the joined read: only the shops row is locked while the
+      // owner email is joined, matching the public creation lock scope.
       const locked = await tx.execute(
         sql`SELECT s.id,s.name,s.subdomain,s.public_contact,s.time_zone,s.time_zone_locked_at,u.email AS owner_email FROM shops s JOIN "user" u ON u.id=s.owner_id WHERE s.owner_id=${context.userId} FOR UPDATE OF s`,
       );
@@ -652,7 +651,6 @@ export async function createOwnerBooking(
           "Set up your shop before creating appointments.",
         );
       const now = new Date();
-      const keyHash = hashSecret(parsed.data.recoveryKey);
       const digest = hashSecret(
         JSON.stringify({
           serviceId: parsed.data.serviceId,
@@ -746,96 +744,56 @@ export async function createOwnerBooking(
           "UNAVAILABLE_INTERVAL",
           "That time was just taken. Choose another available time.",
         );
-      const id = randomUUID();
-      const occupancyId = randomUUID();
-      const token = createBearerSecret();
-      const encrypted = encryptCapability(token, `${shop.id}:${id}`);
-      const consentAt = parsed.data.contact.whatsappOptIn ? now : null;
-      await tx.insert(occupiedIntervals).values({
-        id: occupancyId,
-        shopId: shop.id,
-        barberId: barber.id,
-        startAt: start,
-        endAt: end,
-      });
-      await tx.insert(bookings).values({
-        id,
-        shopId: shop.id,
-        serviceId: service.id,
-        barberId: barber.id,
-        occupancyId,
-        status: "confirmed",
-        startAt: start,
-        endAt: end,
-        serviceName: service.name,
-        servicePriceUsd: service.priceUsd,
-        serviceDurationMinutes: duration,
-        barberName: barber.name,
-        customerName: parsed.data.contact.name,
-        customerEmail: parsed.data.contact.email ?? null,
-        customerPhone: parsed.data.contact.phone ?? null,
-        whatsappOptIn: parsed.data.contact.whatsappOptIn,
-        whatsappConsentAt: consentAt,
-        createdAt: now,
-        capabilityHash: hashSecret(token),
-        capabilityCiphertext: encrypted.ciphertext,
-        capabilityKeyId: encrypted.keyId,
-        recoveryKeyHash: keyHash,
-        recoveryPayloadDigest: digest,
-        creationSource: "owner",
-      });
-      const identity = notificationContentIdentity({
-        id,
-        startAt: start,
-        endAt: end,
-        serviceName: service.name,
-        servicePriceUsd: service.priceUsd,
-        serviceDurationMinutes: duration,
-        barberName: barber.name,
-        customerName: parsed.data.contact.name,
-        customerEmail: parsed.data.contact.email ?? null,
-        customerPhone: parsed.data.contact.phone ?? null,
-      });
       const recipient = parsed.data.contact.email ?? null;
-      await tx.insert(notificationWork).values([
-        {
-          id: randomUUID(),
-          bookingId: id,
-          kind: "customer_confirmation",
-          channel: "email",
-          status: !recipient
-            ? "skipped"
-            : emailConfig.mode === "mailpit"
-              ? "not_attempted"
-              : "unavailable",
-          recipient,
-          contentIdentity: identity,
-          reason: !recipient
-            ? "recipient_missing"
-            : emailConfig.mode === "mailpit"
-              ? null
-              : emailConfig.reason,
+      const { bookingId: id } = await persistBookingCreation(tx, {
+        shop: {
+          id: shop.id,
+          timeZoneLockedAt: shop.time_zone_locked_at,
         },
-        ...(parsed.data.contact.whatsappOptIn && parsed.data.contact.phone
-          ? [
-              {
-                id: randomUUID(),
-                bookingId: id,
-                kind: "customer_confirmation" as const,
-                channel: "whatsapp" as const,
-                status: "unavailable" as const,
-                recipient: parsed.data.contact.phone,
-                contentIdentity: identity,
-                reason: "channel_unavailable",
-              },
-            ]
-          : []),
-      ]);
-      if (!shop.time_zone_locked_at)
-        await tx
-          .update(shops)
-          .set({ timeZoneLockedAt: now })
-          .where(eq(shops.id, shop.id));
+        service,
+        barber,
+        start,
+        end,
+        durationMinutes: duration,
+        contact: {
+          name: parsed.data.contact.name,
+          email: recipient,
+          phone: parsed.data.contact.phone ?? null,
+          whatsappOptIn: parsed.data.contact.whatsappOptIn,
+        },
+        creationSource: "owner",
+        recoveryKey: parsed.data.recoveryKey,
+        payloadDigest: digest,
+        now,
+        notifications: [
+          {
+            kind: "customer_confirmation",
+            channel: "email",
+            status: !recipient
+              ? "skipped"
+              : emailConfig.mode === "mailpit"
+                ? "not_attempted"
+                : "unavailable",
+            recipient,
+            reason: !recipient
+              ? "recipient_missing"
+              : emailConfig.mode === "mailpit"
+                ? null
+                : emailConfig.reason,
+          },
+          ...(parsed.data.contact.whatsappOptIn && parsed.data.contact.phone
+            ? [
+                {
+                  kind: "customer_confirmation" as const,
+                  channel: "whatsapp" as const,
+                  status: "unavailable" as const,
+                  recipient: parsed.data.contact.phone,
+                  reason: "channel_unavailable",
+                },
+              ]
+            : []),
+        ],
+      });
       return { success: true as const, bookingId: id };
     });
     if (!result.success) return result;
