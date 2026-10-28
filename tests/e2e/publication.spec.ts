@@ -1,4 +1,10 @@
-import { test, expect, ownerOrigin, captureState } from "./fixtures";
+import {
+  test,
+  expect,
+  ownerOrigin,
+  captureState,
+  cancelBlockedRequest,
+} from "./fixtures";
 import { addReadyCatalog } from "./publication-fixtures";
 import { chooseBookingOptions } from "./booking-flow-helpers";
 
@@ -133,6 +139,7 @@ test("publication failure keeps the draft and allows retry", async ({
     await expect(
       page.getByRole("button", { name: "Publishing…" }),
     ).toBeDisabled();
+    await cancelBlockedRequest(database.pool, blocker);
     await expect(
       page.getByText("Unable to update publication. Try again.", {
         exact: true,
@@ -182,6 +189,7 @@ test("publication errors stay in the unpublish dialog and keep retry and focus u
     await dialog
       .getByRole("button", { name: "Unpublish", exact: true })
       .click();
+    await cancelBlockedRequest(database.pool, blocker);
     const alert = dialog.getByRole("alert");
     await expect(alert).toHaveText("Unable to update publication. Try again.");
     await expect(

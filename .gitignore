@@ -15,6 +15,7 @@
 
 # next.js
 /.next/
+/.trimtime-e2e/
 /out/
 
 # production

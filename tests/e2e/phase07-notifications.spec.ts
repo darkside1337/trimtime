@@ -14,39 +14,11 @@ const budgetDay = new Date(
 )
   .toISOString()
   .slice(0, 10);
-let ownsBudgetDay = false;
 
 test.skip(
   process.env.TRIMTIME_E2E_EMAIL_MODE !== "mailpit-double",
   "requires the isolated Mailpit HTTP double",
 );
-
-test.beforeAll(async ({ database }) => {
-  const { rows } = await database.pool.query(
-    "INSERT INTO outbound_budget (day, allocation_count) VALUES ($1, 0) ON CONFLICT DO NOTHING RETURNING day",
-    [budgetDay],
-  );
-  if (!rows.length)
-    throw new Error(
-      "Phase 07 test budget day is already owned by another suite.",
-    );
-  ownsBudgetDay = true;
-});
-
-test.afterAll(async ({ database }) => {
-  if (!ownsBudgetDay) return;
-  const { rows } = await database.pool.query(
-    "SELECT count(*)::int AS n FROM notification_attempts WHERE budget_day=$1",
-    [budgetDay],
-  );
-  if (rows[0].n)
-    throw new Error(
-      "Phase 07 fixtures left attempts on the shared test budget.",
-    );
-  await database.pool.query("DELETE FROM outbound_budget WHERE day=$1", [
-    budgetDay,
-  ]);
-});
 
 test("owner Activity shows the two persisted notification rows for a booking", async ({
   page,

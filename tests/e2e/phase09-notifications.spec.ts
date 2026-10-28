@@ -104,16 +104,6 @@ test("real Mailpit captures the current customer move update", async ({
   const mailpitOrigin = process.env.TRIMTIME_E2E_MAILPIT_ORIGIN;
   if (!mailpitOrigin)
     throw new Error("Mailpit origin is required for this test.");
-  const budgetDay = new Date(
-    process.env.TRIMTIME_E2E_NOW ?? "2026-10-31T12:00:00Z",
-  )
-    .toISOString()
-    .slice(0, 10);
-  const budget = await database.pool.query(
-    "INSERT INTO outbound_budget (day,allocation_count) VALUES ($1,0) ON CONFLICT DO NOTHING RETURNING day",
-    [budgetDay],
-  );
-  expect(budget.rowCount).toBe(1);
   const owner = await owners(context, { shop: true, createSetup: true });
   try {
     const { createOwnerBooking, moveOwnerBooking } =
@@ -226,16 +216,6 @@ test("real Mailpit captures the customer cancellation update", async ({
   const mailpitOrigin = process.env.TRIMTIME_E2E_MAILPIT_ORIGIN;
   if (!mailpitOrigin)
     throw new Error("Mailpit origin is required for this test.");
-  const budgetDay = new Date(
-    process.env.TRIMTIME_E2E_NOW ?? "2026-10-31T12:00:00Z",
-  )
-    .toISOString()
-    .slice(0, 10);
-  const budget = await database.pool.query(
-    "INSERT INTO outbound_budget (day,allocation_count) VALUES ($1,0) ON CONFLICT DO NOTHING RETURNING day",
-    [budgetDay],
-  );
-  expect(budget.rowCount).toBe(1);
   const owner = await owners(context, { shop: true, createSetup: true });
   try {
     const { createOwnerBooking, cancelOwnerBooking } =
@@ -340,11 +320,6 @@ test("a real Mailpit outage leaves the committed cancellation unknown and does n
   )
     .toISOString()
     .slice(0, 10);
-  const budget = await database.pool.query(
-    "INSERT INTO outbound_budget (day,allocation_count) VALUES ($1,0) ON CONFLICT DO NOTHING RETURNING day",
-    [budgetDay],
-  );
-  expect(budget.rowCount).toBe(1);
   const owner = await owners(context, { shop: true, createSetup: true });
   try {
     const { createOwnerBooking, cancelOwnerBooking } =

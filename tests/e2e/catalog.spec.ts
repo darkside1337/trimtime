@@ -1,4 +1,10 @@
-import { captureState, expect, ownerOrigin, test } from "./fixtures";
+import {
+  cancelBlockedRequest,
+  captureState,
+  expect,
+  ownerOrigin,
+  test,
+} from "./fixtures";
 
 test("owners create, validate, assign, and reload shared service details", async ({
   page,
@@ -147,6 +153,7 @@ test("service save failure preserves input and allows a real retry", async ({
     ]);
     await page.getByRole("button", { name: "Save service" }).click();
     await expect(page.getByRole("button", { name: "Saving…" })).toBeDisabled();
+    await cancelBlockedRequest(database.pool, blocker);
     await expect(page.getByRole("alert")).toHaveText(
       "Unable to save your service.",
     );

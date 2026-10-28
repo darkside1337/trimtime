@@ -1,4 +1,10 @@
-import { test, expect, ownerOrigin, captureState } from "./fixtures";
+import {
+  test,
+  expect,
+  ownerOrigin,
+  captureState,
+  cancelBlockedRequest,
+} from "./fixtures";
 
 test("settings save announces success and survives reload", async ({
   page,
@@ -86,6 +92,7 @@ test("a real save failure preserves input and committed values, then permits ret
     await page.getByLabel("Shop name").fill("Retry Fictional Juniper");
     await page.getByRole("button", { name: "Save settings" }).click();
     await expect(page.getByRole("button", { name: "Saving…" })).toBeDisabled();
+    await cancelBlockedRequest(database.pool, blocker);
     await expect(
       page.getByText("Unable to save your settings.", { exact: true }),
     ).toBeVisible();

@@ -71,6 +71,17 @@ server-side fixtures only. Direct Node tools importing the guarded auth
 configuration also need that condition. Deploy with `NODE_ENV=production`;
 test-mode HTTP configuration is not deployment configuration.
 
+E2E runs use `.trimtime-e2e/` for their Next.js output and a shared
+`/tmp/trimtime-e2e-55432.lock` to exclude other E2E runs using the test
+database and ports, including runs from other checkouts. Mailpit modes run one
+test at a time and reserve the test budget per fixture. If an interrupted run
+leaves either directory behind, check its `owner` file and confirm that the
+listed process and its child servers have stopped before manually removing the
+stale directory. PIDs can be reused, so inspect the process command, checkout,
+and any surviving servers; the PID alone does not prove ownership. Never remove
+a directory belonging to an active run. A stale
+database budget or fixtures must likewise be inspected before cleanup.
+
 The database test URL is supplied by the repository's `.env.test` and
 targets only the Compose-owned `trimtime_test` database. If it is stopped,
 both `pnpm test:db` and `pnpm test:e2e` fail with an actionable error. Run
@@ -106,7 +117,7 @@ Marketing runs at `https://localtest.me:3000`; owner sign-in runs at
 
 Playwright remains separate on port 3100 with `localhost`/`app.localhost` and
 the owned disposable database. Its runner overrides application and migration
-URLs, auth secret, Google credentials, and the test-only lock timeout. Session
+URLs, auth secret, and Google credentials. Session
 fixtures use Better Auth test utilities exclusively outside production routes.
 
 The app database connection requires `DATABASE_URL`. The migration command

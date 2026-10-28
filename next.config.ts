@@ -4,10 +4,10 @@ import { resolveServerOrigins } from "./server/origin-config.mts";
 const { marketingOrigin, appOrigin } = resolveServerOrigins(process.env);
 
 const nextConfig: NextConfig = {
-  ...(process.env.TRIMTIME_E2E_SERVER === "dev"
+  ...(process.env.TRIMTIME_E2E_RUN === "1"
     ? {
-        distDir: ".next-e2e-dev",
-        typescript: { tsconfigPath: ".e2e-dev-config/tsconfig.json" },
+        distDir: ".trimtime-e2e/next",
+        typescript: { tsconfigPath: ".trimtime-e2e/tsconfig.json" },
       }
     : {}),
   allowedDevOrigins: ["localtest.me", "*.localtest.me"],

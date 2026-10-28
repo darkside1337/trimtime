@@ -3,20 +3,20 @@ import { Pool } from "pg";
 import { applyMigrations } from "../db/migrate.mts";
 import { verifyOwnedTestDatabase } from "../db/test-database.mts";
 import { resolve } from "node:path";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
+import { acquireE2eDirectory } from "./e2e-run-directory.mjs";
 
 process.loadEnvFile(".env.test");
 process.env.TRIMTIME_E2E_NOW ??= "2026-10-31T12:00:00Z";
 const developmentServer = process.env.TRIMTIME_E2E_SERVER === "dev";
-const developmentConfigDir = ".e2e-dev-config";
-const developmentOutputDir = ".next-e2e-dev";
+const runDir = ".trimtime-e2e";
 const databaseUrl = verifyOwnedTestDatabase();
 const env = {
   ...process.env,
   NODE_ENV: developmentServer ? "development" : "test",
   DATABASE_URL: databaseUrl,
   MIGRATION_DATABASE_URL: databaseUrl,
-  PGOPTIONS: "-c lock_timeout=1000",
+  TRIMTIME_E2E_RUN: "1",
   BETTER_AUTH_URL: "http://app.localhost:3100",
   APP_ORIGIN: "http://app.localhost:3100",
   MARKETING_ORIGIN: "http://localhost:3100",
@@ -33,6 +33,7 @@ const env = {
       ? "mailpit"
       : "unavailable",
 };
+delete env.PGOPTIONS;
 if (process.env.TRIMTIME_E2E_EMAIL_MODE === "mailpit-double") {
   env.MAILPIT_ORIGIN = "http://127.0.0.1:8027";
 } else if (
@@ -63,26 +64,23 @@ if (process.env.TRIMTIME_E2E_NOW) {
     .filter(Boolean)
     .join(" ");
 }
-const pool = new Pool({ connectionString: databaseUrl, max: 1 });
-let developmentConfigCreated = false;
-let developmentOutputCreated = false;
+const releaseGlobal = await acquireE2eDirectory("/tmp/trimtime-e2e-55432.lock");
+let release;
+let pool;
 try {
-  if (developmentServer) {
-    await mkdir(developmentConfigDir);
-    developmentConfigCreated = true;
-    await mkdir(developmentOutputDir);
-    developmentOutputCreated = true;
-    await writeFile(
-      `${developmentConfigDir}/tsconfig.json`,
-      '{\n  "extends": "../tsconfig.json"\n}\n',
-      { flag: "wx" },
-    );
-  }
+  release = await acquireE2eDirectory(runDir);
+  pool = new Pool({ connectionString: databaseUrl, max: 1 });
+  await writeFile(
+    `${runDir}/tsconfig.json`,
+    '{\n  "extends": "../tsconfig.json"\n}\n',
+    { flag: "wx" },
+  );
   await applyMigrations(pool, "db/migrations");
   if (!developmentServer)
     execFileSync("pnpm", ["build"], { stdio: "inherit", env });
   const args = process.argv.slice(2);
   if (args[0] === "--") args.shift();
+  if (env.EMAIL_MODE === "mailpit") args.push("--workers=1");
   execFileSync(
     process.execPath,
     [
@@ -97,11 +95,13 @@ try {
     },
   );
 } finally {
-  await pool.end();
-  if (developmentConfigCreated) {
-    await rm(developmentConfigDir, { recursive: true, force: true });
-  }
-  if (developmentOutputCreated) {
-    await rm(developmentOutputDir, { recursive: true, force: true });
+  try {
+    await pool?.end();
+  } finally {
+    try {
+      await release?.();
+    } finally {
+      await releaseGlobal();
+    }
   }
 }
