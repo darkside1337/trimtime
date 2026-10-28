@@ -27,12 +27,12 @@ test("guest booking advances one verified choice at a time @device", async ({
   await page.getByRole("button", { name: "Choose your barber" }).click();
   await expect(
     page.getByRole("heading", { name: "Pick your barber" }),
-  ).toBeVisible();
+  ).toBeFocused();
   await page.locator(`input[name="barberId"][value="${barberId}"]`).check();
   await page.getByRole("button", { name: "Choose date and time" }).click();
   await expect(
     page.getByRole("heading", { name: "Let’s find your time." }),
-  ).toBeVisible();
+  ).toBeFocused();
   const timeZone = (
     await database.pool.query("SELECT time_zone FROM shops WHERE id = $1", [
       owner.shopId,
@@ -128,6 +128,9 @@ test("public booking requires explicit choices and creates a private manage link
   const manageUrl = await manageLink.getAttribute("href");
   expect(manageUrl).toContain("/manage/");
   await page.getByRole("button", { name: "Book another appointment" }).click();
+  await expect(
+    page.getByRole("heading", { name: "What are we doing today?" }),
+  ).toBeFocused();
   await expect(
     page.locator(`input[name="serviceId"][value="${serviceId}"]`),
   ).not.toBeChecked();
