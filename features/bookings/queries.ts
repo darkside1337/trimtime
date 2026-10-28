@@ -1,8 +1,9 @@
 import "server-only";
-import { and, asc, eq, gt, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
 import { Temporal } from "temporal-polyfill";
 import { db } from "@/db";
 import { bookings } from "@/db/schema/bookings";
+import { notificationWork } from "@/db/schema/notification-work";
 import { shops } from "@/db/schema/shops";
 import { barbers, barberServices, services } from "@/db/schema/catalog";
 import type { ActionResult } from "@/lib/action-result";
@@ -23,6 +24,41 @@ const unavailable = {
   error: { code: "UNAVAILABLE", message: "This booking link is unavailable." },
 } as const;
 
+function latestEmailNotification() {
+  return db
+    .select({
+      status: notificationWork.status,
+      reason: notificationWork.reason,
+      claimedAt: notificationWork.claimedAt,
+      updatedAt: notificationWork.updatedAt,
+    })
+    .from(notificationWork)
+    .where(
+      and(
+        eq(notificationWork.bookingId, bookings.id),
+        eq(notificationWork.channel, "email"),
+        or(
+          and(
+            eq(bookings.revision, 0),
+            eq(notificationWork.bookingRevision, 0),
+            eq(notificationWork.kind, "customer_confirmation"),
+          ),
+          and(
+            gt(bookings.revision, 0),
+            eq(notificationWork.bookingRevision, bookings.revision),
+            inArray(notificationWork.kind, [
+              "customer_move",
+              "customer_cancellation",
+            ]),
+          ),
+        ),
+      ),
+    )
+    .orderBy(desc(notificationWork.createdAt))
+    .limit(1)
+    .as("latest_email_notification");
+}
+
 export async function getManagedBooking(
   context: Pick<PublicBookingContext, "shopId"> | null,
   token: string,
@@ -30,6 +66,7 @@ export async function getManagedBooking(
   if (!context?.shopId || typeof token !== "string") return unavailable;
   const now = new Date();
   try {
+    const emailWork = latestEmailNotification();
     const [row] = await db
       .select({
         status: bookings.status,
@@ -48,17 +85,14 @@ export async function getManagedBooking(
         publicContact: shops.publicContact,
         address: shops.address,
         timeZone: shops.timeZone,
-        emailStatus: sql<
-          string | null
-        >`(SELECT w.status FROM notification_work w WHERE w.booking_id=${bookings.id} AND w.channel='email' AND ((bookings.revision=0 AND w.booking_revision=0 AND w.kind='customer_confirmation') OR (bookings.revision>0 AND w.booking_revision=bookings.revision AND w.kind IN ('customer_move','customer_cancellation'))) ORDER BY w.created_at DESC LIMIT 1)`,
-        emailReason: sql<
-          string | null
-        >`(SELECT w.reason FROM notification_work w WHERE w.booking_id=${bookings.id} AND w.channel='email' AND ((bookings.revision=0 AND w.booking_revision=0 AND w.kind='customer_confirmation') OR (bookings.revision>0 AND w.booking_revision=bookings.revision AND w.kind IN ('customer_move','customer_cancellation'))) ORDER BY w.created_at DESC LIMIT 1)`,
-        emailClaimedAt: sql<Date | null>`(SELECT w.claimed_at FROM notification_work w WHERE w.booking_id=${bookings.id} AND w.channel='email' AND ((bookings.revision=0 AND w.booking_revision=0 AND w.kind='customer_confirmation') OR (bookings.revision>0 AND w.booking_revision=bookings.revision AND w.kind IN ('customer_move','customer_cancellation'))) ORDER BY w.created_at DESC LIMIT 1)`,
-        emailUpdatedAt: sql<Date | null>`(SELECT w.updated_at FROM notification_work w WHERE w.booking_id=${bookings.id} AND w.channel='email' AND ((bookings.revision=0 AND w.booking_revision=0 AND w.kind='customer_confirmation') OR (bookings.revision>0 AND w.booking_revision=bookings.revision AND w.kind IN ('customer_move','customer_cancellation'))) ORDER BY w.created_at DESC LIMIT 1)`,
+        emailStatus: emailWork.status,
+        emailReason: emailWork.reason,
+        emailClaimedAt: emailWork.claimedAt,
+        emailUpdatedAt: emailWork.updatedAt,
       })
       .from(bookings)
       .innerJoin(shops, eq(shops.id, bookings.shopId))
+      .leftJoinLateral(emailWork, sql`true`)
       .where(
         and(
           eq(bookings.shopId, context.shopId),
@@ -266,6 +300,7 @@ export async function getOwnAppointment(
         "SHOP_REQUIRED",
         "Set up your shop to view appointments.",
       );
+    const emailWork = latestEmailNotification();
     const row = await db
       .select({
         id: bookings.id,
@@ -288,14 +323,10 @@ export async function getOwnAppointment(
         shopPublicContact: shops.publicContact,
         shopAddress: shops.address,
         shopTimeZone: shops.timeZone,
-        emailStatus: sql<
-          string | null
-        >`(SELECT w.status FROM notification_work w WHERE w.booking_id=${bookings.id} AND w.channel='email' AND ((bookings.revision=0 AND w.booking_revision=0 AND w.kind='customer_confirmation') OR (bookings.revision>0 AND w.booking_revision=bookings.revision AND w.kind IN ('customer_move','customer_cancellation'))) ORDER BY w.created_at DESC LIMIT 1)`,
-        emailReason: sql<
-          string | null
-        >`(SELECT w.reason FROM notification_work w WHERE w.booking_id=${bookings.id} AND w.channel='email' AND ((bookings.revision=0 AND w.booking_revision=0 AND w.kind='customer_confirmation') OR (bookings.revision>0 AND w.booking_revision=bookings.revision AND w.kind IN ('customer_move','customer_cancellation'))) ORDER BY w.created_at DESC LIMIT 1)`,
-        emailClaimedAt: sql<Date | null>`(SELECT w.claimed_at FROM notification_work w WHERE w.booking_id=${bookings.id} AND w.channel='email' AND ((bookings.revision=0 AND w.booking_revision=0 AND w.kind='customer_confirmation') OR (bookings.revision>0 AND w.booking_revision=bookings.revision AND w.kind IN ('customer_move','customer_cancellation'))) ORDER BY w.created_at DESC LIMIT 1)`,
-        emailUpdatedAt: sql<Date | null>`(SELECT w.updated_at FROM notification_work w WHERE w.booking_id=${bookings.id} AND w.channel='email' AND ((bookings.revision=0 AND w.booking_revision=0 AND w.kind='customer_confirmation') OR (bookings.revision>0 AND w.booking_revision=bookings.revision AND w.kind IN ('customer_move','customer_cancellation'))) ORDER BY w.created_at DESC LIMIT 1)`,
+        emailStatus: emailWork.status,
+        emailReason: emailWork.reason,
+        emailClaimedAt: emailWork.claimedAt,
+        emailUpdatedAt: emailWork.updatedAt,
       })
       .from(bookings)
       .innerJoin(
@@ -309,6 +340,7 @@ export async function getOwnAppointment(
           eq(barbers.shopId, bookings.shopId),
         ),
       )
+      .leftJoinLateral(emailWork, sql`true`)
       .where(eq(bookings.id, appointmentId))
       .limit(1);
     const found = row[0];

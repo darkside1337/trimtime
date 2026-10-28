@@ -43,33 +43,29 @@ import type {
 import type { OwnerContext } from "@/server/owner-context";
 import { getOwnAppointment } from "./queries";
 
-type RawBookingRow = {
+type BookingChangeEvent = {
   id: string;
-  revision: number | string;
-  status: string;
-  service_id: string;
-  service_name: string;
-  service_price_usd: string;
-  service_duration_minutes: number | string;
-  barber_id: string;
-  barber_name: string;
-  start_at: Date | string;
-  end_at: Date | string;
-  occupancy_id: string | null;
-  customer_name: string;
-  customer_email: string | null;
-  customer_phone: string | null;
-  whatsapp_opt_in: boolean;
+  kind: "move" | "cancel";
+  appliedRevision: number;
+  committedAt: Date;
+  afterSnapshot: Record<string, unknown>;
 };
 
-type RawBookingChange = {
+function bookingChangeEvent(row: {
   id: string;
   kind: string;
-  applied_revision: number | string;
-  committed_at: Date | string;
-  after_snapshot: Record<string, unknown>;
-  payload_digest: string;
-};
+  appliedRevision: number;
+  committedAt: Date;
+  afterSnapshot: unknown;
+}): BookingChangeEvent {
+  return {
+    id: row.id,
+    kind: row.kind as BookingChangeEvent["kind"],
+    appliedRevision: row.appliedRevision,
+    committedAt: row.committedAt,
+    afterSnapshot: row.afterSnapshot as Record<string, unknown>,
+  };
+}
 
 export async function cancelOwnerBooking(
   context: OwnerContext | null,
@@ -86,20 +82,30 @@ export async function cancelOwnerBooking(
     return fail("VALIDATION_ERROR", "Appointment request is invalid.");
   try {
     const receipt = await db.transaction(async (tx) => {
-      const locked = await tx.execute(
-        sql`SELECT id FROM shops WHERE owner_id=${context.userId} FOR UPDATE`,
-      );
-      const shopId = locked.rows[0]?.id as string | undefined;
+      const [lockedShop] = await tx
+        .select({ id: shops.id })
+        .from(shops)
+        .where(eq(shops.ownerId, context.userId))
+        .for("update")
+        .limit(1);
+      const shopId = lockedShop?.id;
       if (!shopId)
         return fail(
           "SHOP_REQUIRED",
           "Set up your shop to manage appointments.",
         );
       const now = new Date();
-      const found = await tx.execute(
-        sql`SELECT * FROM bookings WHERE id=${parsed.data.bookingId} AND shop_id=${shopId} FOR UPDATE`,
-      );
-      const booking = found.rows[0] as RawBookingRow | undefined;
+      const [booking] = await tx
+        .select()
+        .from(bookings)
+        .where(
+          and(
+            eq(bookings.id, parsed.data.bookingId),
+            eq(bookings.shopId, shopId),
+          ),
+        )
+        .for("update")
+        .limit(1);
       if (!booking) return fail("NOT_FOUND", "Appointment not found.");
       const keyHash = hashSecret(parsed.data.operationKey);
       const digest = hashSecret(
@@ -109,30 +115,43 @@ export async function cancelOwnerBooking(
           expectedRevision: parsed.data.expectedRevision,
         }),
       );
-      const replay = await tx.execute(
-        sql`SELECT id, kind, applied_revision, committed_at, after_snapshot, payload_digest FROM booking_changes WHERE shop_id=${shopId} AND operation_key_hash=${keyHash}`,
-      );
-      if (replay.rows[0]) {
-        const event = replay.rows[0] as RawBookingChange;
-        if (event.payload_digest !== digest)
+      const [replay] = await tx
+        .select({
+          id: bookingChanges.id,
+          kind: bookingChanges.kind,
+          appliedRevision: bookingChanges.appliedRevision,
+          committedAt: bookingChanges.committedAt,
+          afterSnapshot: bookingChanges.afterSnapshot,
+          payloadDigest: bookingChanges.payloadDigest,
+        })
+        .from(bookingChanges)
+        .where(
+          and(
+            eq(bookingChanges.shopId, shopId),
+            eq(bookingChanges.operationKeyHash, keyHash),
+          ),
+        )
+        .limit(1);
+      if (replay) {
+        if (replay.payloadDigest !== digest)
           return fail(
             "RECOVERY_MISMATCH",
             "This appointment attempt cannot be recovered.",
           );
         return {
           success: true as const,
-          bookingId: booking.id as string,
-          event,
+          bookingId: booking.id,
+          event: bookingChangeEvent(replay),
         };
       }
-      if (Number(booking.revision) !== parsed.data.expectedRevision)
+      if (booking.revision !== parsed.data.expectedRevision)
         return fail(
           "STALE_BOOKING",
           "Appointment changed. Reload and try again.",
         );
       if (
         booking.status !== "confirmed" ||
-        new Date(booking.end_at).getTime() <= now.getTime()
+        booking.endAt.getTime() <= now.getTime()
       )
         return fail(
           "INVALID_STATE",
@@ -140,21 +159,21 @@ export async function cancelOwnerBooking(
         );
       const before = {
         status: booking.status,
-        serviceId: booking.service_id,
-        serviceName: booking.service_name,
-        servicePriceUsd: booking.service_price_usd,
-        serviceDurationMinutes: booking.service_duration_minutes,
-        barberId: booking.barber_id,
-        barberName: booking.barber_name,
-        startAt: new Date(booking.start_at).toISOString(),
-        endAt: new Date(booking.end_at).toISOString(),
+        serviceId: booking.serviceId,
+        serviceName: booking.serviceName,
+        servicePriceUsd: booking.servicePriceUsd,
+        serviceDurationMinutes: booking.serviceDurationMinutes,
+        barberId: booking.barberId,
+        barberName: booking.barberName,
+        startAt: booking.startAt.toISOString(),
+        endAt: booking.endAt.toISOString(),
       };
       const after = { ...before, status: "cancelled" };
       const eventId = randomUUID();
-      const revision = Number(booking.revision) + 1;
-      if (booking.occupancy_id)
+      const revision = booking.revision + 1;
+      if (booking.occupancyId)
         await tx.execute(
-          sql`DELETE FROM occupied_intervals WHERE id=${booking.occupancy_id}`,
+          sql`DELETE FROM occupied_intervals WHERE id=${booking.occupancyId}`,
         );
       await tx.execute(
         sql`UPDATE bookings SET status='cancelled', occupancy_id=NULL, revision=${revision} WHERE id=${booking.id}`,
@@ -164,15 +183,15 @@ export async function cancelOwnerBooking(
       );
       const identity = notificationContentIdentity({
         id: booking.id,
-        startAt: booking.start_at,
-        endAt: booking.end_at,
-        serviceName: booking.service_name,
-        servicePriceUsd: booking.service_price_usd,
-        serviceDurationMinutes: Number(booking.service_duration_minutes),
-        barberName: booking.barber_name,
-        customerName: booking.customer_name,
-        customerEmail: booking.customer_email,
-        customerPhone: booking.customer_phone,
+        startAt: booking.startAt,
+        endAt: booking.endAt,
+        serviceName: booking.serviceName,
+        servicePriceUsd: booking.servicePriceUsd,
+        serviceDurationMinutes: booking.serviceDurationMinutes,
+        barberName: booking.barberName,
+        customerName: booking.customerName,
+        customerEmail: booking.customerEmail,
+        customerPhone: booking.customerPhone,
       });
       await suppressSupersededNotificationWork(tx, booking.id, revision, now);
       const config = resolveEmailConfig(process.env);
@@ -182,20 +201,20 @@ export async function cancelOwnerBooking(
         changeId: eventId,
         kind: "customer_cancellation",
         contentIdentity: identity,
-        customerEmail: booking.customer_email,
-        customerPhone: booking.customer_phone,
-        whatsappOptIn: booking.whatsapp_opt_in,
+        customerEmail: booking.customerEmail,
+        customerPhone: booking.customerPhone,
+        whatsappOptIn: booking.whatsappOptIn,
         emailConfig: config,
       });
       return {
         success: true as const,
-        bookingId: booking.id as string,
+        bookingId: booking.id,
         event: {
           id: eventId,
-          kind: "cancel",
-          applied_revision: revision,
-          committed_at: now,
-          after_snapshot: after,
+          kind: "cancel" as const,
+          appliedRevision: revision,
+          committedAt: now,
+          afterSnapshot: after,
         },
       };
     });
@@ -203,7 +222,7 @@ export async function cancelOwnerBooking(
     const appointment = await getOwnAppointment(context, receipt.bookingId);
     if (!appointment.success)
       return fail("UNAVAILABLE", "Appointment could not be loaded.");
-    const event = receipt.event as RawBookingChange;
+    const event = receipt.event;
     return {
       success: true,
       data: {
@@ -211,9 +230,9 @@ export async function cancelOwnerBooking(
         operation: {
           id: event.id,
           kind: "cancel",
-          revision: Number(event.applied_revision),
-          committedAt: new Date(event.committed_at).toISOString(),
-          snapshot: event.after_snapshot,
+          revision: event.appliedRevision,
+          committedAt: event.committedAt.toISOString(),
+          snapshot: event.afterSnapshot,
         },
         appointment: appointment.data,
       },
@@ -241,21 +260,29 @@ export async function moveOwnerBooking(
     return fail("VALIDATION_ERROR", "Appointment request is invalid.");
   try {
     const receipt = await db.transaction(async (tx) => {
-      const locked = await tx.execute(
-        sql`SELECT id, time_zone FROM shops WHERE owner_id=${context.userId} FOR UPDATE`,
-      );
-      const shop = locked.rows[0] as
-        { id: string; time_zone: string } | undefined;
+      const [shop] = await tx
+        .select({ id: shops.id, timeZone: shops.timeZone })
+        .from(shops)
+        .where(eq(shops.ownerId, context.userId))
+        .for("update")
+        .limit(1);
       if (!shop)
         return fail(
           "SHOP_REQUIRED",
           "Set up your shop to manage appointments.",
         );
       const now = new Date();
-      const found = await tx.execute(
-        sql`SELECT * FROM bookings WHERE id=${parsed.data.bookingId} AND shop_id=${shop.id} FOR UPDATE`,
-      );
-      const booking = found.rows[0] as RawBookingRow | undefined;
+      const [booking] = await tx
+        .select()
+        .from(bookings)
+        .where(
+          and(
+            eq(bookings.id, parsed.data.bookingId),
+            eq(bookings.shopId, shop.id),
+          ),
+        )
+        .for("update")
+        .limit(1);
       if (!booking) return fail("NOT_FOUND", "Appointment not found.");
       const keyHash = hashSecret(parsed.data.operationKey);
       const startInstant = Temporal.Instant.from(parsed.data.startAt);
@@ -270,36 +297,49 @@ export async function moveOwnerBooking(
           reviewedOffer: parsed.data.reviewedOffer,
         }),
       );
-      const replay = await tx.execute(
-        sql`SELECT id, kind, applied_revision, committed_at, after_snapshot, payload_digest FROM booking_changes WHERE shop_id=${shop.id} AND operation_key_hash=${keyHash}`,
-      );
-      if (replay.rows[0]) {
-        const event = replay.rows[0] as RawBookingChange;
-        if (event.payload_digest !== digest)
+      const [replay] = await tx
+        .select({
+          id: bookingChanges.id,
+          kind: bookingChanges.kind,
+          appliedRevision: bookingChanges.appliedRevision,
+          committedAt: bookingChanges.committedAt,
+          afterSnapshot: bookingChanges.afterSnapshot,
+          payloadDigest: bookingChanges.payloadDigest,
+        })
+        .from(bookingChanges)
+        .where(
+          and(
+            eq(bookingChanges.shopId, shop.id),
+            eq(bookingChanges.operationKeyHash, keyHash),
+          ),
+        )
+        .limit(1);
+      if (replay) {
+        if (replay.payloadDigest !== digest)
           return fail(
             "RECOVERY_MISMATCH",
             "This appointment attempt cannot be recovered.",
           );
         return {
           success: true as const,
-          bookingId: booking.id as string,
-          event,
+          bookingId: booking.id,
+          event: bookingChangeEvent(replay),
         };
       }
-      if (Number(booking.revision) !== parsed.data.expectedRevision)
+      if (booking.revision !== parsed.data.expectedRevision)
         return fail(
           "STALE_BOOKING",
           "Appointment changed. Reload and try again.",
         );
       if (
         booking.status !== "confirmed" ||
-        new Date(booking.end_at).getTime() <= now.getTime()
+        booking.endAt.getTime() <= now.getTime()
       )
         return fail(
           "INVALID_STATE",
           "This appointment can no longer be moved.",
         );
-      const currentSavedService = parsed.data.serviceId === booking.service_id;
+      const currentSavedService = parsed.data.serviceId === booking.serviceId;
       const [replacementService] = currentSavedService
         ? []
         : await tx
@@ -318,11 +358,11 @@ export async function moveOwnerBooking(
             !replacementService.offered ||
             replacementService.archived)) ||
         (currentSavedService &&
-          (parsed.data.reviewedOffer.name !== booking.service_name ||
+          (parsed.data.reviewedOffer.name !== booking.serviceName ||
             parsed.data.reviewedOffer.priceUsd !==
-              fixedBookingPrice(String(booking.service_price_usd)) ||
+              fixedBookingPrice(booking.servicePriceUsd) ||
             parsed.data.reviewedOffer.durationMinutes !==
-              String(booking.service_duration_minutes))) ||
+              String(booking.serviceDurationMinutes))) ||
         (!currentSavedService &&
           (parsed.data.reviewedOffer.name !== replacementService.name ||
             parsed.data.reviewedOffer.priceUsd !==
@@ -336,10 +376,10 @@ export async function moveOwnerBooking(
         );
       const service = currentSavedService
         ? {
-            id: booking.service_id as string,
-            name: booking.service_name as string,
-            priceUsd: String(booking.service_price_usd),
-            durationMinutes: Number(booking.service_duration_minutes),
+            id: booking.serviceId,
+            name: booking.serviceName,
+            priceUsd: booking.servicePriceUsd,
+            durationMinutes: booking.serviceDurationMinutes,
           }
         : {
             id: replacementService.id,
@@ -358,9 +398,9 @@ export async function moveOwnerBooking(
           "Choose a future or ongoing appointment interval.",
         );
       if (
-        service.id === booking.service_id &&
-        parsed.data.barberId === booking.barber_id &&
-        start.getTime() === new Date(booking.start_at).getTime()
+        service.id === booking.serviceId &&
+        parsed.data.barberId === booking.barberId &&
+        start.getTime() === booking.startAt.getTime()
       )
         return fail("NO_CHANGE", "Choose a different time or barber.");
       const [barber] = await tx
@@ -390,7 +430,7 @@ export async function moveOwnerBooking(
           "That barber is not available for this appointment.",
         );
       const localDate = startInstant
-        .toZonedDateTimeISO(shop.time_zone)
+        .toZonedDateTimeISO(shop.timeZone)
         .toPlainDate();
       const schedule = await resolveScheduleForDate(tx, {
         shopId: shop.id,
@@ -404,13 +444,13 @@ export async function moveOwnerBooking(
           start: startInstant,
           durationMinutes: service.durationMinutes,
           date: localDate,
-          timeZone: shop.time_zone,
+          timeZone: shop.timeZone,
           shopDay: schedule.shopDay,
           barberDay: schedule.barberDay,
         })
       )
         return fail("UNAVAILABLE_INTERVAL", "Choose another available time.");
-      const occupancyId = booking.occupancy_id as string | null;
+      const occupancyId = booking.occupancyId;
       if (!occupancyId)
         return fail("UNAVAILABLE", "Appointment reservation is unavailable.");
       const overlap = await findOccupyingInterval(tx, {
@@ -427,14 +467,14 @@ export async function moveOwnerBooking(
         );
       const before = {
         status: booking.status,
-        serviceId: booking.service_id,
-        serviceName: booking.service_name,
-        servicePriceUsd: String(booking.service_price_usd),
-        serviceDurationMinutes: Number(booking.service_duration_minutes),
-        barberId: booking.barber_id,
-        barberName: booking.barber_name,
-        startAt: new Date(booking.start_at).toISOString(),
-        endAt: new Date(booking.end_at).toISOString(),
+        serviceId: booking.serviceId,
+        serviceName: booking.serviceName,
+        servicePriceUsd: booking.servicePriceUsd,
+        serviceDurationMinutes: booking.serviceDurationMinutes,
+        barberId: booking.barberId,
+        barberName: booking.barberName,
+        startAt: booking.startAt.toISOString(),
+        endAt: booking.endAt.toISOString(),
       };
       const after = {
         ...before,
@@ -447,7 +487,7 @@ export async function moveOwnerBooking(
         startAt: start.toISOString(),
         endAt: end.toISOString(),
       };
-      const revision = Number(booking.revision) + 1;
+      const revision = booking.revision + 1;
       const eventId = randomUUID();
       await tx
         .update(occupiedIntervals)
@@ -488,9 +528,9 @@ export async function moveOwnerBooking(
         servicePriceUsd: service.priceUsd,
         serviceDurationMinutes: service.durationMinutes,
         barberName: barber.name,
-        customerName: booking.customer_name,
-        customerEmail: booking.customer_email,
-        customerPhone: booking.customer_phone,
+        customerName: booking.customerName,
+        customerEmail: booking.customerEmail,
+        customerPhone: booking.customerPhone,
       });
       const emailConfig = resolveEmailConfig(process.env);
       await suppressSupersededNotificationWork(tx, booking.id, revision, now);
@@ -500,20 +540,20 @@ export async function moveOwnerBooking(
         changeId: eventId,
         kind: "customer_move",
         contentIdentity: identity,
-        customerEmail: booking.customer_email,
-        customerPhone: booking.customer_phone,
-        whatsappOptIn: booking.whatsapp_opt_in,
+        customerEmail: booking.customerEmail,
+        customerPhone: booking.customerPhone,
+        whatsappOptIn: booking.whatsappOptIn,
         emailConfig,
       });
       return {
         success: true as const,
-        bookingId: booking.id as string,
+        bookingId: booking.id,
         event: {
           id: eventId,
-          kind: "move",
-          applied_revision: revision,
-          committed_at: now,
-          after_snapshot: after,
+          kind: "move" as const,
+          appliedRevision: revision,
+          committedAt: now,
+          afterSnapshot: after,
         },
       };
     });
@@ -521,7 +561,7 @@ export async function moveOwnerBooking(
     const appointment = await getOwnAppointment(context, receipt.bookingId);
     if (!appointment.success)
       return fail("UNAVAILABLE", "Appointment could not be loaded.");
-    const event = receipt.event as RawBookingChange;
+    const event = receipt.event;
     return {
       success: true,
       data: {
@@ -529,9 +569,9 @@ export async function moveOwnerBooking(
         operation: {
           id: event.id,
           kind: "move",
-          revision: Number(event.applied_revision),
-          committedAt: new Date(event.committed_at).toISOString(),
-          snapshot: event.after_snapshot,
+          revision: event.appliedRevision,
+          committedAt: event.committedAt.toISOString(),
+          snapshot: event.afterSnapshot,
         },
         appointment: appointment.data,
       },
