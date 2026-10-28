@@ -57,6 +57,13 @@ deterministic server and browser clock. Set it to a UTC ISO instant ending in
 suite: an explicit `2026-11-02` clock makes the November 1 DST preview date
 past.
 
+The default E2E run covers every test on desktop and `@device` scenarios on
+tablet and phone. Device tags cover responsive layouts and key navigation,
+calendar, and booking journeys. Use `TRIMTIME_E2E_ALL_DEVICES=1 pnpm test:e2e`
+to run every test on all three projects; this also allows an untagged test to
+be selected on a device project. Mailpit modes retain the full device matrix
+and run serially.
+
 Production builds and starts require explicit `MARKETING_ORIGIN` and
 `APP_ORIGIN` values. Each must be a bare HTTPS origin; one trailing slash is
 normalized away. Credentials, paths, queries, and fragments are rejected,

@@ -229,7 +229,7 @@ test("appointment overlay shows its saving state while the server action is pend
   await expect(page).toHaveURL(/created=[0-9a-f-]{36}/);
 });
 
-test("calendar shows the owner's saved schedule with URL-backed controls", async ({
+test("calendar shows the owner's saved schedule with URL-backed controls @device", async ({
   page,
   context,
   owners,
@@ -258,7 +258,7 @@ test("calendar shows the owner's saved schedule with URL-backed controls", async
   ).toBeVisible();
 });
 
-test("calendar reads persisted records and owner barber filtering", async ({
+test("calendar reads persisted records and owner barber filtering @device", async ({
   page,
   context,
   owners,
@@ -272,7 +272,9 @@ test("calendar reads persisted records and owner barber filtering", async ({
     `${ownerOrigin}/?date=2026-11-02&view=day&barber=${owner.barberId}`,
   );
   await expect(
-    page.getByRole("link", { name: /Appointment: Fictional Guest, Saved Cut/ }),
+    page.getByRole("link", {
+      name: /Appointment: Fictional Guest, Saved Cut/,
+    }),
   ).toBeVisible();
   await expect(page.getByText("Shop published", { exact: true })).toBeVisible();
   await page.goto(
@@ -473,7 +475,7 @@ test("calendar and both appointment dialogs fit the approved responsive widths",
   }
 });
 
-test("new appointment preserves week and barber context through entry, cancel, and save", async ({
+test("new appointment preserves week and barber context through entry, cancel, and save @device", async ({
   page,
   context,
   owners,
@@ -784,7 +786,7 @@ test("server validation feedback stays attached to its field and keeps the enter
   expect(rows[0].count).toBe(0);
 });
 
-test("appointment entry traps keyboard focus and respects reduced motion with a 3:1 focus ring", async ({
+test("appointment entry traps keyboard focus and respects reduced motion with a 3:1 focus ring @device", async ({
   page,
   context,
   owners,
@@ -987,7 +989,7 @@ test("all six owner navigation destinations remain reachable", async ({
   await expect(page).toHaveURL(`${ownerOrigin}/`);
 });
 
-test("owner creates a contactless booking from the intercepted form and sees its saved detail", async ({
+test("owner creates a contactless booking from the intercepted form and sees its saved detail @device", async ({
   page,
   context,
   owners,
@@ -1018,8 +1020,8 @@ test("owner creates a contactless booking from the intercepted form and sees its
     .poll(async () => {
       const { rows } = await database.pool.query(
         `SELECT w.status FROM notification_work w
-         JOIN bookings b ON b.id=w.booking_id
-         WHERE b.id=$1 AND b.shop_id=$2 AND w.kind='customer_confirmation' AND w.channel='email'`,
+       JOIN bookings b ON b.id=w.booking_id
+       WHERE b.id=$1 AND b.shop_id=$2 AND w.kind='customer_confirmation' AND w.channel='email'`,
         [bookingId, owner.shopId],
       );
       return rows[0]?.status;
@@ -1034,7 +1036,9 @@ test("owner creates a contactless booking from the intercepted form and sees its
     page.getByRole("status").filter({ hasText: "Appointment saved for" }),
   ).toContainText("No email was provided; no customer confirmation was sent.");
   await expect(
-    page.getByRole("link", { name: /Appointment: Walk-in Guest, Walk-in Cut/ }),
+    page.getByRole("link", {
+      name: /Appointment: Walk-in Guest, Walk-in Cut/,
+    }),
   ).toBeVisible();
   await page
     .getByRole("link", { name: /Appointment: Walk-in Guest, Walk-in Cut/ })

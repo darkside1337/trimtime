@@ -1,6 +1,6 @@
 import { expect, ownerOrigin, test } from "./fixtures";
 
-test("saved appointment opens in an intercepted dialog and direct navigation is standalone", async ({
+test("saved appointment opens in an intercepted dialog and direct navigation is standalone @device", async ({
   page,
   context,
   owners,

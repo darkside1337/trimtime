@@ -214,7 +214,7 @@ test("preview uses saved schedules and the latest persisted service duration", a
   expect(persisted.rows[0]?.week).toEqual(shopWeek);
 });
 
-test("availability fits reference frames and its schedule tabs work by keyboard", async ({
+test("availability fits reference frames and its schedule tabs work by keyboard @device", async ({
   page,
   context,
   owners,
@@ -313,7 +313,7 @@ test("availability fits reference frames and its schedule tabs work by keyboard"
   ).toBeFocused();
 });
 
-test("populated recurring rows and break chips render at approved viewports", async ({
+test("populated recurring rows and break chips render at approved viewports @device", async ({
   page,
   context,
   owners,

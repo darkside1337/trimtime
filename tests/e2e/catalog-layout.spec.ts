@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { captureState, expect, ownerOrigin, test } from "./fixtures";
 
-test("catalog cards show named eligibility and the responsive reference grid", async ({
+test("catalog cards show named eligibility and the responsive reference grid @device", async ({
   page,
   context,
   owners,

@@ -1,6 +1,6 @@
 import { test, expect, marketingOrigin, ownerOrigin } from "./fixtures";
 
-test("marketing preview covers the owner entry and static customer sample", async ({
+test("marketing preview covers the owner entry and static customer sample @device", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });

@@ -1,6 +1,6 @@
 import { test, expect, ownerOrigin, captureState } from "./fixtures";
 
-test("setup and settings are reachable by keyboard with reduced motion", async ({
+test("setup and settings are reachable by keyboard with reduced motion @device", async ({
   page,
   context,
   owners,

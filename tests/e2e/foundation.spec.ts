@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("home page renders the existing TrimTime entry point", async ({
+test("home page renders the existing TrimTime entry point @device", async ({
   page,
 }) => {
   const errors: string[] = [];

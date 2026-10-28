@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { test, expect, ownerOrigin } from "./fixtures";
 import { createOwnerAppointment } from "./owner-booking-fixtures";
 
-test("owner can move a booking from calendar details", async ({
+test("owner can move a booking from calendar details @device", async ({
   page,
   context,
   owners,
@@ -62,7 +62,7 @@ test("owner can move a booking from standalone details", async ({
   );
 });
 
-test("owner cancellation requires confirmation and retains the cancelled booking", async ({
+test("owner cancellation requires confirmation and retains the cancelled booking @device", async ({
   page,
   context,
   owners,
@@ -85,7 +85,9 @@ test("owner cancellation requires confirmation and retains the cancelled booking
     await page.setViewportSize({ width, height: 844 });
     const dialog = page.getByRole("dialog", { name: "Cancel appointment?" });
     const dialogBox = await dialog.boundingBox();
-    const title = dialog.getByRole("heading", { name: "Cancel appointment?" });
+    const title = dialog.getByRole("heading", {
+      name: "Cancel appointment?",
+    });
     const titleText = await title.evaluate((element) => {
       const range = document.createRange();
       range.selectNodeContents(element);
@@ -410,7 +412,7 @@ test("owner keeps the uncertain operation payload fixed until recovery", async (
   expect(bodies[1]).toEqual(bodies[0]);
 });
 
-test("dirty move drafts survive keep and discard decisions on dismissal", async ({
+test("dirty move drafts survive keep and discard decisions on dismissal @device", async ({
   page,
   context,
   owners,

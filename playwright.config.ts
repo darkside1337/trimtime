@@ -1,5 +1,9 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const allDevices =
+  process.env.TRIMTIME_E2E_ALL_DEVICES === "1" ||
+  process.env.TRIMTIME_E2E_EMAIL_MODE?.startsWith("mailpit-");
+
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: true,
@@ -20,10 +24,12 @@ export default defineConfig({
     },
     {
       name: "tablet-chromium",
+      grep: allDevices ? undefined : /@device/,
       use: { ...devices["iPad Mini"], browserName: "chromium" },
     },
     {
       name: "phone-chromium",
+      grep: allDevices ? undefined : /@device/,
       use: { ...devices["iPhone 13"], browserName: "chromium" },
     },
   ],

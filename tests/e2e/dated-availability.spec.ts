@@ -31,7 +31,7 @@ async function resolveBoundary(
   await response;
 }
 
-test("the dated editor can be loaded and toggled by keyboard with visible focus", async ({
+test("the dated editor can be loaded and toggled by keyboard with visible focus @device", async ({
   page,
   context,
   owners,

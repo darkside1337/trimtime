@@ -6,7 +6,7 @@ import {
   captureState,
 } from "./fixtures";
 
-test("new owner creates a draft shop and reaches Calendar", async ({
+test("new owner creates a draft shop and reaches Calendar @device", async ({
   page,
   context,
   owners,

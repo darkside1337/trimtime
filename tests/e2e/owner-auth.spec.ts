@@ -1,6 +1,6 @@
 import { test, expect, ownerOrigin, captureState } from "./fixtures";
 
-test("sign-in keeps the tablet action visible and supports skipping the introduction", async ({
+test("sign-in keeps the tablet action visible and supports skipping the introduction @device", async ({
   page,
 }, info) => {
   await page.setViewportSize({ width: 768, height: 900 });
@@ -71,11 +71,9 @@ test("a cancelled provider callback returns a safe message and allows retry", as
     `${ownerOrigin}/sign-in?error=access_denied&error_description=provider-detail`,
   );
   await expect(
-    page
-      .getByRole("alert")
-      .filter({
-        hasText: "Google sign-in was cancelled or could not be completed.",
-      }),
+    page.getByRole("alert").filter({
+      hasText: "Google sign-in was cancelled or could not be completed.",
+    }),
   ).toBeVisible();
   await expect(page.getByText("provider-detail", { exact: true })).toHaveCount(
     0,

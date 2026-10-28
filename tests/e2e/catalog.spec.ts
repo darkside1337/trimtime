@@ -45,7 +45,7 @@ test("owners create, validate, assign, and reload shared service details", async
   await expect(page.locator("article")).toContainText("35 min");
 });
 
-test("service form confirms discard and fits the desktop, tablet, and phone widths", async ({
+test("service form confirms discard and fits the desktop, tablet, and phone widths @device", async ({
   page,
   context,
   owners,

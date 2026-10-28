@@ -3,7 +3,7 @@ import { test, expect, ownerOrigin, captureState } from "./fixtures";
 import { addReadyCatalog } from "./publication-fixtures";
 import { chooseBookingOptions } from "./booking-flow-helpers";
 
-test("guest booking advances one verified choice at a time", async ({
+test("guest booking advances one verified choice at a time @device", async ({
   page,
   context,
   owners,
@@ -85,7 +85,7 @@ test("guest booking advances one verified choice at a time", async ({
   await captureState(page, "customer-booking-date-time", info);
 });
 
-test("public booking requires explicit choices and creates a private manage link", async ({
+test("public booking requires explicit choices and creates a private manage link @device", async ({
   page,
   context,
   owners,
@@ -109,7 +109,11 @@ test("public booking requires explicit choices and creates a private manage link
   await expect(
     page.locator(`input[name="serviceId"][value="${serviceId}"]`),
   ).not.toBeChecked();
-  await chooseBookingOptions(page, { serviceId, barberId, date: "2026-11-02" });
+  await chooseBookingOptions(page, {
+    serviceId,
+    barberId,
+    date: "2026-11-02",
+  });
   await captureState(page, "customer-booking-details", info);
   await page.getByLabel("Name").fill("Ada Lovelace");
   await page.getByLabel("Email").fill(`ada-${randomUUID()}@example.test`);

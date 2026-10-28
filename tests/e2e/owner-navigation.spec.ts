@@ -6,7 +6,22 @@ import {
   test,
 } from "./fixtures";
 
-test("shared owner navigation follows each implemented destination", async ({
+test("owner navigation opens and closes with touch @device", async ({
+  page,
+  context,
+  owners,
+}, info) => {
+  test.skip(!info.project.use.hasTouch, "requires a touch-enabled device");
+  await owners(context, { shop: true });
+  await page.goto(`${ownerOrigin}/settings`);
+  await page.getByRole("button", { name: "Open navigation" }).tap();
+  const navigation = page.getByRole("dialog", { name: "Navigation" });
+  await expect(navigation).toBeVisible();
+  await page.getByRole("button", { name: "Close navigation" }).tap();
+  await expect(navigation).toBeHidden();
+});
+
+test("shared owner navigation follows each implemented destination @device", async ({
   page,
   context,
   owners,
@@ -72,7 +87,7 @@ test("shared owner navigation follows each implemented destination", async ({
   expect(errors).toEqual([]);
 });
 
-test("mobile drawer traps focus, dismisses, restores scrolling and closes on resize", async ({
+test("mobile drawer traps focus, dismisses, restores scrolling and closes on resize @device", async ({
   page,
   context,
   owners,
@@ -90,7 +105,10 @@ test("mobile drawer traps focus, dismisses, restores scrolling and closes on res
   await expect(close).toHaveCSS("width", "44px");
   await expect(close).toHaveCSS("height", "44px");
   await expect(
-    page.getByRole("button", { name: "Open navigation", includeHidden: true }),
+    page.getByRole("button", {
+      name: "Open navigation",
+      includeHidden: true,
+    }),
   ).toHaveAttribute("aria-expanded", "true");
   await page.keyboard.press("Shift+Tab");
   await expect(drawer.getByRole("button", { name: "Sign out" })).toBeFocused();

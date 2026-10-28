@@ -45,7 +45,7 @@ test("settings save announces success and survives reload", async ({
   );
 });
 
-test("settings show a complete long read-only address on a phone", async ({
+test("settings show a complete long read-only address on a phone @device", async ({
   page,
   context,
   owners,
