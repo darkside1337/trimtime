@@ -14,6 +14,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { ShopView } from "../queries";
+import type {
+  BookingChangeActivityView,
+  NotificationActivityRow,
+  NotificationActivityView,
+} from "@/features/notifications/types";
 
 const c = {
   workspace:
@@ -67,15 +72,18 @@ const categories = [
   "All messages",
   "Customer confirmation",
   "Owner alert",
+  "Customer update",
 ] as const;
 const channels = ["All", "Email", "WhatsApp"] as const;
 
-type Row = import("@/features/notifications/types").NotificationActivityRow;
+type Row = NotificationActivityRow;
 
 function title(row: Row) {
-  return row.kind === "customer_confirmation"
-    ? "Customer confirmation"
-    : "Owner alert";
+  if (row.kind === "customer_confirmation") return "Customer confirmation";
+  if (row.kind === "owner_alert") return "Owner alert";
+  return row.kind === "customer_move"
+    ? "Reschedule update"
+    : "Cancellation update";
 }
 
 function statusLabel(row: Row) {
@@ -99,11 +107,12 @@ function date(value: string, timeZone: string) {
 export function OwnerActivity({
   shop,
   activity,
+  changes,
   loadFailed = false,
 }: {
   shop: ShopView;
-  activity:
-    import("@/features/notifications/types").NotificationActivityView | null;
+  activity: NotificationActivityView | null;
+  changes: BookingChangeActivityView | null;
   loadFailed?: boolean;
 }) {
   const [category, setCategory] =
@@ -112,9 +121,13 @@ export function OwnerActivity({
   const [search, setSearch] = useState("");
   const [row, setRow] = useState<Row | null>(null);
   const events = activity?.rows ?? [];
+  const changeEvents = changes?.rows ?? [];
   const filtered = events.filter(
     (event) =>
-      (category === "All messages" || title(event) === category) &&
+      (category === "All messages" ||
+        title(event) === category ||
+        (category === "Customer update" &&
+          ["customer_move", "customer_cancellation"].includes(event.kind))) &&
       (channel === "All" ||
         event.channel.toLowerCase() === channel.toLowerCase()) &&
       `${title(event)} ${event.recipient ?? ""} ${event.bookingId} ${event.id} ${event.status} ${event.reason ?? ""}`
@@ -122,8 +135,13 @@ export function OwnerActivity({
         .includes(search.toLowerCase()),
   );
   const count = (value: string) =>
-    events.filter((event) => value === "All messages" || title(event) === value)
-      .length;
+    events.filter(
+      (event) =>
+        value === "All messages" ||
+        title(event) === value ||
+        (value === "Customer update" &&
+          ["customer_move", "customer_cancellation"].includes(event.kind)),
+    ).length;
 
   return (
     <main className={`${c.workspace} ${c.activityWorkspace}`}>
@@ -234,61 +252,118 @@ export function OwnerActivity({
           <p role="alert" className={c.noMatches}>
             Activity could not be loaded. Try again later.
           </p>
-        ) : filtered.length ? (
-          <section className={c.eventGroup}>
-            <header>
-              <h2>Notification records</h2>
-              <span>
-                {filtered.length}{" "}
-                {filtered.length === 1 ? "message" : "messages"}
-              </span>
-            </header>
-            {filtered.map((event) => (
-              <article className={c.activityEvent} key={event.id}>
-                <span className={c.eventIcon} aria-hidden="true">
-                  {event.channel === "whatsapp" ? (
-                    <MessageCircle className="size-4" />
-                  ) : (
-                    <Mail className="size-4" />
-                  )}
-                </span>
-                <div className={c.eventCopy}>
-                  <h3>
-                    {title(event)}{" "}
-                    {event.creationSource === "owner" && (
-                      <span>Manual appointment</span>
-                    )}{" "}
-                    <span>#{event.id}</span>
-                  </h3>
-                  <p>
-                    Booking #{event.bookingId} · {event.channel}
-                  </p>
-                  <small>
-                    Updated {date(event.updatedAt, shop.timeZone)} ·{" "}
-                    {event.recipient ?? "No authorized recipient"}
-                  </small>
-                  {event.creationSource === "owner" && !event.recipient && (
-                    <small>
-                      No email recipient was provided; no notification channel
-                      is available.
-                    </small>
-                  )}
-                </div>
-                <span className={c.eventStatus}>{statusLabel(event)}</span>
-                <div className={c.eventActions}>
-                  <Button variant="outline" onClick={() => setRow(event)}>
-                    Event details
-                  </Button>
-                </div>
-              </article>
-            ))}
-          </section>
         ) : (
-          <p className={c.noMatches}>
-            {events.length
-              ? "No messages match these filters."
-              : "No notification records yet for this shop."}
-          </p>
+          <>
+            <section className={c.eventGroup}>
+              <header>
+                <h2>Recent appointment changes</h2>
+                <span>
+                  {changeEvents.length}{" "}
+                  {changeEvents.length === 1 ? "change" : "changes"}
+                </span>
+              </header>
+              {changeEvents.length ? (
+                changeEvents.map((event) => {
+                  const before = event.before;
+                  const after = event.after;
+                  return (
+                    <article className={c.activityEvent} key={event.id}>
+                      <span className={c.eventIcon} aria-hidden="true">
+                        ✎
+                      </span>
+                      <div className={c.eventCopy}>
+                        <h3>
+                          {event.kind === "move"
+                            ? "Appointment rescheduled"
+                            : "Appointment cancelled"}
+                        </h3>
+                        <p>
+                          Booking #{event.bookingId} · revision {event.revision}
+                        </p>
+                        <small>
+                          Before: {String(before.serviceName)} ·{" "}
+                          {String(before.barberName)} ·{" "}
+                          {date(String(before.startAt), shop.timeZone)} –{" "}
+                          {date(String(before.endAt), shop.timeZone)}
+                        </small>
+                        <small>
+                          After: {String(after.serviceName)} ·{" "}
+                          {String(after.barberName)} ·{" "}
+                          {date(String(after.startAt), shop.timeZone)} –{" "}
+                          {date(String(after.endAt), shop.timeZone)} ·{" "}
+                          {String(after.status)}
+                        </small>
+                        <small>
+                          Recorded {date(event.committedAt, shop.timeZone)}
+                        </small>
+                      </div>
+                    </article>
+                  );
+                })
+              ) : (
+                <p className={c.noMatches}>
+                  No appointment changes recorded for this shop.
+                </p>
+              )}
+            </section>
+            <section className={c.eventGroup}>
+              <header>
+                <h2>Notification records</h2>
+                <span>
+                  {filtered.length}{" "}
+                  {filtered.length === 1 ? "message" : "messages"}
+                </span>
+              </header>
+              {filtered.length ? (
+                filtered.map((event) => (
+                  <article className={c.activityEvent} key={event.id}>
+                    <span className={c.eventIcon} aria-hidden="true">
+                      {event.channel === "whatsapp" ? (
+                        <MessageCircle className="size-4" />
+                      ) : (
+                        <Mail className="size-4" />
+                      )}
+                    </span>
+                    <div className={c.eventCopy}>
+                      <h3>
+                        {title(event)}{" "}
+                        {event.kind === "customer_confirmation" &&
+                          event.creationSource === "owner" && (
+                            <span>Manual appointment</span>
+                          )}{" "}
+                        <span>#{event.id}</span>
+                      </h3>
+                      <p>
+                        Booking #{event.bookingId} · {event.channel}
+                      </p>
+                      <small>
+                        Updated {date(event.updatedAt, shop.timeZone)} ·{" "}
+                        {event.recipient ?? "No authorized recipient"}
+                      </small>
+                      {event.creationSource === "owner" && !event.recipient && (
+                        <small>
+                          No email recipient was provided; no notification
+                          channel is available.
+                        </small>
+                      )}
+                    </div>
+                    <span className={c.eventStatus}>{statusLabel(event)}</span>
+                    <div className={c.eventActions}>
+                      <Button variant="outline" onClick={() => setRow(event)}>
+                        Event details
+                      </Button>
+                    </div>
+                  </article>
+                ))
+              ) : (
+                <p className={c.noMatches}>
+                  {events.length
+                    ? "No messages match these filters."
+                    : "No notification records yet for this shop."}
+                </p>
+              )}
+            </section>
+          </>
         )}
       </div>
       <aside className={c.retention}>

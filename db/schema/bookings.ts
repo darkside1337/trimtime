@@ -27,6 +27,7 @@ export const bookings = pgTable(
       .unique()
       .references(() => occupiedIntervals.id, { onDelete: "set null" }),
     status: text("status").notNull().default("confirmed"),
+    revision: integer("revision").notNull().default(0),
     startAt: timestamp("start_at", {
       withTimezone: true,
       mode: "date",
@@ -83,6 +84,7 @@ export const bookings = pgTable(
       "bookings_status_check",
       sql`${table.status} IN ('confirmed', 'cancelled')`,
     ),
+    check("bookings_revision_check", sql`${table.revision} >= 0`),
     check(
       "bookings_creation_source_check",
       sql`${table.creationSource} IN ('public', 'owner')`,

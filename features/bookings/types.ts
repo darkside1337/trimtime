@@ -79,10 +79,16 @@ export type OwnerCalendarView = {
 
 export type OwnerAppointmentView = {
   id: string;
+  revision: number;
   status: "confirmed" | "cancelled";
   startAt: string;
   endAt: string;
-  service: { name: string; priceUsd: string; durationMinutes: number };
+  service: {
+    id: string;
+    name: string;
+    priceUsd: string;
+    durationMinutes: number;
+  };
   barber: { id: string; name: string; archived: boolean };
   customer: {
     name: string;
@@ -111,6 +117,19 @@ export type OwnerAppointmentChoices = {
   }[];
 };
 
+export type OwnerAppointmentMoveChoices = {
+  timeZone: string;
+  barbers: { id: string; name: string }[];
+  services: {
+    id: string;
+    name: string;
+    priceUsd: string;
+    durationMinutes: number;
+    barberIds: string[];
+    hidden: boolean;
+  }[];
+};
+
 export type OwnerBookingReceipt = {
   bookingId: string;
   appointment: OwnerAppointmentView;
@@ -118,4 +137,16 @@ export type OwnerBookingReceipt = {
     email: CustomerEmailSummary;
     whatsapp: "unavailable" | "not_requested";
   };
+};
+
+export type OwnerChangeReceipt = {
+  bookingId: string;
+  operation: {
+    id: string;
+    kind: "move" | "cancel";
+    revision: number;
+    committedAt: string;
+    snapshot: Record<string, unknown>;
+  };
+  appointment: OwnerAppointmentView;
 };

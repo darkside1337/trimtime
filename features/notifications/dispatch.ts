@@ -13,6 +13,7 @@ import {
 import { notificationContentIdentity } from "./content-identity";
 import {
   renderCustomerConfirmation,
+  renderCustomerUpdate,
   renderOwnerAlert,
   type BookingMessageSnapshot,
   type OutboundMessage,
@@ -32,6 +33,7 @@ type DispatchDependencies = {
 type CurrentBooking = BookingMessageSnapshot & {
   id: string;
   status: string;
+  revision: number;
   customerPhone: string | null;
   capabilityHash: string;
   capabilityCiphertext: string;
@@ -88,7 +90,7 @@ async function authorize(input: {
 
     await tx.execute(sql`SELECT id FROM shops WHERE id=${shopId} FOR UPDATE`);
     const bookingResult = await tx.execute(sql`
-      SELECT b.id, b.shop_id AS "shopId", b.status, b.start_at AS "startAt", b.end_at AS "endAt",
+      SELECT b.id, b.shop_id AS "shopId", b.status, b.revision, b.start_at AS "startAt", b.end_at AS "endAt",
         b.service_name AS "serviceName", b.service_price_usd AS "servicePriceUsd",
         b.service_duration_minutes AS "serviceDurationMinutes", b.barber_name AS "barberName",
         b.customer_name AS "customerName", b.customer_email AS "customerEmail",
@@ -103,10 +105,11 @@ async function authorize(input: {
     const rawBooking = bookingResult.rows[0] as
       Record<string, unknown> | undefined;
     const workResult = await tx.execute(sql`
-      SELECT id, kind, status, recipient, content_identity AS "contentIdentity"
-      FROM notification_work
-      WHERE id=${input.workId} AND booking_id=${input.bookingId} AND channel='email'
-      FOR UPDATE
+      SELECT w.id, w.kind, w.status, w.recipient, w.booking_revision AS "bookingRevision",
+        w.content_identity AS "contentIdentity", c.before_snapshot AS "beforeSnapshot"
+      FROM notification_work w LEFT JOIN booking_changes c ON c.id=w.change_id
+      WHERE w.id=${input.workId} AND w.booking_id=${input.bookingId} AND w.channel='email'
+      FOR UPDATE OF w
     `);
     const rawWork = workResult.rows[0] as Record<string, unknown> | undefined;
     if (!rawBooking || !rawWork || rawWork.status !== "not_attempted")
@@ -117,6 +120,7 @@ async function authorize(input: {
       id: String(rawBooking.id),
       shopId: String(rawBooking.shopId),
       status: String(rawBooking.status),
+      revision: Number(rawBooking.revision),
       startAt: rawBooking.startAt as Date,
       endAt: rawBooking.endAt as Date,
       serviceName: String(rawBooking.serviceName),
@@ -150,13 +154,25 @@ async function authorize(input: {
       await suppress(tx, input.workId, "skipped", "recipient_missing", now);
       return null;
     }
-    const expectedRecipient =
-      kind === "customer_confirmation"
-        ? booking.customerEmail
-        : booking.ownerEmail;
+    const isCustomerWork =
+      kind === "customer_confirmation" ||
+      kind === "customer_move" ||
+      kind === "customer_cancellation";
+    const expectedRecipient = isCustomerWork
+      ? booking.customerEmail
+      : booking.ownerEmail;
+    const workRevision = Number(rawWork.bookingRevision);
+    const eligibleState =
+      kind === "customer_confirmation" || kind === "owner_alert"
+        ? booking.status === "confirmed" && booking.revision === 0
+        : kind === "customer_move"
+          ? booking.status === "confirmed" && booking.revision === workRevision
+          : kind === "customer_cancellation"
+            ? booking.status === "cancelled" &&
+              booking.revision === workRevision
+            : false;
     if (
-      (kind !== "customer_confirmation" && kind !== "owner_alert") ||
-      booking.status !== "confirmed" ||
+      !eligibleState ||
       booking.capabilityRevokedAt ||
       new Date(booking.endAt).getTime() + 7 * 24 * 60 * 60_000 <=
         now.getTime() ||
@@ -175,7 +191,7 @@ async function authorize(input: {
 
     let message: OutboundMessage;
     try {
-      if (kind === "customer_confirmation") {
+      if (isCustomerWork) {
         let token: string;
         try {
           token = decryptCapability(
@@ -195,11 +211,27 @@ async function authorize(input: {
           );
           return null;
         }
-        message = renderCustomerConfirmation({
-          booking,
-          recipient,
-          manageUrl: canonicalManageUrl(booking.subdomain, token),
-        });
+        const manageUrl = canonicalManageUrl(booking.subdomain, token);
+        if (kind === "customer_confirmation") {
+          message = renderCustomerConfirmation({
+            booking,
+            recipient,
+            manageUrl,
+          });
+        } else {
+          const before = rawWork.beforeSnapshot as {
+            startAt: string;
+            endAt: string;
+          } | null;
+          if (!before) throw new Error("Change snapshot is unavailable.");
+          message = renderCustomerUpdate({
+            booking,
+            recipient,
+            manageUrl,
+            kind: kind === "customer_move" ? "move" : "cancel",
+            before,
+          });
+        }
       } else {
         message = renderOwnerAlert({
           booking,

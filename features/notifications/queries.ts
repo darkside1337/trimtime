@@ -3,7 +3,10 @@ import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import type { ActionResult } from "@/lib/action-result";
 import type { OwnerContext } from "@/server/owner-context";
-import type { NotificationActivityView } from "./types";
+import type {
+  BookingChangeActivityView,
+  NotificationActivityView,
+} from "./types";
 
 export async function getOwnNotificationActivity(
   context: OwnerContext | null,
@@ -41,7 +44,7 @@ export async function getOwnNotificationActivity(
       id: String(item.id),
       bookingId: String(item.bookingId),
       creationSource: item.creationSource as "public" | "owner",
-      kind: item.kind as "customer_confirmation" | "owner_alert",
+      kind: item.kind as NotificationActivityView["rows"][number]["kind"],
       channel: item.channel as "email" | "whatsapp",
       status: item.status as NotificationActivityView["rows"][number]["status"],
       recipient: item.recipient as string | null,
@@ -64,4 +67,40 @@ export async function getOwnNotificationActivity(
     };
   });
   return { success: true, data: { rows } };
+}
+
+export async function getOwnBookingActivity(
+  context: OwnerContext | null,
+): Promise<ActionResult<BookingChangeActivityView>> {
+  if (!context?.userId)
+    return {
+      success: false,
+      error: { code: "UNAUTHORIZED", message: "Sign in to view activity." },
+    };
+  const result = await db.execute(sql`
+    SELECT c.id, c.booking_id AS "bookingId", c.kind,
+      c.applied_revision AS revision, c.committed_at AS "committedAt",
+      c.before_snapshot AS before, c.after_snapshot AS after
+    FROM booking_changes c
+    JOIN shops s ON s.id=c.shop_id
+    WHERE s.owner_id=${context.userId}
+    ORDER BY c.committed_at DESC, c.applied_revision DESC, c.id DESC
+  `);
+  return {
+    success: true,
+    data: {
+      rows: result.rows.map((row) => {
+        const item = row as Record<string, unknown>;
+        return {
+          id: String(item.id),
+          bookingId: String(item.bookingId),
+          kind: item.kind as "move" | "cancel",
+          revision: Number(item.revision),
+          committedAt: new Date(item.committedAt as Date).toISOString(),
+          before: item.before as Record<string, unknown>,
+          after: item.after as Record<string, unknown>,
+        };
+      }),
+    },
+  };
 }

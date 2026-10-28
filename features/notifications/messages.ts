@@ -110,6 +110,41 @@ export function renderCustomerConfirmation(input: {
   );
 }
 
+export function renderCustomerUpdate(input: {
+  booking: BookingMessageSnapshot;
+  recipient: string;
+  manageUrl: string;
+  kind: "move" | "cancel";
+  before: { startAt: Date | string; endAt: Date | string };
+}): OutboundMessage {
+  const { booking, kind, before } = input;
+  const moved = kind === "move";
+  const subject = moved ? "Booking updated" : "Booking cancelled";
+  return createMessage(
+    input.recipient,
+    `${subject} — ${safeHeader(booking.shop.name)}`,
+    [
+      `Hello ${booking.customerName},`,
+      "",
+      demoNotice,
+      "",
+      moved
+        ? "The shop has rescheduled your booking. Here are the current saved details:"
+        : "The shop has cancelled your booking. The saved appointment details are retained:",
+      moved
+        ? "Customer changes require at least 12 hours' notice.\nFor changes with less than 12 hours remaining, contact the shop."
+        : "Your manage link is now read-only because this booking was cancelled.",
+      `Previously: ${formatTime(before.startAt, booking.shop.timeZone)} to ${formatTime(before.endAt, booking.shop.timeZone)}`,
+      ...bookingDetails(booking),
+      "",
+      `Shop: ${booking.shop.name}`,
+      `Address: ${booking.shop.address}`,
+      `Contact: ${booking.shop.publicContact}`,
+      `Manage your booking: ${input.manageUrl}`,
+    ].join("\n"),
+  );
+}
+
 export function renderOwnerAlert(input: {
   booking: BookingMessageSnapshot;
   recipient: string;

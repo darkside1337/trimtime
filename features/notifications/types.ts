@@ -13,7 +13,11 @@ export type NotificationActivityRow = {
   id: string;
   bookingId: string;
   creationSource: "public" | "owner";
-  kind: "customer_confirmation" | "owner_alert";
+  kind:
+    | "customer_confirmation"
+    | "owner_alert"
+    | "customer_move"
+    | "customer_cancellation";
   channel: "email" | "whatsapp";
   status: NotificationStatus;
   recipient: string | null;
@@ -31,3 +35,15 @@ export type NotificationActivityRow = {
 };
 
 export type NotificationActivityView = { rows: NotificationActivityRow[] };
+
+export type BookingChangeActivityRow = {
+  id: string;
+  bookingId: string;
+  kind: "move" | "cancel";
+  revision: number;
+  committedAt: string;
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
+};
+
+export type BookingChangeActivityView = { rows: BookingChangeActivityRow[] };

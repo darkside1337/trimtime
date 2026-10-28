@@ -4,7 +4,10 @@ import { redirect } from "next/navigation";
 import { connection } from "next/server";
 import { OwnerActivity } from "@/features/shops/components/owner-activity";
 import { getOwnShop } from "@/features/shops/queries";
-import { getOwnNotificationActivity } from "@/features/notifications/queries";
+import {
+  getOwnBookingActivity,
+  getOwnNotificationActivity,
+} from "@/features/notifications/queries";
 import { readOwnerContext } from "@/server/owner-context";
 
 export default function ActivityPage() {
@@ -22,15 +25,26 @@ async function ActivityContent() {
   const shop = await getOwnShop(context);
   if (!shop) redirect("/setup");
   let activity = null;
+  let changes = null;
   let loadFailed = false;
   try {
-    const result = await getOwnNotificationActivity(context);
-    if (result.success) activity = result.data;
-    else loadFailed = true;
+    const [result, changeResult] = await Promise.all([
+      getOwnNotificationActivity(context),
+      getOwnBookingActivity(context),
+    ]);
+    if (result.success && changeResult.success) {
+      activity = result.data;
+      changes = changeResult.data;
+    } else loadFailed = true;
   } catch {
     loadFailed = true;
   }
   return (
-    <OwnerActivity shop={shop} activity={activity} loadFailed={loadFailed} />
+    <OwnerActivity
+      shop={shop}
+      activity={activity}
+      changes={changes}
+      loadFailed={loadFailed}
+    />
   );
 }

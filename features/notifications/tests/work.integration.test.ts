@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import {
   afterAll,
   afterEach,
@@ -23,7 +23,13 @@ describe("notification work", () => {
   let saveShopSchedule: typeof import("@/features/availability/mutations").saveShopSchedule;
   let setOwnShopPublication: typeof import("@/features/shops/mutations").setOwnShopPublication;
   let createPublicBooking: typeof import("@/features/bookings/mutations").createPublicBooking;
+  let createOwnerBooking: typeof import("@/features/bookings/mutations").createOwnerBooking;
   let getOwnNotificationActivity: typeof import("../queries").getOwnNotificationActivity;
+  let getOwnBookingActivity: typeof import("../queries").getOwnBookingActivity;
+  let cancelOwnerBooking: typeof import("@/features/bookings/mutations").cancelOwnerBooking;
+  let moveOwnerBooking: typeof import("@/features/bookings/mutations").moveOwnerBooking;
+  let getManagedBooking: typeof import("@/features/bookings/queries").getManagedBooking;
+  let getOwnAppointment: typeof import("@/features/bookings/queries").getOwnAppointment;
   const ownerIds: string[] = [];
   const week = Array.from({ length: 7 }, (_, index) => ({
     working: index === 0 ? [{ start: 540, end: 1020 }] : [],
@@ -57,7 +63,13 @@ describe("notification work", () => {
     ({ saveService } = await import("@/features/catalog/mutations"));
     ({ saveShopSchedule } = await import("@/features/availability/mutations"));
     ({ createPublicBooking } = await import("@/features/bookings/mutations"));
-    ({ getOwnNotificationActivity } = await import("../queries"));
+    ({ createOwnerBooking } = await import("@/features/bookings/mutations"));
+    ({ cancelOwnerBooking } = await import("@/features/bookings/mutations"));
+    ({ moveOwnerBooking } = await import("@/features/bookings/mutations"));
+    ({ getOwnBookingActivity, getOwnNotificationActivity } =
+      await import("../queries"));
+    ({ getManagedBooking, getOwnAppointment } =
+      await import("@/features/bookings/queries"));
     const { pool: appPool } = await import("@/db");
     appPool.options.max = 5;
     closeAppPool = () => appPool.end();
@@ -164,6 +176,228 @@ describe("notification work", () => {
       result.data.manageUrl.split("/manage/")[1],
     );
     expect(JSON.stringify(activity)).not.toContain("ciphertext");
+  });
+
+  it("shows accepted owner cancellation history only to the owning shop", async () => {
+    const own = await fixture();
+    const other = await fixture();
+    const created = await createPublicBooking(
+      { shopId: own.shopId },
+      notificationBookingInput(
+        own.serviceId,
+        own.barberId,
+        "change@example.test",
+      ),
+    );
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+    const moved = await moveOwnerBooking(own.context, {
+      bookingId: created.data.bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+      serviceId: own.serviceId,
+      barberId: own.barberId,
+      startAt: "2026-11-02T11:00:00.000Z",
+      reviewedOffer: { name: "Cut", priceUsd: "25.00", durationMinutes: "30" },
+    });
+    expect(moved.success).toBe(true);
+    const cancelled = await cancelOwnerBooking(own.context, {
+      bookingId: created.data.bookingId,
+      expectedRevision: 1,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(cancelled.success).toBe(true);
+
+    const activity = await getOwnBookingActivity(own.context);
+    const foreign = await getOwnBookingActivity(other.context);
+    const cancelledView = await getOwnAppointment(
+      own.context,
+      created.data.bookingId,
+    );
+    expect(activity.success).toBe(true);
+    if (!activity.success) return;
+    expect(activity.data.rows).toHaveLength(2);
+    expect(activity.data.rows[0]).toMatchObject({
+      bookingId: created.data.bookingId,
+      kind: "cancel",
+      revision: 2,
+      before: { status: "confirmed", startAt: "2026-11-02T11:00:00.000Z" },
+      after: { status: "cancelled", startAt: "2026-11-02T11:00:00.000Z" },
+    });
+    expect(activity.data.rows[1]).toMatchObject({
+      bookingId: created.data.bookingId,
+      kind: "move",
+      revision: 1,
+      before: { startAt: "2026-11-02T10:00:00.000Z" },
+      after: { startAt: "2026-11-02T11:00:00.000Z" },
+    });
+    expect(foreign).toMatchObject({ success: true, data: { rows: [] } });
+    expect(cancelledView).toMatchObject({
+      success: true,
+      data: {
+        status: "cancelled",
+        notifications: { email: { status: "not_attempted" } },
+      },
+    });
+  });
+
+  it("records a cancellation event without a channel or owner self-alert", async () => {
+    process.env.EMAIL_MODE = "disabled";
+    const ids = await fixture();
+    const created = await createOwnerBooking(ids.context, {
+      serviceId: ids.serviceId,
+      barberId: ids.barberId,
+      startAt: "2026-11-02T10:07:00.000Z",
+      reviewedOffer: { name: "Cut", priceUsd: "25.00", durationMinutes: "30" },
+      contact: { name: "No email guest", whatsappOptIn: false },
+      recoveryKey: randomBytes(32).toString("base64url"),
+    });
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+    const cancelled = await cancelOwnerBooking(ids.context, {
+      bookingId: created.data.bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(cancelled.success).toBe(true);
+    const changes = await getOwnBookingActivity(ids.context);
+    const notifications = await getOwnNotificationActivity(ids.context);
+    expect(changes.success && changes.data.rows).toHaveLength(1);
+    expect(notifications.success).toBe(true);
+    if (!notifications.success) return;
+    expect(notifications.data.rows).toHaveLength(2);
+    expect(
+      notifications.data.rows.find(
+        (row) => row.kind === "customer_cancellation",
+      ),
+    ).toMatchObject({
+      status: "skipped",
+      reason: "recipient_missing",
+      recipient: null,
+      attempt: null,
+    });
+    expect(
+      notifications.data.rows.find(
+        (row) => row.kind === "customer_confirmation",
+      ),
+    ).toMatchObject({ status: "skipped", reason: "recipient_missing" });
+  });
+
+  it("records update delivery as unavailable without creating an owner self-alert", async () => {
+    const ids = await fixture();
+    const created = await createPublicBooking(
+      { shopId: ids.shopId },
+      notificationBookingInput(
+        ids.serviceId,
+        ids.barberId,
+        "disabled-update@example.test",
+      ),
+    );
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+    process.env.EMAIL_MODE = "disabled";
+    const cancelled = await cancelOwnerBooking(ids.context, {
+      bookingId: created.data.bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(cancelled.success).toBe(true);
+    process.env.EMAIL_MODE = "mailpit";
+    const activity = await getOwnNotificationActivity(ids.context);
+    expect(activity.success).toBe(true);
+    if (!activity.success) return;
+    expect(
+      activity.data.rows.find((row) => row.kind === "customer_cancellation"),
+    ).toMatchObject({
+      status: "unavailable",
+      reason: "disabled",
+      attempt: null,
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM notification_work WHERE booking_id=$1 AND kind='owner_alert' AND booking_revision>0",
+          [created.data.bookingId],
+        )
+      ).rows[0].count,
+    ).toBe(0);
+  });
+
+  it("shows notification status for the current revision on owner and manage views", async () => {
+    const ids = await fixture();
+    const created = await createPublicBooking(
+      { shopId: ids.shopId },
+      notificationBookingInput(
+        ids.serviceId,
+        ids.barberId,
+        "revision@example.test",
+      ),
+    );
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+    const moved = await moveOwnerBooking(ids.context, {
+      bookingId: created.data.bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+      serviceId: ids.serviceId,
+      barberId: ids.barberId,
+      startAt: "2026-11-02T11:00:00.000Z",
+      reviewedOffer: { name: "Cut", priceUsd: "25.00", durationMinutes: "30" },
+    });
+    expect(moved.success).toBe(true);
+    const token = created.data.manageUrl.split("/manage/")[1];
+    const managed = await getManagedBooking({ shopId: ids.shopId }, token);
+    const owner = await getOwnAppointment(ids.context, created.data.bookingId);
+    expect(managed).toMatchObject({
+      success: true,
+      data: { notifications: { email: { status: "not_attempted" } } },
+    });
+    expect(owner).toMatchObject({
+      success: true,
+      data: { notifications: { email: { status: "not_attempted" } } },
+    });
+  });
+
+  it("recovers initial owner creation with current booking state after a move", async () => {
+    const ids = await fixture();
+    const payload = {
+      serviceId: ids.serviceId,
+      barberId: ids.barberId,
+      startAt: "2026-11-02T10:07:00.000Z",
+      reviewedOffer: { name: "Cut", priceUsd: "25.00", durationMinutes: "30" },
+      contact: {
+        name: "Manual guest",
+        email: "recovery@example.test",
+        whatsappOptIn: false,
+      },
+      recoveryKey: randomBytes(32).toString("base64url"),
+    };
+    const created = await createOwnerBooking(ids.context, payload);
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+    const moved = await moveOwnerBooking(ids.context, {
+      bookingId: created.data.bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+      serviceId: ids.serviceId,
+      barberId: ids.barberId,
+      startAt: "2026-11-02T11:07:00.000Z",
+      reviewedOffer: payload.reviewedOffer,
+    });
+    expect(moved.success).toBe(true);
+    const recovered = await createOwnerBooking(ids.context, payload);
+    expect(recovered).toMatchObject({
+      success: true,
+      data: {
+        bookingId: created.data.bookingId,
+        appointment: {
+          revision: 1,
+          status: "confirmed",
+          startAt: "2026-11-02T11:07:00.000Z",
+          notifications: { email: { status: "not_attempted" } },
+        },
+      },
+    });
   });
 
   it("returns the same work after an identical recovery request", async () => {

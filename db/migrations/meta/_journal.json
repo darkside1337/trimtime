@@ -64,6 +64,13 @@
       "when": 1792886400003,
       "tag": "0008_owner_manual_appointments",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793059200000,
+      "tag": "0009_owner_booking_changes",
+      "breakpoints": true
     }
   ]
 }

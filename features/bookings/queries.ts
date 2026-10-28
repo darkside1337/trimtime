@@ -1,9 +1,8 @@
 import "server-only";
-import { and, eq, gt, lt } from "drizzle-orm";
+import { and, asc, eq, gt, lt, or, sql } from "drizzle-orm";
 import { Temporal } from "temporal-polyfill";
 import { db } from "@/db";
 import { bookings } from "@/db/schema/bookings";
-import { notificationWork } from "@/db/schema/notification-work";
 import { shops } from "@/db/schema/shops";
 import { barbers, barberServices, services } from "@/db/schema/catalog";
 import type { ActionResult } from "@/lib/action-result";
@@ -11,6 +10,7 @@ import { hashSecret } from "./capabilities";
 import type {
   ManagedBookingView,
   OwnerAppointmentChoices,
+  OwnerAppointmentMoveChoices,
   OwnerAppointmentView,
   OwnerCalendarView,
   PublicBookingContext,
@@ -48,21 +48,17 @@ export async function getManagedBooking(
         publicContact: shops.publicContact,
         address: shops.address,
         timeZone: shops.timeZone,
-        emailStatus: notificationWork.status,
-        emailReason: notificationWork.reason,
-        emailClaimedAt: notificationWork.claimedAt,
-        emailUpdatedAt: notificationWork.updatedAt,
+        emailStatus: sql<
+          string | null
+        >`(SELECT w.status FROM notification_work w WHERE w.booking_id=${bookings.id} AND w.channel='email' AND ((bookings.revision=0 AND w.booking_revision=0 AND w.kind='customer_confirmation') OR (bookings.revision>0 AND w.booking_revision=bookings.revision AND w.kind IN ('customer_move','customer_cancellation'))) ORDER BY w.created_at DESC LIMIT 1)`,
+        emailReason: sql<
+          string | null
+        >`(SELECT w.reason FROM notification_work w WHERE w.booking_id=${bookings.id} AND w.channel='email' AND ((bookings.revision=0 AND w.booking_revision=0 AND w.kind='customer_confirmation') OR (bookings.revision>0 AND w.booking_revision=bookings.revision AND w.kind IN ('customer_move','customer_cancellation'))) ORDER BY w.created_at DESC LIMIT 1)`,
+        emailClaimedAt: sql<Date | null>`(SELECT w.claimed_at FROM notification_work w WHERE w.booking_id=${bookings.id} AND w.channel='email' AND ((bookings.revision=0 AND w.booking_revision=0 AND w.kind='customer_confirmation') OR (bookings.revision>0 AND w.booking_revision=bookings.revision AND w.kind IN ('customer_move','customer_cancellation'))) ORDER BY w.created_at DESC LIMIT 1)`,
+        emailUpdatedAt: sql<Date | null>`(SELECT w.updated_at FROM notification_work w WHERE w.booking_id=${bookings.id} AND w.channel='email' AND ((bookings.revision=0 AND w.booking_revision=0 AND w.kind='customer_confirmation') OR (bookings.revision>0 AND w.booking_revision=bookings.revision AND w.kind IN ('customer_move','customer_cancellation'))) ORDER BY w.created_at DESC LIMIT 1)`,
       })
       .from(bookings)
       .innerJoin(shops, eq(shops.id, bookings.shopId))
-      .leftJoin(
-        notificationWork,
-        and(
-          eq(notificationWork.bookingId, bookings.id),
-          eq(notificationWork.kind, "customer_confirmation"),
-          eq(notificationWork.channel, "email"),
-        ),
-      )
       .where(
         and(
           eq(bookings.shopId, context.shopId),
@@ -273,9 +269,11 @@ export async function getOwnAppointment(
     const row = await db
       .select({
         id: bookings.id,
+        revision: bookings.revision,
         status: bookings.status,
         startAt: bookings.startAt,
         endAt: bookings.endAt,
+        serviceId: bookings.serviceId,
         serviceName: bookings.serviceName,
         servicePriceUsd: bookings.servicePriceUsd,
         serviceDurationMinutes: bookings.serviceDurationMinutes,
@@ -290,10 +288,14 @@ export async function getOwnAppointment(
         shopPublicContact: shops.publicContact,
         shopAddress: shops.address,
         shopTimeZone: shops.timeZone,
-        emailStatus: notificationWork.status,
-        emailReason: notificationWork.reason,
-        emailClaimedAt: notificationWork.claimedAt,
-        emailUpdatedAt: notificationWork.updatedAt,
+        emailStatus: sql<
+          string | null
+        >`(SELECT w.status FROM notification_work w WHERE w.booking_id=${bookings.id} AND w.channel='email' AND ((bookings.revision=0 AND w.booking_revision=0 AND w.kind='customer_confirmation') OR (bookings.revision>0 AND w.booking_revision=bookings.revision AND w.kind IN ('customer_move','customer_cancellation'))) ORDER BY w.created_at DESC LIMIT 1)`,
+        emailReason: sql<
+          string | null
+        >`(SELECT w.reason FROM notification_work w WHERE w.booking_id=${bookings.id} AND w.channel='email' AND ((bookings.revision=0 AND w.booking_revision=0 AND w.kind='customer_confirmation') OR (bookings.revision>0 AND w.booking_revision=bookings.revision AND w.kind IN ('customer_move','customer_cancellation'))) ORDER BY w.created_at DESC LIMIT 1)`,
+        emailClaimedAt: sql<Date | null>`(SELECT w.claimed_at FROM notification_work w WHERE w.booking_id=${bookings.id} AND w.channel='email' AND ((bookings.revision=0 AND w.booking_revision=0 AND w.kind='customer_confirmation') OR (bookings.revision>0 AND w.booking_revision=bookings.revision AND w.kind IN ('customer_move','customer_cancellation'))) ORDER BY w.created_at DESC LIMIT 1)`,
+        emailUpdatedAt: sql<Date | null>`(SELECT w.updated_at FROM notification_work w WHERE w.booking_id=${bookings.id} AND w.channel='email' AND ((bookings.revision=0 AND w.booking_revision=0 AND w.kind='customer_confirmation') OR (bookings.revision>0 AND w.booking_revision=bookings.revision AND w.kind IN ('customer_move','customer_cancellation'))) ORDER BY w.created_at DESC LIMIT 1)`,
       })
       .from(bookings)
       .innerJoin(
@@ -307,14 +309,6 @@ export async function getOwnAppointment(
           eq(barbers.shopId, bookings.shopId),
         ),
       )
-      .leftJoin(
-        notificationWork,
-        and(
-          eq(notificationWork.bookingId, bookings.id),
-          eq(notificationWork.kind, "customer_confirmation"),
-          eq(notificationWork.channel, "email"),
-        ),
-      )
       .where(eq(bookings.id, appointmentId))
       .limit(1);
     const found = row[0];
@@ -323,10 +317,12 @@ export async function getOwnAppointment(
       success: true,
       data: {
         id: found.id,
+        revision: found.revision,
         status: found.status as "confirmed" | "cancelled",
         startAt: found.startAt.toISOString(),
         endAt: found.endAt.toISOString(),
         service: {
+          id: found.serviceId,
           name: found.serviceName,
           priceUsd: found.servicePriceUsd,
           durationMinutes: found.serviceDurationMinutes,
@@ -421,6 +417,101 @@ export async function getOwnAppointmentChoices(
         priceUsd: row.priceUsd,
         durationMinutes: Number(row.durationMinutes),
         barberIds: [],
+      };
+      item.barberIds.push(row.barberId);
+      grouped.set(row.id, item);
+    }
+    return {
+      success: true,
+      data: {
+        timeZone: shop.timeZone,
+        barbers: barberRows,
+        services: [...grouped.values()],
+      },
+    };
+  } catch {
+    return ownerError(
+      "UNAVAILABLE",
+      "Appointment choices could not be loaded. Try again.",
+    );
+  }
+}
+
+export async function getOwnAppointmentMoveChoices(
+  context: OwnerContext | null,
+  appointmentId: string,
+): Promise<ActionResult<OwnerAppointmentMoveChoices>> {
+  if (!context?.userId)
+    return ownerError("UNAUTHENTICATED", "Sign in to manage appointments.");
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      appointmentId,
+    )
+  )
+    return ownerError("NOT_FOUND", "Appointment not found.");
+  try {
+    const shop = await ownShop(context);
+    if (!shop)
+      return ownerError(
+        "SHOP_REQUIRED",
+        "Set up your shop to manage appointments.",
+      );
+    const [booking] = await db
+      .select({
+        serviceId: bookings.serviceId,
+        serviceName: bookings.serviceName,
+        servicePriceUsd: bookings.servicePriceUsd,
+        serviceDurationMinutes: bookings.serviceDurationMinutes,
+      })
+      .from(bookings)
+      .where(and(eq(bookings.id, appointmentId), eq(bookings.shopId, shop.id)))
+      .limit(1);
+    if (!booking) return ownerError("NOT_FOUND", "Appointment not found.");
+    const barberRows = await db
+      .select({ id: barbers.id, name: barbers.name })
+      .from(barbers)
+      .where(and(eq(barbers.shopId, shop.id), eq(barbers.archived, false)));
+    const serviceRows = await db
+      .select({
+        id: services.id,
+        name: services.name,
+        priceUsd: services.priceUsd,
+        durationMinutes: services.durationMinutes,
+        offered: services.offered,
+        barberId: barberServices.barberId,
+      })
+      .from(services)
+      .innerJoin(
+        barberServices,
+        and(
+          eq(barberServices.shopId, services.shopId),
+          eq(barberServices.serviceId, services.id),
+        ),
+      )
+      .where(
+        and(
+          eq(services.shopId, shop.id),
+          eq(services.archived, false),
+          or(eq(services.offered, true), eq(services.id, booking.serviceId)),
+        ),
+      )
+      .orderBy(asc(services.name), asc(services.id));
+    const grouped = new Map<
+      string,
+      OwnerAppointmentMoveChoices["services"][number]
+    >();
+    for (const row of serviceRows) {
+      if (!barberRows.some((barber) => barber.id === row.barberId)) continue;
+      const isSavedService = row.id === booking.serviceId;
+      const item = grouped.get(row.id) ?? {
+        id: row.id,
+        name: isSavedService ? booking.serviceName : row.name,
+        priceUsd: isSavedService ? booking.servicePriceUsd : row.priceUsd,
+        durationMinutes: isSavedService
+          ? booking.serviceDurationMinutes
+          : Number(row.durationMinutes),
+        barberIds: [],
+        hidden: !row.offered,
       };
       item.barberIds.push(row.barberId);
       grouped.set(row.id, item);

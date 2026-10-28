@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { renderCustomerConfirmation, renderOwnerAlert } from "../messages";
+import {
+  renderCustomerConfirmation,
+  renderCustomerUpdate,
+  renderOwnerAlert,
+} from "../messages";
 
 const booking = {
   id: "booking-1",
@@ -85,6 +89,61 @@ describe("booking messages", () => {
     );
     expect(message.text).toContain("Barber: Saved Barber");
     expect(message.text).not.toContain("New catalog cut");
+  });
+
+  it("renders a committed move update from saved values and without the confirmation-only disclaimer", () => {
+    const message = renderCustomerUpdate({
+      booking: {
+        ...booking,
+        serviceName: "Saved Cut",
+        servicePriceUsd: "31.50",
+        serviceDurationMinutes: 45,
+        startAt: "2026-01-15T15:00:00.000Z",
+        endAt: "2026-01-15T15:45:00.000Z",
+      },
+      recipient: booking.customerEmail,
+      manageUrl: "https://northside.trimtime.test/manage/secret-token",
+      kind: "move",
+      before: {
+        startAt: "2026-01-15T14:00:00.000Z",
+        endAt: "2026-01-15T14:30:00.000Z",
+      },
+    });
+
+    expect(message.subject).toBe("Booking updated — Northside Barber");
+    expect(message.text).toContain("The shop has rescheduled your booking.");
+    expect(message.text).toContain(
+      "Customer changes require at least 12 hours' notice.",
+    );
+    expect(message.text).toContain(
+      "For changes with less than 12 hours remaining, contact the shop.",
+    );
+    expect(message.text).toContain("Previously: Jan 15, 2026, 9:00 AM");
+    expect(message.text).toContain(
+      "Service: Saved Cut — $31.50 USD (45 minutes)",
+    );
+    expect(message.text).toContain("Start: Jan 15, 2026, 10:00 AM");
+    expect(message.text).toContain(
+      "Manage your booking: https://northside.trimtime.test/manage/secret-token",
+    );
+    expect(message.text).not.toContain(
+      "does not confirm a cancellation or reschedule",
+    );
+  });
+
+  it("tells customers a cancelled booking's manage link is read-only", () => {
+    const message = renderCustomerUpdate({
+      booking,
+      recipient: booking.customerEmail,
+      manageUrl: "https://northside.trimtime.test/manage/secret-token",
+      kind: "cancel",
+      before: { startAt: booking.startAt, endAt: booking.endAt },
+    });
+
+    expect(message.text).toContain("The shop has cancelled your booking.");
+    expect(message.text).toContain(
+      "Your manage link is now read-only because this booking was cancelled.",
+    );
   });
 
   it("sends the owner alert to the account email without including the manage token", () => {

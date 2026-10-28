@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import {
   afterAll,
   afterEach,
@@ -34,6 +34,8 @@ describe("initial notification dispatch", () => {
   let setOwnShopPublication: typeof import("@/features/shops/mutations").setOwnShopPublication;
   let createPublicBooking: typeof import("@/features/bookings/mutations").createPublicBooking;
   let createOwnerBooking: typeof import("@/features/bookings/mutations").createOwnerBooking;
+  let moveOwnerBooking: typeof import("@/features/bookings/mutations").moveOwnerBooking;
+  let cancelOwnerBooking: typeof import("@/features/bookings/mutations").cancelOwnerBooking;
   let getManagedBooking: typeof import("@/features/bookings/queries").getManagedBooking;
   let dispatch: typeof import("../dispatch").dispatchInitialBookingNotifications;
   let getActivity: typeof import("../queries").getOwnNotificationActivity;
@@ -72,6 +74,8 @@ describe("initial notification dispatch", () => {
     ({ saveShopSchedule } = await import("@/features/availability/mutations"));
     ({ createPublicBooking } = await import("@/features/bookings/mutations"));
     ({ createOwnerBooking } = await import("@/features/bookings/mutations"));
+    ({ moveOwnerBooking } = await import("@/features/bookings/mutations"));
+    ({ cancelOwnerBooking } = await import("@/features/bookings/mutations"));
     ({ getManagedBooking } = await import("@/features/bookings/queries"));
     ({ dispatchInitialBookingNotifications: dispatch } =
       await import("../dispatch"));
@@ -284,6 +288,331 @@ describe("initial notification dispatch", () => {
     await expect(
       getManagedBooking({ shopId: ids.shopId }, token),
     ).resolves.toMatchObject({ success: true, data: { status: "confirmed" } });
+  });
+
+  it("dispatches a committed owner move update with its current saved snapshot and no owner self-alert", async () => {
+    const ids = await fixture();
+    const created = await booking(ids, "moved@example.test");
+    const moved = await moveOwnerBooking(ids.context, {
+      bookingId: created.bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+      serviceId: ids.serviceId,
+      barberId: ids.barberId,
+      startAt: "2026-11-02T11:00:00.000Z",
+      reviewedOffer: { name: "Cut", priceUsd: "25.00", durationMinutes: "30" },
+    });
+    expect(moved.success).toBe(true);
+    const messages: { to: string; subject: string; text: string }[] = [];
+    await dispatchTracked(created.bookingId, {
+      send: async ({ message, onInvoked }) => {
+        messages.push(message);
+        await onInvoked();
+        return captured;
+      },
+    });
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      to: "moved@example.test",
+      subject: "Booking updated — Juniper Barber",
+    });
+    expect(messages[0].text).toContain(
+      "The shop has rescheduled your booking.",
+    );
+    expect(messages[0].text).toContain("Start: Nov 2, 2026, 11:00 AM UTC");
+    expect(messages[0].text).not.toContain(
+      "does not confirm a cancellation or reschedule",
+    );
+    expect(messages[0].text).not.toContain(ids.owner.email);
+    const activity = await rows(ids);
+    expect(
+      activity.find((row) => row.kind === "customer_confirmation"),
+    ).toMatchObject({
+      status: "suppressed",
+      attempt: null,
+    });
+    expect(activity.find((row) => row.kind === "owner_alert")).toMatchObject({
+      status: "suppressed",
+      attempt: null,
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM notification_work WHERE booking_id=$1 AND kind='owner_alert' AND booking_revision>0",
+          [created.bookingId],
+        )
+      ).rows[0].count,
+    ).toBe(0);
+  });
+
+  it("dispatches the current cancellation update and suppresses obsolete creation work", async () => {
+    const ids = await fixture();
+    const created = await booking(ids, "cancel-update@example.test");
+    const moved = await moveOwnerBooking(ids.context, {
+      bookingId: created.bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+      serviceId: ids.serviceId,
+      barberId: ids.barberId,
+      startAt: "2026-11-02T11:00:00.000Z",
+      reviewedOffer: { name: "Cut", priceUsd: "25.00", durationMinutes: "30" },
+    });
+    expect(moved.success).toBe(true);
+    const cancelled = await cancelOwnerBooking(ids.context, {
+      bookingId: created.bookingId,
+      expectedRevision: 1,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(cancelled.success).toBe(true);
+    const beforeDispatch = await database.pool.query(
+      "SELECT kind,status FROM notification_work WHERE booking_id=$1 ORDER BY kind",
+      [created.bookingId],
+    );
+    expect(beforeDispatch.rows).toEqual([
+      { kind: "customer_cancellation", status: "not_attempted" },
+      { kind: "customer_confirmation", status: "suppressed" },
+      { kind: "customer_move", status: "suppressed" },
+      { kind: "owner_alert", status: "suppressed" },
+    ]);
+    const messages: { to: string; subject: string; text: string }[] = [];
+    await dispatchTracked(created.bookingId, {
+      send: async ({ message, onInvoked }) => {
+        messages.push(message);
+        await onInvoked();
+        return captured;
+      },
+    });
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      to: "cancel-update@example.test",
+      subject: "Booking cancelled — Juniper Barber",
+    });
+    expect(messages[0].text).toContain("The shop has cancelled your booking.");
+    expect(messages[0].text).toContain(
+      "Service: Cut — $25.00 USD (30 minutes)",
+    );
+    expect(messages[0].text).toContain("Start: Nov 2, 2026, 11:00 AM UTC");
+    expect(messages[0].text).toContain("Contact:");
+    expect(messages[0].text).toContain("Manage your booking:");
+    expect(
+      (await rows(ids))
+        .map(({ kind, status }) => ({ kind, status }))
+        .sort((a, b) => a.kind.localeCompare(b.kind)),
+    ).toEqual([
+      { kind: "customer_cancellation", status: "captured" },
+      { kind: "customer_confirmation", status: "suppressed" },
+      { kind: "customer_move", status: "suppressed" },
+      { kind: "owner_alert", status: "suppressed" },
+    ]);
+  });
+
+  it("keeps an in-flight prior revision attempt on its work after a later move", async () => {
+    const ids = await fixture();
+    const created = await booking(ids, "inflight-move@example.test");
+    const firstMove = await moveOwnerBooking(ids.context, {
+      bookingId: created.bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+      serviceId: ids.serviceId,
+      barberId: ids.barberId,
+      startAt: "2026-11-02T11:00:00.000Z",
+      reviewedOffer: { name: "Cut", priceUsd: "25.00", durationMinutes: "30" },
+    });
+    expect(firstMove.success).toBe(true);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const dispatched = dispatchTracked(created.bookingId, {
+      send: async ({ onInvoked }) => {
+        await onInvoked();
+        await gate;
+        return captured;
+      },
+    });
+    try {
+      await vi.waitFor(async () => {
+        const state = await database.pool.query(
+          "SELECT status FROM notification_work WHERE booking_id=$1 AND kind='customer_move' AND booking_revision=1",
+          [created.bookingId],
+        );
+        expect(state.rows[0]?.status).toBe("sending");
+      });
+      const secondMove = await moveOwnerBooking(ids.context, {
+        bookingId: created.bookingId,
+        expectedRevision: 1,
+        operationKey: randomBytes(32).toString("base64url"),
+        serviceId: ids.serviceId,
+        barberId: ids.barberId,
+        startAt: "2026-11-02T12:00:00.000Z",
+        reviewedOffer: {
+          name: "Cut",
+          priceUsd: "25.00",
+          durationMinutes: "30",
+        },
+      });
+      expect(secondMove.success).toBe(true);
+    } finally {
+      release();
+    }
+    await dispatched;
+    const work = await database.pool.query(
+      `SELECT w.booking_revision AS revision, w.status, a.outcome, a.capture_id
+       FROM notification_work w LEFT JOIN notification_attempts a ON a.work_id=w.id
+       WHERE w.booking_id=$1 AND w.kind='customer_move' ORDER BY w.booking_revision`,
+      [created.bookingId],
+    );
+    expect(work.rows).toEqual([
+      expect.objectContaining({
+        revision: 1,
+        status: "captured",
+        outcome: "captured",
+        capture_id: "local-capture",
+      }),
+      expect.objectContaining({
+        revision: 2,
+        status: "not_attempted",
+        outcome: null,
+        capture_id: null,
+      }),
+    ]);
+  });
+
+  it("sends only the newest update after a move away and back", async () => {
+    const ids = await fixture();
+    const created = await booking(ids, "move-back@example.test");
+    const move = (expectedRevision: number, startAt: string) =>
+      moveOwnerBooking(ids.context, {
+        bookingId: created.bookingId,
+        expectedRevision,
+        operationKey: randomBytes(32).toString("base64url"),
+        serviceId: ids.serviceId,
+        barberId: ids.barberId,
+        startAt,
+        reviewedOffer: {
+          name: "Cut",
+          priceUsd: "25.00",
+          durationMinutes: "30",
+        },
+      });
+    const away = await move(0, "2026-11-02T11:00:00.000Z");
+    expect(away.success).toBe(true);
+    const back = await move(1, "2026-11-02T10:30:00.000Z");
+    expect(back.success).toBe(true);
+    const beforeDispatch = await database.pool.query(
+      "SELECT booking_revision AS revision,status FROM notification_work WHERE booking_id=$1 AND kind='customer_move' ORDER BY booking_revision",
+      [created.bookingId],
+    );
+    expect(beforeDispatch.rows).toEqual([
+      { revision: 1, status: "suppressed" },
+      { revision: 2, status: "not_attempted" },
+    ]);
+    const messages: { to: string; text: string }[] = [];
+    await dispatchTracked(created.bookingId, {
+      send: async ({ message, onInvoked }) => {
+        messages.push(message);
+        await onInvoked();
+        return captured;
+      },
+    });
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0].to).toBe("move-back@example.test");
+    expect(messages[0].text).toContain("Start: Nov 2, 2026, 10:30 AM UTC");
+    expect(
+      (
+        await database.pool.query(
+          "SELECT booking_revision AS revision,status FROM notification_work WHERE booking_id=$1 AND kind='customer_move' ORDER BY booking_revision",
+          [created.bookingId],
+        )
+      ).rows,
+    ).toEqual([
+      { revision: 1, status: "suppressed" },
+      { revision: 2, status: "captured" },
+    ]);
+  });
+
+  it("keeps a moved booking committed when the update hits the daily cap and does not replay", async () => {
+    const ids = await fixture();
+    const created = await booking(ids, "move-budget@example.test");
+    const moved = await moveOwnerBooking(ids.context, {
+      bookingId: created.bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+      serviceId: ids.serviceId,
+      barberId: ids.barberId,
+      startAt: "2026-11-02T11:00:00.000Z",
+      reviewedOffer: { name: "Cut", priceUsd: "25.00", durationMinutes: "30" },
+    });
+    expect(moved.success).toBe(true);
+    const day = "2026-11-05";
+    await setBudget(day, 100);
+    let calls = 0;
+    const send = async () => {
+      calls++;
+      return captured;
+    };
+    const now = () => new Date(`${day}T12:00:00Z`);
+    await dispatchTracked(created.bookingId, { now, send });
+    const first = await database.pool.query(
+      "SELECT b.status,b.revision,b.start_at,w.status AS work_status,w.reason FROM bookings b JOIN notification_work w ON w.booking_id=b.id AND w.kind='customer_move' AND w.booking_revision=1 WHERE b.id=$1",
+      [created.bookingId],
+    );
+    expect(first.rows[0]).toMatchObject({
+      status: "confirmed",
+      revision: 1,
+      start_at: new Date("2026-11-02T11:00:00Z"),
+      work_status: "skipped",
+      reason: "daily_budget_exhausted",
+    });
+    await dispatchTracked(created.bookingId, { now, send });
+    expect(calls).toBe(0);
+    expect(
+      (await rows(ids)).find((item) => item.kind === "customer_move")?.status,
+    ).toBe("skipped");
+  });
+
+  it("claims one current customer update across concurrent dispatch calls", async () => {
+    const ids = await fixture();
+    const created = await booking(ids, "move-race@example.test");
+    const moved = await moveOwnerBooking(ids.context, {
+      bookingId: created.bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+      serviceId: ids.serviceId,
+      barberId: ids.barberId,
+      startAt: "2026-11-02T11:00:00.000Z",
+      reviewedOffer: { name: "Cut", priceUsd: "25.00", durationMinutes: "30" },
+    });
+    expect(moved.success).toBe(true);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let calls = 0;
+    const send = async ({ onInvoked }: SendInput) => {
+      calls++;
+      await onInvoked();
+      await gate;
+      return captured;
+    };
+    const first = dispatchTracked(created.bookingId, { send });
+    try {
+      await vi.waitFor(() => expect(calls).toBe(1));
+      await dispatchTracked(created.bookingId, { send });
+    } finally {
+      release();
+    }
+    await first;
+    expect(calls).toBe(1);
+    const update = await database.pool.query(
+      `SELECT w.status,a.outcome,count(a.id)::int AS attempts
+       FROM notification_work w LEFT JOIN notification_attempts a ON a.work_id=w.id
+       WHERE w.booking_id=$1 AND w.kind='customer_move' AND w.booking_revision=1
+       GROUP BY w.status,a.outcome`,
+      [created.bookingId],
+    );
+    expect(update.rows).toEqual([
+      { status: "captured", outcome: "captured", attempts: 1 },
+    ]);
   });
 
   it.each(["captured", "accepted"] as const)(
