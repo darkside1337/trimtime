@@ -17,8 +17,9 @@ import type { ServiceView, BarberView } from "../types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ClockIcon } from "lucide-react";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionError, ActionResult } from "@/lib/action-result";
 import { OwnerArchiveDialog } from "@/components/owner-archive-dialog";
+import { BookingConflictList } from "@/components/booking-conflict-list";
 import { OwnerDiscardDialog } from "@/components/owner-discard-dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -46,7 +47,7 @@ export function ServiceManagement({
   const [status, setStatus] = useState("");
   const [pending, setPending] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState<ServiceView | null>(null);
-  const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [archiveError, setArchiveError] = useState<ActionError | null>(null);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [editing, setEditing] = useState<ServiceView | null | undefined>(
     undefined,
@@ -287,7 +288,8 @@ export function ServiceManagement({
         <OwnerArchiveDialog
           resourceType="service"
           resourceName={archiveTarget.name}
-          error={archiveError}
+          error={archiveError?.message ?? null}
+          bookingConflicts={archiveError?.bookingConflicts}
           pending={pending}
           onOpenChange={(open) => {
             if (!open && !pending) {
@@ -305,13 +307,14 @@ export function ServiceManagement({
                   setStatus("Service archived.");
                   router.refresh();
                 } else {
-                  setArchiveError(result.error.message);
+                  setArchiveError(result.error);
                 }
               })
               .catch(() =>
-                setArchiveError(
-                  "Could not confirm the archive. Check your connection and try again.",
-                ),
+                setArchiveError({
+                  message:
+                    "Could not confirm the archive. Check your connection and try again.",
+                }),
               )
               .finally(() => setPending(false));
           }}
@@ -534,7 +537,14 @@ function ServiceDialog({
               </span>
             </span>
           </label>
-          {state && !state.success && <p role="alert">{state.error.message}</p>}
+          {state && !state.success && (
+            <>
+              <p role="alert">{state.error.message}</p>
+              <BookingConflictList
+                conflicts={state.error.bookingConflicts ?? []}
+              />
+            </>
+          )}
           <DialogFooter className="border-t pt-4 sm:justify-between">
             <Button
               type="button"

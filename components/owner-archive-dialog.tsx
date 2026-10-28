@@ -10,11 +10,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { BookingConflictList } from "@/components/booking-conflict-list";
+import type { BookingConflict } from "@/lib/action-result";
 
 export function OwnerArchiveDialog({
   resourceType,
   resourceName,
   error,
+  bookingConflicts,
   pending,
   onOpenChange,
   onConfirm,
@@ -22,6 +25,7 @@ export function OwnerArchiveDialog({
   resourceType: "service" | "barber";
   resourceName: string;
   error: string | null;
+  bookingConflicts?: BookingConflict[];
   pending: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirm: () => void;
@@ -53,6 +57,7 @@ export function OwnerArchiveDialog({
             {error}
           </p>
         )}
+        <BookingConflictList conflicts={bookingConflicts ?? []} />
         <DialogFooter className="flex-col sm:flex-row">
           <Button
             variant="outline"

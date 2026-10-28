@@ -9,7 +9,7 @@ import type { ActionResult } from "@/lib/action-result";
 import type { OwnerContext } from "@/server/owner-context";
 import {
   BookingProtectionError,
-  hasProtectedBooking,
+  protectedBookingConflicts,
 } from "@/features/bookings/protection";
 import { saveServiceSchema } from "./schemas";
 import type { ServiceInput, ServiceView } from "./types";
@@ -51,6 +51,7 @@ export async function saveService(
           success: false as const,
           error: { code: "SHOP_REQUIRED", message: "Set up your shop first." },
         };
+      const now = new Date();
       if (parsed.data.barberIds.length) {
         const found = await tx
           .select({ id: barbers.id })
@@ -109,13 +110,26 @@ export async function saveService(
               eq(barberServices.serviceId, id),
             ),
           );
-        for (const { barberId } of assignments) {
-          if (
-            !parsed.data.barberIds.includes(barberId) &&
-            (await hasProtectedBooking(tx, { shopId, serviceId: id, barberId }))
+        const removed = assignments
+          .map(({ barberId }) => barberId)
+          .filter((barberId) => !parsed.data.barberIds.includes(barberId));
+        const bookingConflicts = (
+          await Promise.all(
+            removed.map((barberId) =>
+              protectedBookingConflicts(
+                tx,
+                {
+                  shopId,
+                  serviceId: id,
+                  barberId,
+                },
+                now,
+              ),
+            ),
           )
-            throw new BookingProtectionError();
-        }
+        ).flat();
+        if (bookingConflicts.length)
+          throw new BookingProtectionError(bookingConflicts);
       }
       const [service] = await tx
         .insert(services)
@@ -157,7 +171,11 @@ export async function saveService(
     if (error instanceof BookingProtectionError)
       return {
         success: false,
-        error: { code: "BOOKING_CONFLICT", message: error.message },
+        error: {
+          code: "BOOKING_CONFLICT",
+          message: error.message,
+          bookingConflicts: error.bookingConflicts,
+        },
       };
     return {
       success: false,
@@ -224,6 +242,7 @@ async function updateServiceState(
           success: false as const,
           error: { code: "SHOP_REQUIRED", message: "Set up your shop first." },
         };
+      const now = new Date();
       if (change.offered !== undefined) {
         const [current] = await tx
           .select({ archived: services.archived })
@@ -244,11 +263,18 @@ async function updateServiceState(
             },
           };
       }
-      if (
-        change.archived &&
-        (await hasProtectedBooking(tx, { shopId, serviceId: id }))
-      )
-        throw new BookingProtectionError();
+      if (change.archived) {
+        const bookingConflicts = await protectedBookingConflicts(
+          tx,
+          {
+            shopId,
+            serviceId: id,
+          },
+          now,
+        );
+        if (bookingConflicts.length)
+          throw new BookingProtectionError(bookingConflicts);
+      }
       const [service] = await tx
         .update(services)
         .set(change)
@@ -283,7 +309,11 @@ async function updateServiceState(
     if (error instanceof BookingProtectionError)
       return {
         success: false,
-        error: { code: "BOOKING_CONFLICT", message: error.message },
+        error: {
+          code: "BOOKING_CONFLICT",
+          message: error.message,
+          bookingConflicts: error.bookingConflicts,
+        },
       };
     return {
       success: false,

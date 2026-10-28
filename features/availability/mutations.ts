@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, eq, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { Temporal } from "temporal-polyfill";
 import type { z } from "zod";
 import { db } from "@/db";
@@ -121,7 +121,11 @@ export async function saveShopSchedule(
     if (error instanceof BookingProtectionError)
       return {
         success: false,
-        error: { code: "BOOKING_CONFLICT", message: error.message },
+        error: {
+          code: "BOOKING_CONFLICT",
+          message: error.message,
+          bookingConflicts: error.bookingConflicts,
+        },
       };
     return {
       success: false,
@@ -223,7 +227,11 @@ export async function saveBarberSchedule(
     if (error instanceof BookingProtectionError)
       return {
         success: false,
-        error: { code: "BOOKING_CONFLICT", message: error.message },
+        error: {
+          code: "BOOKING_CONFLICT",
+          message: error.message,
+          bookingConflicts: error.bookingConflicts,
+        },
       };
     return {
       success: false,
@@ -407,7 +415,11 @@ async function saveDateSchedule(
     if (error instanceof BookingProtectionError)
       return {
         success: false,
-        error: { code: "BOOKING_CONFLICT", message: error.message },
+        error: {
+          code: "BOOKING_CONFLICT",
+          message: error.message,
+          bookingConflicts: error.bookingConflicts,
+        },
       };
     return {
       success: false,
@@ -463,6 +475,7 @@ export async function createTimeBlock(
           success: false as const,
           error: { code: "SHOP_REQUIRED", message: "Set up your shop first." },
         };
+      const now = new Date();
       const timeZone = locked.rows[0]?.time_zone as string;
       if (timeZone !== parsed.data.timeZone)
         return {
@@ -490,7 +503,14 @@ export async function createTimeBlock(
           error: { code: "NOT_FOUND", message: "Active barber not found." },
         };
       const bookingConflict = await tx
-        .select({ id: bookings.id })
+        .select({
+          bookingId: bookings.id,
+          customerName: bookings.customerName,
+          serviceName: bookings.serviceName,
+          barberName: bookings.barberName,
+          startAt: bookings.startAt,
+          endAt: bookings.endAt,
+        })
         .from(bookings)
         .innerJoin(
           occupiedIntervals,
@@ -501,17 +521,23 @@ export async function createTimeBlock(
             eq(bookings.shopId, shopId),
             eq(bookings.barberId, barber.id),
             eq(bookings.status, "confirmed"),
+            sql`${bookings.endAt} > ${now}`,
             sql`${occupiedIntervals.startAt} < ${new Date(end.epochMilliseconds)}`,
             sql`${occupiedIntervals.endAt} > ${new Date(start.epochMilliseconds)}`,
           ),
         )
-        .limit(1);
+        .orderBy(asc(bookings.startAt), asc(bookings.id));
       if (bookingConflict.length)
         return {
           success: false as const,
           error: {
             code: "BOOKING_CONFLICT",
             message: "This block conflicts with a confirmed booking.",
+            bookingConflicts: bookingConflict.map((booking) => ({
+              ...booking,
+              startAt: booking.startAt.toISOString(),
+              endAt: booking.endAt.toISOString(),
+            })),
           },
         };
       const date = Temporal.PlainDate.from(parsed.data.date);

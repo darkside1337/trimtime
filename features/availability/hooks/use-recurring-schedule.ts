@@ -16,7 +16,7 @@ import {
   saveShopScheduleAction,
 } from "../actions";
 import type { AvailabilityData } from "../queries";
-import type { ActionFieldErrors } from "@/lib/action-result";
+import type { ActionFieldErrors, BookingConflict } from "@/lib/action-result";
 import type { ScheduleTarget } from "../types";
 
 export function useRecurringSchedule(
@@ -31,6 +31,9 @@ export function useRecurringSchedule(
   const [message, setMessage] = useState("");
   const [canReload, setCanReload] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<ActionFieldErrors>({});
+  const [bookingConflicts, setBookingConflicts] = useState<BookingConflict[]>(
+    [],
+  );
   const [breakDay, setBreakDay] = useState<number | null>(null);
   const [breakRangeIndex, setBreakRangeIndex] = useState<number | null>(null);
   const [breakRange, setBreakRange] = useState<DraftRange>({
@@ -68,12 +71,15 @@ export function useRecurringSchedule(
     setMessage("");
     setCanReload(false);
     setFieldErrors({});
+    setBookingConflicts([]);
     invalidatePreview();
   }
 
   function change(value: DraftWeek) {
     setDraft(value);
     setFieldErrors({});
+    setBookingConflicts([]);
+    setMessage("");
     invalidatePreview();
   }
   function copyMonday() {
@@ -90,12 +96,14 @@ export function useRecurringSchedule(
       ),
     );
     setFieldErrors({});
+    setBookingConflicts([]);
     setMessage("Monday copied into the weekday draft. Save to apply.");
     invalidatePreview();
   }
   function copyShop() {
     setDraft(toDraft(data.shop.week));
     setFieldErrors({});
+    setBookingConflicts([]);
     invalidatePreview();
     setMessage("Shop hours copied into this barber draft. Save to apply.");
   }
@@ -129,6 +137,8 @@ export function useRecurringSchedule(
         ),
       );
     setFieldErrors({});
+    setBookingConflicts([]);
+    setMessage("");
     setBreakDay(null);
     invalidatePreview();
   }
@@ -148,6 +158,7 @@ export function useRecurringSchedule(
     const version = selectionVersion.current;
     setPending(true);
     setMessage("");
+    setBookingConflicts([]);
     setFieldErrors({});
     invalidatePreview();
     try {
@@ -165,6 +176,7 @@ export function useRecurringSchedule(
         if (version === selectionVersion.current) {
           setCanReload(result.error.code === "STALE_SCHEDULE");
           setMessage(result.error.message);
+          setBookingConflicts(result.error.bookingConflicts ?? []);
           setFieldErrors(result.fieldErrors ?? {});
         }
       } else {
@@ -173,6 +185,7 @@ export function useRecurringSchedule(
           setDraft(saved);
           setOriginal(saved);
           setMessage("Availability saved.");
+          setBookingConflicts([]);
           setCanReload(false);
         }
         setData((previous) =>
@@ -249,6 +262,7 @@ export function useRecurringSchedule(
     message,
     canReload,
     fieldErrors,
+    bookingConflicts,
     breakDay,
     breakRangeIndex,
     breakRange,

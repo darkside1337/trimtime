@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { OwnerDiscardDialog } from "@/components/owner-discard-dialog";
+import { BookingConflictList } from "@/components/booking-conflict-list";
+import type { BookingConflict } from "@/lib/action-result";
 import type { AvailabilityData } from "../queries";
 import { createTimeBlockAction, removeTimeBlockAction } from "../actions";
 import { DateOverrideFields } from "./date-override-fields";
@@ -51,7 +53,13 @@ export function DateAvailabilityManagement({
   const { draft, dirty, fieldErrors, loadDraft } = scheduleDraft;
   const [mutationPending, setMutationPending] = useState(false);
   const [message, setMessage] = useState("");
-  const blockDraft = useTimeBlockDraft(date, setMessage);
+  const [bookingConflicts, setBookingConflicts] = useState<BookingConflict[]>(
+    [],
+  );
+  const blockDraft = useTimeBlockDraft(date, (next) => {
+    setMessage(next);
+    setBookingConflicts([]);
+  });
   const { startInstant, endInstant, note } = blockDraft;
   const activeBarbers = useMemo(
     () => initial.barbers.filter((barber) => !barber.archived),
@@ -101,6 +109,7 @@ export function DateAvailabilityManagement({
       }
       loadDraft(result.state);
       setMessage("");
+      setBookingConflicts([]);
       return true;
     },
     [loadAvailability, loadDraft],
@@ -225,6 +234,7 @@ export function DateAvailabilityManagement({
 
   async function saveSchedule() {
     setMutationPending(true);
+    setBookingConflicts([]);
     const result = await scheduleDraft.save({ date, target, data });
     setMutationPending(false);
     if (result.type === "invalid") {
@@ -233,7 +243,8 @@ export function DateAvailabilityManagement({
     }
     if (result.type === "not-ready") return;
     if (result.type === "error") {
-      setMessage(result.message);
+      setMessage(result.error.message);
+      setBookingConflicts(result.error.bookingConflicts ?? []);
       return;
     }
     if (result.type === "uncertain") {
@@ -261,6 +272,7 @@ export function DateAvailabilityManagement({
       return;
     }
     setMutationPending(true);
+    setBookingConflicts([]);
     let result: Awaited<ReturnType<typeof createTimeBlockAction>>;
     try {
       result = await createTimeBlockAction({
@@ -281,6 +293,7 @@ export function DateAvailabilityManagement({
     setMutationPending(false);
     if (!result.success) {
       setMessage(result.error.message);
+      setBookingConflicts(result.error.bookingConflicts ?? []);
       return;
     }
     blockDraft.reset();
@@ -389,6 +402,7 @@ export function DateAvailabilityManagement({
                 onRemove={handleRequestBlockRemoval}
               />
             )}
+            <BookingConflictList conflicts={bookingConflicts} />
           </>
         )}
       </DateExceptionDialog>

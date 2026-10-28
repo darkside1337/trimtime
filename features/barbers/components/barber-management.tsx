@@ -13,8 +13,9 @@ import { archiveBarberAction, saveBarberAction } from "../actions";
 import type { BarberView, ServiceView } from "@/features/catalog/types";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionError, ActionResult } from "@/lib/action-result";
 import { OwnerArchiveDialog } from "@/components/owner-archive-dialog";
+import { BookingConflictList } from "@/components/booking-conflict-list";
 import { OwnerDiscardDialog } from "@/components/owner-discard-dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -49,7 +50,7 @@ export function BarberManagement({
   const [status, setStatus] = useState("");
   const [pending, setPending] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState<BarberView | null>(null);
-  const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [archiveError, setArchiveError] = useState<ActionError | null>(null);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [sampleActive, setSampleActive] = useState<Record<string, boolean>>(
     () =>
@@ -318,7 +319,8 @@ export function BarberManagement({
         <OwnerArchiveDialog
           resourceType="barber"
           resourceName={archiveTarget.name}
-          error={archiveError}
+          error={archiveError?.message ?? null}
+          bookingConflicts={archiveError?.bookingConflicts}
           pending={pending}
           onOpenChange={(open) => {
             if (!open && !pending) {
@@ -336,13 +338,14 @@ export function BarberManagement({
                   setStatus("Barber archived.");
                   router.refresh();
                 } else {
-                  setArchiveError(result.error.message);
+                  setArchiveError(result.error);
                 }
               })
               .catch(() =>
-                setArchiveError(
-                  "Could not confirm the archive. Check your connection and try again.",
-                ),
+                setArchiveError({
+                  message:
+                    "Could not confirm the archive. Check your connection and try again.",
+                }),
               )
               .finally(() => setPending(false));
           }}
@@ -572,7 +575,14 @@ function BarberDialog({
               </span>
             </span>
           </label>
-          {state && !state.success && <p role="alert">{state.error.message}</p>}
+          {state && !state.success && (
+            <>
+              <p role="alert">{state.error.message}</p>
+              <BookingConflictList
+                conflicts={state.error.bookingConflicts ?? []}
+              />
+            </>
+          )}
           <DialogFooter className="border-t pt-4 sm:justify-between">
             <Button
               type="button"

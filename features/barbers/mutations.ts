@@ -11,7 +11,7 @@ import type { BarberView } from "@/features/catalog/types";
 import { copyShopScheduleToBarber } from "@/features/availability/copy-schedule";
 import {
   BookingProtectionError,
-  hasProtectedBooking,
+  protectedBookingConflicts,
 } from "@/features/bookings/protection";
 
 function validationError(error: z.ZodError) {
@@ -47,6 +47,7 @@ export async function saveBarber(
           success: false as const,
           error: { code: "SHOP_REQUIRED", message: "Set up your shop first." },
         };
+      const now = new Date();
       if (parsed.data.serviceIds.length) {
         const found = await tx
           .select({ id: services.id })
@@ -104,13 +105,26 @@ export async function saveBarber(
               eq(barberServices.barberId, id),
             ),
           );
-        for (const { serviceId } of assignments) {
-          if (
-            !parsed.data.serviceIds.includes(serviceId) &&
-            (await hasProtectedBooking(tx, { shopId, serviceId, barberId: id }))
+        const removed = assignments
+          .map(({ serviceId }) => serviceId)
+          .filter((serviceId) => !parsed.data.serviceIds.includes(serviceId));
+        const bookingConflicts = (
+          await Promise.all(
+            removed.map((serviceId) =>
+              protectedBookingConflicts(
+                tx,
+                {
+                  shopId,
+                  serviceId,
+                  barberId: id,
+                },
+                now,
+              ),
+            ),
           )
-            throw new BookingProtectionError();
-        }
+        ).flat();
+        if (bookingConflicts.length)
+          throw new BookingProtectionError(bookingConflicts);
       }
       const [barber] = await tx
         .insert(barbers)
@@ -146,7 +160,11 @@ export async function saveBarber(
     if (error instanceof BookingProtectionError)
       return {
         success: false,
-        error: { code: "BOOKING_CONFLICT", message: error.message },
+        error: {
+          code: "BOOKING_CONFLICT",
+          message: error.message,
+          bookingConflicts: error.bookingConflicts,
+        },
       };
     return {
       success: false,
@@ -180,13 +198,23 @@ export async function archiveBarber(
           success: false as const,
           error: { code: "SHOP_REQUIRED", message: "Set up your shop first." },
         };
-      if (await hasProtectedBooking(tx, { shopId, barberId: id }))
+      const now = new Date();
+      const bookingConflicts = await protectedBookingConflicts(
+        tx,
+        {
+          shopId,
+          barberId: id,
+        },
+        now,
+      );
+      if (bookingConflicts.length)
         return {
           success: false as const,
           error: {
             code: "BOOKING_CONFLICT",
             message:
               "Resolve this barber’s confirmed bookings before archiving.",
+            bookingConflicts,
           },
         };
       const [barber] = await tx
@@ -219,7 +247,11 @@ export async function archiveBarber(
     if (error instanceof BookingProtectionError)
       return {
         success: false,
-        error: { code: "BOOKING_CONFLICT", message: error.message },
+        error: {
+          code: "BOOKING_CONFLICT",
+          message: error.message,
+          bookingConflicts: error.bookingConflicts,
+        },
       };
     return {
       success: false,

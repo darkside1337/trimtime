@@ -4032,6 +4032,469 @@ describe("public booking operations", () => {
     ).toBe(0);
   });
 
+  it("owner conflict resolution names every protected booking affected by barber archival", async () => {
+    const ids = await fixture();
+    const first = await createPublicBooking(
+      { shopId: ids.shopId },
+      input(ids, {
+        contact: {
+          name: "Ada Lovelace",
+          email: "ada@example.test",
+          whatsappOptIn: false,
+        },
+      }),
+    );
+    const second = await createPublicBooking(
+      { shopId: ids.shopId },
+      input(ids, {
+        startAt: "2026-11-02T11:00:00.000Z",
+        contact: {
+          name: "Grace Hopper",
+          email: "grace@example.test",
+          whatsappOptIn: false,
+        },
+      }),
+    );
+    expect(first.success && second.success).toBe(true);
+    if (!first.success || !second.success)
+      throw new Error("Booking fixture failed.");
+
+    await expect(
+      archiveBarber(ids.context, ids.barberId),
+    ).resolves.toMatchObject({
+      success: false,
+      error: {
+        code: "BOOKING_CONFLICT",
+        bookingConflicts: [
+          {
+            bookingId: first.data.bookingId,
+            customerName: "Ada Lovelace",
+            serviceName: "Cut",
+            barberName: "Sam",
+            startAt: "2026-11-02T10:00:00.000Z",
+            endAt: "2026-11-02T10:30:00.000Z",
+          },
+          {
+            bookingId: second.data.bookingId,
+            customerName: "Grace Hopper",
+            serviceName: "Cut",
+            barberName: "Sam",
+            startAt: "2026-11-02T11:00:00.000Z",
+            endAt: "2026-11-02T11:30:00.000Z",
+          },
+        ],
+      },
+    });
+  });
+
+  it("owner conflict resolution excludes foreign, cancelled, and ended bookings", async () => {
+    const ids = await fixture();
+    const other = await fixture();
+    const createAt = async (
+      owner: Awaited<ReturnType<typeof fixture>>,
+      startAt: string,
+      name: string,
+    ) => {
+      const result = await createPublicBooking(
+        { shopId: owner.shopId },
+        input(owner, {
+          startAt,
+          contact: {
+            name,
+            email: `${name.replaceAll(" ", "")}@example.test`,
+            whatsappOptIn: false,
+          },
+        }),
+      );
+      expect(result.success).toBe(true);
+      if (!result.success) throw new Error("Booking fixture failed.");
+      return result.data.bookingId;
+    };
+    await createAt(ids, "2026-11-02T09:00:00.000Z", "Ended");
+    const protectedId = await createAt(
+      ids,
+      "2026-11-02T10:00:00.000Z",
+      "Protected",
+    );
+    const cancelledId = await createAt(
+      ids,
+      "2026-11-02T11:00:00.000Z",
+      "Cancelled",
+    );
+    await createAt(other, "2026-11-02T10:00:00.000Z", "Foreign");
+    const { cancelOwnerBooking } = await import("../mutations");
+    expect(
+      await cancelOwnerBooking(ids.context, {
+        bookingId: cancelledId,
+        expectedRevision: 0,
+        operationKey: randomBytes(32).toString("base64url"),
+      }),
+    ).toMatchObject({ success: true });
+    vi.setSystemTime(new Date("2026-11-02T09:30:00.000Z"));
+
+    const result = await archiveBarber(ids.context, ids.barberId);
+    expect(result).toMatchObject({
+      success: false,
+      error: { code: "BOOKING_CONFLICT" },
+    });
+    if (result.success)
+      throw new Error("Protected booking should block archival.");
+    expect(result.error.bookingConflicts).toEqual([
+      {
+        bookingId: protectedId,
+        customerName: "Protected",
+        serviceName: "Cut",
+        barberName: "Sam",
+        startAt: "2026-11-02T10:00:00.000Z",
+        endAt: "2026-11-02T10:30:00.000Z",
+      },
+    ]);
+  });
+
+  it("owner conflict resolution does not expose another shop's booking", async () => {
+    const ids = await fixture();
+    const other = await fixture();
+    const booking = await createPublicBooking(
+      { shopId: ids.shopId },
+      input(ids),
+    );
+    expect(booking.success).toBe(true);
+    if (!booking.success) throw new Error("Booking fixture failed.");
+
+    await expect(
+      archiveBarber(other.context, ids.barberId),
+    ).resolves.toMatchObject({
+      success: false,
+      error: { code: "NOT_FOUND" },
+    });
+  });
+
+  it("owner conflict resolution reports only bookings for a removed service assignment", async () => {
+    const ids = await fixture();
+    const secondBarber = await saveBarber(ids.context, {
+      name: "Lee",
+      serviceIds: [],
+    });
+    expect(secondBarber.success).toBe(true);
+    if (!secondBarber.success) throw new Error("Barber fixture failed.");
+    const booked = await createPublicBooking(
+      { shopId: ids.shopId },
+      input(ids),
+    );
+    expect(booked.success).toBe(true);
+    if (!booked.success) throw new Error("Booking fixture failed.");
+
+    await expect(
+      saveService(ids.context, {
+        id: ids.serviceId,
+        name: "Cut",
+        priceUsd: "25",
+        durationMinutes: "30",
+        offered: true,
+        barberIds: [secondBarber.data.id],
+      }),
+    ).resolves.toMatchObject({
+      success: false,
+      error: {
+        code: "BOOKING_CONFLICT",
+        bookingConflicts: [
+          {
+            bookingId: booked.data.bookingId,
+            customerName: "Ada Lovelace",
+            serviceName: "Cut",
+            barberName: "Sam",
+          },
+        ],
+      },
+    });
+  });
+
+  it("owner conflict resolution reports bookings for a removed barber assignment", async () => {
+    const ids = await fixture();
+    const booking = await createPublicBooking(
+      { shopId: ids.shopId },
+      input(ids),
+    );
+    expect(booking.success).toBe(true);
+    if (!booking.success) throw new Error("Booking fixture failed.");
+
+    await expect(
+      saveBarber(ids.context, {
+        id: ids.barberId,
+        name: "Sam",
+        serviceIds: [],
+      }),
+    ).resolves.toMatchObject({
+      success: false,
+      error: {
+        code: "BOOKING_CONFLICT",
+        bookingConflicts: [{ bookingId: booking.data.bookingId }],
+      },
+    });
+  });
+
+  it("owner conflict resolution blocks service archival while allowing it to be hidden", async () => {
+    const ids = await fixture();
+    const booking = await createPublicBooking(
+      { shopId: ids.shopId },
+      input(ids),
+    );
+    expect(booking.success).toBe(true);
+    if (!booking.success) throw new Error("Booking fixture failed.");
+    const { setServiceOffered } = await import("@/features/catalog/mutations");
+
+    await expect(
+      setServiceOffered(ids.context, { id: ids.serviceId, offered: false }),
+    ).resolves.toMatchObject({ success: true });
+    await expect(
+      archiveService(ids.context, ids.serviceId),
+    ).resolves.toMatchObject({
+      success: false,
+      error: {
+        code: "BOOKING_CONFLICT",
+        bookingConflicts: [{ bookingId: booking.data.bookingId }],
+      },
+    });
+  });
+
+  it("owner conflict resolution names every booking excluded by changed shop hours", async () => {
+    const ids = await fixture();
+    const bookings = [];
+    for (const [index, startAt] of [
+      "2026-11-02T10:00:00.000Z",
+      "2026-11-02T10:30:00.000Z",
+    ].entries()) {
+      const result = await createPublicBooking(
+        { shopId: ids.shopId },
+        input(ids, {
+          startAt,
+          contact: {
+            name: `Customer ${index}`,
+            email: `customer${index}@example.test`,
+            whatsappOptIn: false,
+          },
+        }),
+      );
+      expect(result.success).toBe(true);
+      if (!result.success) throw new Error("Booking fixture failed.");
+      bookings.push(result.data.bookingId);
+    }
+
+    await expect(
+      saveShopSchedule(ids.context, {
+        week: Array.from({ length: 7 }, (_, index) => ({
+          working: index === 0 ? [{ start: 660, end: 1020 }] : [],
+          breaks: [],
+        })),
+        revision: 1,
+      }),
+    ).resolves.toMatchObject({
+      success: false,
+      error: {
+        code: "BOOKING_CONFLICT",
+        bookingConflicts: [
+          { bookingId: bookings[0] },
+          { bookingId: bookings[1] },
+        ],
+      },
+    });
+  });
+
+  it.each([
+    "barber recurring hours",
+    "shop recurring break",
+    "barber recurring break",
+    "shop dated replacement",
+    "shop dated break",
+    "shop closure",
+    "barber dated replacement",
+    "barber dated break",
+    "barber day off",
+  ] as const)(
+    "owner conflict resolution names bookings excluded by %s",
+    async (kind) => {
+      const ids = await fixture();
+      const booking = await createPublicBooking(
+        { shopId: ids.shopId },
+        input(ids),
+      );
+      expect(booking.success).toBe(true);
+      if (!booking.success) throw new Error("Booking fixture failed.");
+      const replacement = { working: [{ start: 660, end: 1020 }], breaks: [] };
+      const replacementWeek = Array.from({ length: 7 }, (_, index) => ({
+        working: index === 0 ? replacement.working : [],
+        breaks: [],
+      }));
+      const recurringBreakWeek = Array.from({ length: 7 }, (_, index) => ({
+        working: index === 0 ? [{ start: 540, end: 1020 }] : [],
+        breaks: index === 0 ? [{ start: 600, end: 630 }] : [],
+      }));
+      const replacementWithBreak = {
+        working: [{ start: 540, end: 1020 }],
+        breaks: [{ start: 600, end: 630 }],
+      };
+      let result;
+      switch (kind) {
+        case "barber recurring hours":
+          result = await saveBarberSchedule(ids.context, {
+            barberId: ids.barberId,
+            week: replacementWeek,
+            revision: 1,
+          });
+          break;
+        case "shop recurring break":
+          result = await saveShopSchedule(ids.context, {
+            week: recurringBreakWeek,
+            revision: 1,
+          });
+          break;
+        case "barber recurring break":
+          result = await saveBarberSchedule(ids.context, {
+            barberId: ids.barberId,
+            week: recurringBreakWeek,
+            revision: 1,
+          });
+          break;
+        case "shop dated replacement":
+          result = await saveShopDateSchedule(ids.context, {
+            date: "2026-11-02",
+            timeZone: "UTC",
+            override: replacement,
+            closed: false,
+            revision: 0,
+          });
+          break;
+        case "shop dated break":
+          result = await saveShopDateSchedule(ids.context, {
+            date: "2026-11-02",
+            timeZone: "UTC",
+            override: replacementWithBreak,
+            closed: false,
+            revision: 0,
+          });
+          break;
+        case "shop closure":
+          result = await saveShopDateSchedule(ids.context, {
+            date: "2026-11-02",
+            timeZone: "UTC",
+            override: null,
+            closed: true,
+            revision: 0,
+          });
+          break;
+        case "barber dated replacement":
+          result = await saveBarberDateSchedule(ids.context, {
+            barberId: ids.barberId,
+            date: "2026-11-02",
+            timeZone: "UTC",
+            override: replacement,
+            closed: false,
+            revision: 0,
+          });
+          break;
+        case "barber dated break":
+          result = await saveBarberDateSchedule(ids.context, {
+            barberId: ids.barberId,
+            date: "2026-11-02",
+            timeZone: "UTC",
+            override: replacementWithBreak,
+            closed: false,
+            revision: 0,
+          });
+          break;
+        case "barber day off":
+          result = await saveBarberDateSchedule(ids.context, {
+            barberId: ids.barberId,
+            date: "2026-11-02",
+            timeZone: "UTC",
+            override: null,
+            closed: true,
+            revision: 0,
+          });
+          break;
+      }
+      expect(result).toMatchObject({
+        success: false,
+        error: {
+          code: "BOOKING_CONFLICT",
+          bookingConflicts: [{ bookingId: booking.data.bookingId }],
+        },
+      });
+    },
+  );
+
+  it("owner conflict resolution names the booking blocked by a time block", async () => {
+    const ids = await fixture();
+    const booking = await createPublicBooking(
+      { shopId: ids.shopId },
+      input(ids),
+    );
+    expect(booking.success).toBe(true);
+    if (!booking.success) throw new Error("Booking fixture failed.");
+
+    await expect(
+      createTimeBlock(ids.context, {
+        barberId: ids.barberId,
+        date: "2026-11-02",
+        timeZone: "UTC",
+        start: "2026-11-02T10:00:00Z",
+        end: "2026-11-02T10:30:00Z",
+        note: "",
+      }),
+    ).resolves.toMatchObject({
+      success: false,
+      error: {
+        code: "BOOKING_CONFLICT",
+        bookingConflicts: [
+          {
+            bookingId: booking.data.bookingId,
+            customerName: "Ada Lovelace",
+            serviceName: "Cut",
+            barberName: "Sam",
+          },
+        ],
+      },
+    });
+  });
+
+  it("owner conflict resolution keeps stale configuration retries on the existing revision guard", async () => {
+    const ids = await fixture();
+    const booking = await createPublicBooking(
+      { shopId: ids.shopId },
+      input(ids),
+    );
+    expect(booking.success).toBe(true);
+    if (!booking.success) throw new Error("Booking fixture failed.");
+    const rejectedDraft = Array.from({ length: 7 }, (_, index) => ({
+      working: index === 0 ? [{ start: 660, end: 1020 }] : [],
+      breaks: [],
+    }));
+    await expect(
+      saveShopSchedule(ids.context, { week: rejectedDraft, revision: 1 }),
+    ).resolves.toMatchObject({
+      success: false,
+      error: { code: "BOOKING_CONFLICT" },
+    });
+
+    const { cancelOwnerBooking } = await import("../mutations");
+    expect(
+      await cancelOwnerBooking(ids.context, {
+        bookingId: booking.data.bookingId,
+        expectedRevision: 0,
+        operationKey: randomBytes(32).toString("base64url"),
+      }),
+    ).toMatchObject({ success: true });
+    await expect(
+      saveShopSchedule(ids.context, { week, revision: 1 }),
+    ).resolves.toMatchObject({ success: true });
+    await expect(
+      saveShopSchedule(ids.context, { week: rejectedDraft, revision: 1 }),
+    ).resolves.toMatchObject({
+      success: false,
+      error: { code: "STALE_SCHEDULE" },
+    });
+  });
+
   it("serializes a booking against a conflicting hours edit", async () => {
     const ids = await fixture();
     const [booking, hours] = await Promise.all([

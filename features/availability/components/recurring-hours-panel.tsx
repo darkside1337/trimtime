@@ -5,6 +5,7 @@ import type { useRecurringSchedule } from "../hooks/use-recurring-schedule";
 import type { ScheduleTarget, Section } from "../types";
 import { days } from "../schedule-draft";
 import { ScheduleEditor } from "./weekly-schedule-editor";
+import { BookingConflictList } from "@/components/booking-conflict-list";
 
 type Controller = ReturnType<typeof useRecurringSchedule>;
 
@@ -25,6 +26,7 @@ export function RecurringHoursPanel({
     pending,
     message,
     fieldErrors,
+    bookingConflicts,
     dirty,
     canReload,
     change,
@@ -246,6 +248,7 @@ export function RecurringHoursPanel({
       >
         {message}
       </p>
+      <BookingConflictList conflicts={bookingConflicts} />
       {Object.values(fieldErrors).some((messages) => messages.length > 0) && (
         <ul role="alert" className="list-disc pl-5 text-sm text-destructive">
           {Object.entries(fieldErrors).flatMap(([path, messages]) =>

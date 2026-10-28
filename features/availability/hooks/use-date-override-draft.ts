@@ -112,7 +112,7 @@ export function useDateOverrideDraft() {
               barberId: target.barberId,
             });
       if (!result.success)
-        return { type: "error" as const, message: result.error.message };
+        return { type: "error" as const, error: result.error };
       setDirty(false);
       return { type: "saved" as const };
     } catch {
