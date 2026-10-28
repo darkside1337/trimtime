@@ -1,8 +1,9 @@
 import "server-only";
 import { Temporal } from "temporal-polyfill";
-import { and, asc, eq, gt } from "drizzle-orm";
+import { and, asc, eq, gt, lt } from "drizzle-orm";
 import { db } from "@/db";
 import { bookings } from "@/db/schema/bookings";
+import { occupiedIntervals } from "@/db/schema/occupancy";
 import { shops } from "@/db/schema/shops";
 import { fitsScheduleInterval } from "@/features/availability/slots";
 import { resolveScheduleForDate } from "@/features/availability/schedule-resolution";
@@ -36,11 +37,51 @@ export async function protectedBookingConflicts(
     .from(bookings)
     .where(and(...conditions))
     .orderBy(asc(bookings.startAt), asc(bookings.id));
-  return rows.map((booking) => ({
-    ...booking,
-    startAt: booking.startAt.toISOString(),
-    endAt: booking.endAt.toISOString(),
-  }));
+  return rows.map(toConflict);
+}
+
+export async function findBookingConflictsInInterval(
+  tx: Transaction,
+  {
+    shopId,
+    barberId,
+    startAt,
+    endAt,
+    now,
+  }: {
+    shopId: string;
+    barberId: string;
+    startAt: Date;
+    endAt: Date;
+    now: Date;
+  },
+): Promise<BookingConflict[]> {
+  const rows = await tx
+    .select({
+      bookingId: bookings.id,
+      customerName: bookings.customerName,
+      serviceName: bookings.serviceName,
+      barberName: bookings.barberName,
+      startAt: bookings.startAt,
+      endAt: bookings.endAt,
+    })
+    .from(bookings)
+    .innerJoin(
+      occupiedIntervals,
+      eq(occupiedIntervals.id, bookings.occupancyId),
+    )
+    .where(
+      and(
+        eq(bookings.shopId, shopId),
+        eq(bookings.barberId, barberId),
+        eq(bookings.status, "confirmed"),
+        gt(bookings.endAt, now),
+        lt(occupiedIntervals.startAt, endAt),
+        gt(occupiedIntervals.endAt, startAt),
+      ),
+    )
+    .orderBy(asc(bookings.startAt), asc(bookings.id));
+  return rows.map(toConflict);
 }
 
 export class BookingProtectionError extends Error {

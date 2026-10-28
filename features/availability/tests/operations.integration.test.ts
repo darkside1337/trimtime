@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { applyMigrations } from "@/db/migrate.mts";
@@ -43,6 +43,8 @@ describe("availability operations", () => {
   let saveBarberDateSchedule: typeof import("../mutations").saveBarberDateSchedule;
   let createTimeBlock: typeof import("../mutations").createTimeBlock;
   let removeTimeBlock: typeof import("../mutations").removeTimeBlock;
+  let createOwnerBooking: typeof import("@/features/bookings/mutations").createOwnerBooking;
+  let cancelOwnerBooking: typeof import("@/features/bookings/mutations").cancelOwnerBooking;
   const userIds: string[] = [];
 
   beforeAll(async () => {
@@ -55,6 +57,11 @@ describe("availability operations", () => {
       "test-secret-that-is-long-enough-for-better-auth";
     process.env.GOOGLE_CLIENT_ID = "test-google-client";
     process.env.GOOGLE_CLIENT_SECRET = "test-google-secret";
+    process.env.BOOKING_CAPABILITY_KEY_ID = "test-v1";
+    process.env.BOOKING_CAPABILITY_ENCRYPTION_KEY = Buffer.alloc(
+      32,
+      7,
+    ).toString("base64");
     await applyMigrations(database.pool, "db/migrations");
     ({ testAuth } = await import("@/tests/support/auth"));
     ({ readOwnerContext } = await import("@/server/owner-context"));
@@ -72,6 +79,8 @@ describe("availability operations", () => {
     } = await import("../mutations"));
     ({ getOwnSchedules, previewOwnSlots, getOwnDateAvailability } =
       await import("../queries"));
+    ({ createOwnerBooking, cancelOwnerBooking } =
+      await import("@/features/bookings/mutations"));
     ({ pool: applicationPool } = await import("@/db"));
     applicationPool.options.max = 5;
     closeApplicationPool = () => applicationPool.end();
@@ -320,6 +329,42 @@ describe("availability operations", () => {
     ).toMatchObject({ success: false, error: { code: "INVALID_PAIRING" } });
   });
 
+  it("preserves nested schedule field paths and block validation flattening", async () => {
+    const context = await owner();
+    const invalidWeek = Array.from({ length: 7 }, (_, index) => ({
+      working: index === 0 ? [{ start: 600, end: 540 }] : [],
+      breaks: [],
+    }));
+    await expect(
+      saveShopSchedule(context, { week: invalidWeek, revision: 0 }),
+    ).resolves.toMatchObject({
+      success: false,
+      error: {
+        code: "VALIDATION_ERROR",
+        message: "Check the highlighted schedule ranges.",
+      },
+      fieldErrors: {
+        "week.0.working.0.end": ["End must be after start."],
+      },
+    });
+    await expect(
+      createTimeBlock(context, {
+        barberId: randomUUID(),
+        date: "2026-11-02",
+        timeZone: "America/New_York",
+        start: "2026-11-02T16:00:00Z",
+        end: "2026-11-02T15:00:00Z",
+      }),
+    ).resolves.toMatchObject({
+      success: false,
+      error: {
+        code: "VALIDATION_ERROR",
+        message: "Check the block date and times.",
+      },
+      fieldErrors: { end: ["End must be after start."] },
+    });
+  });
+
   it("previews the saved shop and barber intersection for the exact current service duration", async () => {
     const context = await owner();
     const service = await saveService(context, {
@@ -485,6 +530,134 @@ describe("availability operations", () => {
     ).toHaveLength(1);
     const winner = contenders.find((result) => result.success);
     if (winner?.success) await removeTimeBlock(context, { id: winner.data.id });
+  });
+
+  it("reports overlapping confirmed future bookings for one barber while ignoring adjacency and released occupancy", async () => {
+    const context = await owner();
+    const service = await saveService(context, {
+      name: "Conflict cut",
+      priceUsd: "25",
+      durationMinutes: "30",
+      offered: true,
+      barberIds: [],
+    });
+    expect(service.success).toBe(true);
+    if (!service.success) return;
+    const blocked = await saveBarber(context, {
+      name: "Blocked barber",
+      serviceIds: [service.data.id],
+    });
+    const other = await saveBarber(context, {
+      name: "Other barber",
+      serviceIds: [service.data.id],
+    });
+    expect(blocked.success && other.success).toBe(true);
+    if (!blocked.success || !other.success) return;
+    const allDay = Array.from({ length: 7 }, () => ({
+      working: [{ start: 0, end: 1440 }],
+      breaks: [],
+    }));
+    await saveShopSchedule(context, { week: allDay, revision: 0 });
+
+    const book = (barberId: string, startAt: string, name: string) =>
+      createOwnerBooking(context, {
+        serviceId: service.data.id,
+        barberId,
+        startAt,
+        reviewedOffer: {
+          name: "Conflict cut",
+          priceUsd: "25.00",
+          durationMinutes: "30",
+        },
+        contact: { name, whatsappOptIn: false },
+        recoveryKey: randomBytes(32).toString("base64url"),
+      });
+    const ended = await book(
+      blocked.data.id,
+      "2026-11-02T14:00:00.000Z",
+      "Ended",
+    );
+    const early = await book(
+      blocked.data.id,
+      "2026-11-02T16:00:00.000Z",
+      "Early",
+    );
+    const late = await book(
+      blocked.data.id,
+      "2026-11-02T17:00:00.000Z",
+      "Late",
+    );
+    expect(ended.success && early.success && late.success).toBe(true);
+    if (!early.success || !late.success) return;
+
+    const blockInput = (start: string, end: string) => ({
+      barberId: blocked.data.id,
+      date: "2026-11-02",
+      timeZone: "America/New_York",
+      start: `2026-11-02T${start}:00Z`,
+      end: `2026-11-02T${end}:00Z`,
+    });
+
+    vi.setSystemTime(new Date("2026-11-02T15:00:00.000Z"));
+    try {
+      const cancelled = await book(
+        blocked.data.id,
+        "2026-11-02T15:00:00.000Z",
+        "Cancelled",
+      );
+      const elsewhere = await book(
+        other.data.id,
+        "2026-11-02T15:00:00.000Z",
+        "Other barber",
+      );
+      expect(cancelled.success && elsewhere.success).toBe(true);
+      if (!cancelled.success) return;
+      await expect(
+        cancelOwnerBooking(context, {
+          bookingId: cancelled.data.bookingId,
+          expectedRevision: 0,
+          operationKey: randomBytes(32).toString("base64url"),
+        }),
+      ).resolves.toMatchObject({ success: true });
+
+      await expect(
+        createTimeBlock(context, blockInput("14:15", "17:15")),
+      ).resolves.toMatchObject({
+        success: false,
+        error: {
+          code: "BOOKING_CONFLICT",
+          message: "This block conflicts with a confirmed booking.",
+          bookingConflicts: [
+            {
+              bookingId: early.data.bookingId,
+              customerName: "Early",
+              serviceName: "Conflict cut",
+              barberName: "Blocked barber",
+              startAt: "2026-11-02T16:00:00.000Z",
+              endAt: "2026-11-02T16:30:00.000Z",
+            },
+            {
+              bookingId: late.data.bookingId,
+              customerName: "Late",
+              serviceName: "Conflict cut",
+              barberName: "Blocked barber",
+              startAt: "2026-11-02T17:00:00.000Z",
+              endAt: "2026-11-02T17:30:00.000Z",
+            },
+          ],
+        },
+      });
+
+      for (const [start, end] of [
+        ["15:30", "16:00"],
+        ["16:30", "17:00"],
+      ] as const)
+        await expect(
+          createTimeBlock(context, blockInput(start, end)),
+        ).resolves.toMatchObject({ success: true });
+    } finally {
+      vi.setSystemTime(new Date("2026-10-31T12:00:00Z"));
+    }
   });
 
   it("rolls back occupancy when the block record write fails", async () => {
