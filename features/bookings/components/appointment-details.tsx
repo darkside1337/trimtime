@@ -1,5 +1,6 @@
 import type { OwnerAppointmentView } from "../types";
 import { ownerEmailStatusCopy } from "@/features/notifications/customer-summary";
+import type { ReactNode } from "react";
 
 function dateTime(
   instant: string,
@@ -14,9 +15,11 @@ function dateTime(
 export function AppointmentDetails({
   appointment,
   now,
+  operations,
 }: {
   appointment: OwnerAppointmentView;
   now: string;
+  operations?: ReactNode;
 }) {
   const past = Date.parse(appointment.endAt) <= Date.parse(now);
   const status =
@@ -121,7 +124,25 @@ export function AppointmentDetails({
           </p>
         </section>
       )}
+      {operations}
     </div>
+  );
+}
+
+export function AppointmentOperationsReadError({ href }: { href: string }) {
+  return (
+    <section
+      className="rounded-xl border border-destructive/40 px-4 py-3"
+      role="alert"
+    >
+      <p className="text-sm">Appointment actions could not be loaded.</p>
+      <a
+        className="mt-2 inline-block text-sm font-semibold underline"
+        href={href}
+      >
+        Try again
+      </a>
+    </section>
   );
 }
 

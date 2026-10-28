@@ -78,7 +78,11 @@ export function OwnerManagementNav({
   return (
     <aside className="sticky top-0 z-20 border-border bg-muted min-[901px]:h-dvh min-[901px]:border-r max-[900px]:border-b">
       <div className="hidden h-full flex-col px-4 py-6 min-[901px]:flex">
-        <Link href="/" className="mb-8 mx-3 flex min-h-11 items-center">
+        <Link
+          href="/"
+          onClick={(event) => handleNavigation(event, "/")}
+          className="mb-8 mx-3 flex min-h-11 items-center"
+        >
           <TrimTimeLogo arrangement="horizontal" width={140} />
         </Link>
         <nav aria-label="Owner navigation" className="grid gap-1 text-sm">
@@ -110,7 +114,11 @@ export function OwnerManagementNav({
         </div>
       </div>
       <header className="flex min-h-16 items-center justify-between gap-4 px-5 min-[901px]:hidden">
-        <Link href="/" className="inline-flex min-h-11 w-[120px] items-center">
+        <Link
+          href="/"
+          onClick={(event) => handleNavigation(event, "/")}
+          className="inline-flex min-h-11 w-[120px] items-center"
+        >
           <TrimTimeLogo arrangement="horizontal" width={120} />
         </Link>
         <Sheet open={open} onOpenChange={setOpen}>

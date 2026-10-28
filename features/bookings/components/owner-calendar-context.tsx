@@ -31,7 +31,18 @@ export type OwnerAppointmentDraft = {
   baseline: OwnerAppointmentDraftValues;
   recoveryKey: string;
   submittedPayload: string | null;
+  appointmentId?: string;
+  operationMode?: "move" | "cancel";
+  recoveryPending?: boolean;
 };
+
+function draftHasUnsavedWork(draft: OwnerAppointmentDraft | null) {
+  return (
+    !!draft &&
+    (JSON.stringify(draft.values) !== JSON.stringify(draft.baseline) ||
+      draft.recoveryPending === true)
+  );
+}
 
 type Dismissal = {
   kind: "close" | "pop" | "navigate";
@@ -79,15 +90,11 @@ export function OwnerAppointmentProvider({
     writeDraft(null);
     setFormGeneration((generation) => generation + 1);
   }, [writeDraft]);
-  const dirty =
-    !!draft && JSON.stringify(draft.values) !== JSON.stringify(draft.baseline);
+  const dirty = draftHasUnsavedWork(draft);
   const begin = useCallback(
     (next: Dismissal) => {
       if (phase.current === "prompt" || phase.current === "restoring") return;
-      const current = draftRef.current;
-      const isDirty =
-        !!current &&
-        JSON.stringify(current.values) !== JSON.stringify(current.baseline);
+      const isDirty = draftHasUnsavedWork(draftRef.current);
       if (!isDirty) {
         clearDraft();
         phase.current = "idle";
@@ -124,7 +131,8 @@ export function OwnerAppointmentProvider({
           .join(" ");
         const portal = dialog.closest<HTMLElement>("[data-base-ui-portal]");
         return (
-          title?.includes("New appointment") &&
+          (title?.includes("New appointment") ||
+            title?.includes("Appointment details")) &&
           !portal?.hasAttribute("aria-hidden") &&
           !portal?.hasAttribute("inert")
         );
@@ -177,10 +185,7 @@ export function OwnerAppointmentProvider({
         phase.current = "idle";
         return;
       }
-      const current = draftRef.current;
-      const isDirty =
-        !!current &&
-        JSON.stringify(current.values) !== JSON.stringify(current.baseline);
+      const isDirty = draftHasUnsavedWork(draftRef.current);
       if (!isDirty || !modalHref.current) return;
       if (phase.current === "prompt" || phase.current === "idle") {
         const wasPromptOpen = phase.current === "prompt";

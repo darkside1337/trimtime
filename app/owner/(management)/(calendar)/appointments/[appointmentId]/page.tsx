@@ -1,11 +1,19 @@
 import { Suspense } from "react";
-import Link from "next/link";
 import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { Temporal } from "temporal-polyfill";
-import { buttonVariants } from "@/components/ui/button";
-import { AppointmentDetails } from "@/features/bookings/components/appointment-details";
-import { getOwnAppointment } from "@/features/bookings/queries";
+import {
+  AppointmentDetails,
+  AppointmentOperationsReadError,
+} from "@/features/bookings/components/appointment-details";
+import {
+  AppointmentCalendarBackLink,
+  AppointmentOperations,
+} from "@/features/bookings/components/appointment-operations";
+import {
+  getOwnAppointment,
+  getOwnAppointmentMoveChoices,
+} from "@/features/bookings/queries";
 import { readOwnerContext } from "@/server/owner-context";
 
 type Search = Promise<Record<string, string | string[] | undefined>>;
@@ -63,22 +71,32 @@ async function AppointmentContent({
       ? `&barber=${encodeURIComponent(search.barber)}`
       : "";
   const calendarHref = date ? `/?date=${date}&view=${view}${barber}` : "/";
+  const retryHref = date
+    ? `/appointments/${appointmentId}?date=${date}&view=${view}${barber}`
+    : `/appointments/${appointmentId}`;
+  const moveChoices = await getOwnAppointmentMoveChoices(
+    context,
+    appointmentId,
+  );
   return (
     <main className="mx-auto my-8 w-full max-w-3xl flex-1 rounded-3xl border border-border bg-background p-6 max-[520px]:my-0 max-[520px]:rounded-none max-[520px]:border-0 max-[520px]:px-5">
       <div className="mb-5 flex justify-end">
-        <Link
-          className={buttonVariants({ variant: "outline" })}
-          data-slot="button"
-          data-size="default"
-          data-variant="outline"
-          href={calendarHref}
-        >
-          Back to calendar
-        </Link>
+        <AppointmentCalendarBackLink href={calendarHref} />
       </div>
       <AppointmentDetails
         appointment={result.data}
         now={new Date().toISOString()}
+        operations={
+          moveChoices.success ? (
+            <AppointmentOperations
+              appointment={result.data}
+              choices={moveChoices.data}
+              now={new Date().toISOString()}
+            />
+          ) : (
+            <AppointmentOperationsReadError href={retryHref} />
+          )
+        }
       />
     </main>
   );

@@ -12,8 +12,14 @@ import type {
   PublicBookingInput,
   PublicBookingReceipt,
   OwnerBookingReceipt,
+  OwnerChangeReceipt,
 } from "./types";
-import { createOwnerBooking, createPublicBooking } from "./mutations";
+import {
+  cancelOwnerBooking,
+  createOwnerBooking,
+  createPublicBooking,
+  moveOwnerBooking,
+} from "./mutations";
 import { getManagedBooking } from "./queries";
 import { previewPublicSlots } from "@/features/shops/public-queries";
 import { dispatchInitialBookingNotifications } from "@/features/notifications/dispatch";
@@ -96,4 +102,68 @@ export async function getManagedBookingAction(
 ): Promise<ActionResult<ManagedBookingView>> {
   const context = await resolvePublicRequest(await headers());
   return getManagedBooking(context, token);
+}
+
+export async function moveOwnerBookingAction(
+  input: unknown,
+): Promise<ActionResult<OwnerChangeReceipt>> {
+  const requestHeaders = await headers();
+  if (
+    classifyHost(requestHeaders) !== "owner" ||
+    !hasOwnerOrigin(requestHeaders)
+  )
+    return {
+      success: false,
+      error: { code: "UNAVAILABLE", message: "Appointment is unavailable." },
+    };
+  const result = await moveOwnerBooking(
+    await readOwnerContext(requestHeaders),
+    input,
+  );
+  if (result.success) {
+    const { bookingId } = result.data;
+    revalidatePath("/owner");
+    revalidatePath(`/owner/appointments/${bookingId}`);
+    revalidatePath("/owner/activity");
+    after(() =>
+      dispatchInitialBookingNotifications(bookingId).catch(() => {
+        console.error("Booking update notification dispatch failed.", {
+          bookingId,
+        });
+      }),
+    );
+  }
+  return result;
+}
+
+export async function cancelOwnerBookingAction(
+  input: unknown,
+): Promise<ActionResult<OwnerChangeReceipt>> {
+  const requestHeaders = await headers();
+  if (
+    classifyHost(requestHeaders) !== "owner" ||
+    !hasOwnerOrigin(requestHeaders)
+  )
+    return {
+      success: false,
+      error: { code: "UNAVAILABLE", message: "Appointment is unavailable." },
+    };
+  const result = await cancelOwnerBooking(
+    await readOwnerContext(requestHeaders),
+    input,
+  );
+  if (result.success) {
+    const { bookingId } = result.data;
+    revalidatePath("/owner");
+    revalidatePath(`/owner/appointments/${bookingId}`);
+    revalidatePath("/owner/activity");
+    after(() =>
+      dispatchInitialBookingNotifications(bookingId).catch(() => {
+        console.error("Booking cancellation notification dispatch failed.", {
+          bookingId,
+        });
+      }),
+    );
+  }
+  return result;
 }

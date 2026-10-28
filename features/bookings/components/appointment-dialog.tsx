@@ -11,22 +11,27 @@ import {
 } from "@/components/ui/dialog";
 import type { OwnerAppointmentView } from "../types";
 import { AppointmentDetails } from "./appointment-details";
+import { AppointmentOperations } from "./appointment-operations";
+import type { OwnerAppointmentMoveChoices } from "../types";
+import { useAppointmentDismissal } from "../hooks/use-appointment-dismissal";
 
 export function AppointmentDialog({
   appointment,
   calendarHref,
   now,
+  moveChoices,
 }: {
   appointment: OwnerAppointmentView;
   calendarHref: string;
   now: string;
+  moveChoices: OwnerAppointmentMoveChoices;
 }) {
-  const router = useRouter();
+  const { requestClose, requestNavigation } = useAppointmentDismissal(true);
   return (
     <Dialog
       open
       onOpenChange={(open) => {
-        if (!open) router.back();
+        if (!open) requestClose();
       }}
     >
       <DialogContent
@@ -42,12 +47,22 @@ export function AppointmentDialog({
             variant="outline"
             size="icon"
             aria-label="Close appointment details"
-            onClick={() => router.back()}
+            onClick={requestClose}
           >
             ×
           </Button>
         </div>
-        <AppointmentDetails appointment={appointment} now={now} />
+        <AppointmentDetails
+          appointment={appointment}
+          now={now}
+          operations={
+            <AppointmentOperations
+              appointment={appointment}
+              choices={moveChoices}
+              now={now}
+            />
+          }
+        />
         <div className="flex justify-end">
           <Link
             className={buttonVariants({ variant: "outline" })}
@@ -55,6 +70,10 @@ export function AppointmentDialog({
             data-size="default"
             data-variant="outline"
             href={calendarHref}
+            onClick={(event) => {
+              event.preventDefault();
+              requestNavigation(calendarHref);
+            }}
           >
             Back to calendar
           </Link>

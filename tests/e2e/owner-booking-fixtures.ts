@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 import type { Owner } from "./fixtures";
 
@@ -32,4 +32,33 @@ export async function seedOwnerAppointment(pool: Pool, owner: Owner) {
     ],
   );
   return { appointmentId, barberId, serviceId };
+}
+
+export async function createOwnerAppointment(
+  owner: Owner,
+  startAt = "2027-01-19T13:07:00.000Z",
+) {
+  const { createOwnerBooking } =
+    await import("../../features/bookings/mutations");
+  const result = await createOwnerBooking(
+    { userId: owner.id },
+    {
+      serviceId: owner.serviceId!,
+      barberId: owner.barberId!,
+      startAt,
+      reviewedOffer: {
+        name: "Walk-in Cut",
+        priceUsd: "25.00",
+        durationMinutes: "35",
+      },
+      contact: {
+        name: "Move Journey Guest",
+        email: `move-${randomBytes(6).toString("hex")}@example.test`,
+        whatsappOptIn: false,
+      },
+      recoveryKey: randomBytes(32).toString("base64url"),
+    },
+  );
+  if (!result.success) throw new Error("Valid appointment fixture failed.");
+  return result.data.bookingId;
 }

@@ -6,7 +6,10 @@ import {
   AppointmentDialog,
   AppointmentDialogError,
 } from "@/features/bookings/components/appointment-dialog";
-import { getOwnAppointment } from "@/features/bookings/queries";
+import {
+  getOwnAppointment,
+  getOwnAppointmentMoveChoices,
+} from "@/features/bookings/queries";
 import { readOwnerContext } from "@/server/owner-context";
 
 type Search = Promise<Record<string, string | string[] | undefined>>;
@@ -49,6 +52,14 @@ async function AppointmentContent({
     if (result.error.code === "NOT_FOUND") notFound();
     return <AppointmentDialogError message={result.error.message} />;
   }
+  const moveChoices = await getOwnAppointmentMoveChoices(
+    context,
+    appointmentId,
+  );
+  if (!moveChoices.success)
+    return (
+      <AppointmentDialogError message="Appointment actions could not be loaded. Try again." />
+    );
   const search = await searchParams;
   const date =
     typeof search.date === "string" && validDate(search.date)
@@ -65,6 +76,7 @@ async function AppointmentContent({
       appointment={result.data}
       calendarHref={calendarHref}
       now={new Date().toISOString()}
+      moveChoices={moveChoices.data}
     />
   );
 }
