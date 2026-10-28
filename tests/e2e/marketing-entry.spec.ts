@@ -32,6 +32,7 @@ test("marketing preview covers the owner entry and static customer sample", asyn
   await page.getByRole("button", { name: "Open navigation" }).click();
   await page.getByRole("menuitem", { name: "FAQs" }).click();
   await expect(page).toHaveURL(`${marketingOrigin}/#faq`);
+  await expect(page.getByRole("menu")).toHaveCount(0);
   await page.getByRole("button", { name: "Open navigation" }).click();
   await expect(page.getByRole("menu")).toBeVisible();
   await page.keyboard.press("Escape");
