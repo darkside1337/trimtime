@@ -23,10 +23,18 @@ import {
 import { fixedBookingPrice } from "./money";
 import {
   createBearerSecret,
-  decryptCapability,
   encryptCapability,
   hashSecret,
 } from "./capabilities";
+import {
+  findCreationReplay,
+  findOccupyingInterval,
+  resolveCreationOffer,
+} from "./creation-primitives";
+import {
+  stageCustomerChangeNotifications,
+  suppressSupersededNotificationWork,
+} from "./notification-staging";
 import type {
   ManagedBookingView,
   OwnerBookingReceipt,
@@ -166,24 +174,19 @@ export async function cancelOwnerBooking(
         customerEmail: booking.customer_email,
         customerPhone: booking.customer_phone,
       });
-      await tx
-        .update(notificationWork)
-        .set({ status: "suppressed", reason: "superseded", updatedAt: now })
-        .where(
-          and(
-            eq(notificationWork.bookingId, booking.id),
-            sql`${notificationWork.bookingRevision} < ${revision}`,
-            eq(notificationWork.status, "not_attempted"),
-          ),
-        );
+      await suppressSupersededNotificationWork(tx, booking.id, revision, now);
       const config = resolveEmailConfig(process.env);
-      await tx.execute(
-        sql`INSERT INTO notification_work (id, booking_id, booking_revision, change_id, kind, channel, status, recipient, content_identity, reason) VALUES (${randomUUID()},${booking.id},${revision},${eventId},'customer_cancellation','email',${booking.customer_email ? (config.mode === "mailpit" ? "not_attempted" : "unavailable") : "skipped"},${booking.customer_email},${identity},${booking.customer_email ? (config.mode === "unavailable" ? config.reason : null) : "recipient_missing"})`,
-      );
-      if (booking.whatsapp_opt_in && booking.customer_phone)
-        await tx.execute(
-          sql`INSERT INTO notification_work (id, booking_id, booking_revision, change_id, kind, channel, status, recipient, content_identity, reason) VALUES (${randomUUID()},${booking.id},${revision},${eventId},'customer_cancellation','whatsapp','unavailable',${booking.customer_phone},${identity},'channel_unavailable')`,
-        );
+      await stageCustomerChangeNotifications(tx, {
+        bookingId: booking.id,
+        revision,
+        changeId: eventId,
+        kind: "customer_cancellation",
+        contentIdentity: identity,
+        customerEmail: booking.customer_email,
+        customerPhone: booking.customer_phone,
+        whatsappOptIn: booking.whatsapp_opt_in,
+        emailConfig: config,
+      });
       return {
         success: true as const,
         bookingId: booking.id as string,
@@ -410,20 +413,14 @@ export async function moveOwnerBooking(
       const occupancyId = booking.occupancy_id as string | null;
       if (!occupancyId)
         return fail("UNAVAILABLE", "Appointment reservation is unavailable.");
-      const overlaps = await tx
-        .select({ id: occupiedIntervals.id })
-        .from(occupiedIntervals)
-        .where(
-          and(
-            eq(occupiedIntervals.shopId, shop.id),
-            eq(occupiedIntervals.barberId, barber.id),
-            sql`${occupiedIntervals.id} <> ${occupancyId}`,
-            sql`${occupiedIntervals.startAt}<${end}`,
-            sql`${occupiedIntervals.endAt}>${start}`,
-          ),
-        )
-        .limit(1);
-      if (overlaps.length)
+      const overlap = await findOccupyingInterval(tx, {
+        shopId: shop.id,
+        barberId: barber.id,
+        start,
+        end,
+        excludeOccupancyId: occupancyId,
+      });
+      if (overlap)
         return fail(
           "UNAVAILABLE_INTERVAL",
           "That time was just taken. Choose another available time.",
@@ -496,54 +493,18 @@ export async function moveOwnerBooking(
         customerPhone: booking.customer_phone,
       });
       const emailConfig = resolveEmailConfig(process.env);
-      await tx
-        .update(notificationWork)
-        .set({ status: "suppressed", reason: "superseded", updatedAt: now })
-        .where(
-          and(
-            eq(notificationWork.bookingId, booking.id),
-            sql`${notificationWork.bookingRevision} < ${revision}`,
-            eq(notificationWork.status, "not_attempted"),
-          ),
-        );
-      await tx.insert(notificationWork).values([
-        {
-          id: randomUUID(),
-          bookingId: booking.id,
-          bookingRevision: revision,
-          changeId: eventId,
-          kind: "customer_move",
-          channel: "email",
-          status: !booking.customer_email
-            ? "skipped"
-            : emailConfig.mode === "mailpit"
-              ? "not_attempted"
-              : "unavailable",
-          recipient: booking.customer_email,
-          contentIdentity: identity,
-          reason: !booking.customer_email
-            ? "recipient_missing"
-            : emailConfig.mode === "unavailable"
-              ? emailConfig.reason
-              : null,
-        },
-        ...(booking.whatsapp_opt_in && booking.customer_phone
-          ? [
-              {
-                id: randomUUID(),
-                bookingId: booking.id,
-                bookingRevision: revision,
-                changeId: eventId,
-                kind: "customer_move" as const,
-                channel: "whatsapp" as const,
-                status: "unavailable" as const,
-                recipient: booking.customer_phone,
-                contentIdentity: identity,
-                reason: "channel_unavailable",
-              },
-            ]
-          : []),
-      ]);
+      await suppressSupersededNotificationWork(tx, booking.id, revision, now);
+      await stageCustomerChangeNotifications(tx, {
+        bookingId: booking.id,
+        revision,
+        changeId: eventId,
+        kind: "customer_move",
+        contentIdentity: identity,
+        customerEmail: booking.customer_email,
+        customerPhone: booking.customer_phone,
+        whatsappOptIn: booking.whatsapp_opt_in,
+        emailConfig,
+      });
       return {
         success: true as const,
         bookingId: booking.id as string,
@@ -661,113 +622,37 @@ export async function createOwnerBooking(
           contact: parsed.data.contact,
         }),
       );
-      const existing = await tx.execute(
-        sql`SELECT id,recovery_payload_digest,end_at,capability_hash,capability_ciphertext,capability_key_id,capability_revoked_at FROM bookings WHERE shop_id=${shop.id} AND creation_source='owner' AND recovery_key_hash=${keyHash} LIMIT 1`,
-      );
-      const recovered = existing.rows[0] as
-        | {
-            id: string;
-            recovery_payload_digest: string;
-            end_at: Date;
-            capability_hash: string;
-            capability_ciphertext: string;
-            capability_key_id: string;
-            capability_revoked_at: Date | null;
-          }
-        | undefined;
-      if (recovered) {
-        if (
-          recovered.recovery_payload_digest !== digest ||
-          recovered.capability_revoked_at ||
-          now.getTime() >=
-            new Date(recovered.end_at).getTime() + 168 * 60 * 60_000
-        )
-          return unavailable(
-            "RECOVERY_MISMATCH",
-            "This appointment attempt cannot be recovered.",
-          );
-        let token: string;
-        try {
-          token = decryptCapability(
-            recovered.capability_ciphertext,
-            recovered.capability_key_id,
-            `${shop.id}:${recovered.id}`,
-          );
-        } catch {
-          return unavailable(
-            "RECOVERY_MISMATCH",
-            "This appointment attempt cannot be recovered.",
-          );
-        }
-        if (hashSecret(token) !== recovered.capability_hash)
-          return unavailable(
-            "RECOVERY_MISMATCH",
-            "This appointment attempt cannot be recovered.",
-          );
-        return { success: true as const, bookingId: recovered.id };
-      }
-      const crossSourceKey = await tx.execute(
-        sql`SELECT id FROM bookings WHERE shop_id=${shop.id} AND recovery_key_hash=${keyHash} LIMIT 1`,
-      );
-      if (crossSourceKey.rows.length)
+      const recovered = await findCreationReplay(tx, {
+        shopId: shop.id,
+        creationSource: "owner",
+        recoveryKey: parsed.data.recoveryKey,
+        payloadDigest: digest,
+        now,
+      });
+      if (recovered.status === "matched")
+        return { success: true as const, bookingId: recovered.bookingId };
+      if (recovered.status === "mismatch")
         return unavailable(
           "RECOVERY_MISMATCH",
           "This appointment attempt cannot be recovered.",
         );
-      const [service] = await tx
-        .select()
-        .from(services)
-        .where(
-          and(
-            eq(services.shopId, shop.id),
-            eq(services.id, parsed.data.serviceId),
-          ),
-        )
-        .limit(1);
-      const [barber] = await tx
-        .select()
-        .from(barbers)
-        .where(
-          and(
-            eq(barbers.shopId, shop.id),
-            eq(barbers.id, parsed.data.barberId),
-          ),
-        )
-        .limit(1);
-      const [assignment] = await tx
-        .select({ barberId: barberServices.barberId })
-        .from(barberServices)
-        .where(
-          and(
-            eq(barberServices.shopId, shop.id),
-            eq(barberServices.serviceId, parsed.data.serviceId),
-            eq(barberServices.barberId, parsed.data.barberId),
-          ),
-        )
-        .limit(1);
-      if (
-        !service ||
-        !barber ||
-        !assignment ||
-        service.archived ||
-        !service.offered ||
-        barber.archived
-      )
-        return unavailable(
-          "STALE_OFFER",
-          "That service or barber is no longer available. Review the current options.",
-        );
-      if (
-        service.name !== parsed.data.reviewedOffer.name ||
-        fixedBookingPrice(service.priceUsd) !==
-          parsed.data.reviewedOffer.priceUsd ||
-        String(service.durationMinutes) !==
-          parsed.data.reviewedOffer.durationMinutes
-      )
-        return unavailable(
-          "STALE_OFFER",
-          "The service details changed. Review the current price and duration.",
-        );
+      const offer = await resolveCreationOffer(tx, {
+        shopId: shop.id,
+        serviceId: parsed.data.serviceId,
+        barberId: parsed.data.barberId,
+        reviewedOffer: parsed.data.reviewedOffer,
+      });
+      if (!offer.ok)
+        return offer.reason === "unavailable"
+          ? unavailable(
+              "STALE_OFFER",
+              "That service or barber is no longer available. Review the current options.",
+            )
+          : unavailable(
+              "STALE_OFFER",
+              "The service details changed. Review the current price and duration.",
+            );
+      const { service, barber } = offer;
       const duration = Number(service.durationMinutes);
       const start = new Date(parsed.data.startAt);
       const startInstant = Temporal.Instant.from(parsed.data.startAt);
@@ -810,19 +695,13 @@ export async function createOwnerBooking(
           "UNAVAILABLE_INTERVAL",
           "Choose another available time.",
         );
-      const overlaps = await tx
-        .select({ id: occupiedIntervals.id })
-        .from(occupiedIntervals)
-        .where(
-          and(
-            eq(occupiedIntervals.shopId, shop.id),
-            eq(occupiedIntervals.barberId, barber.id),
-            sql`${occupiedIntervals.startAt}<${end}`,
-            sql`${occupiedIntervals.endAt}>${start}`,
-          ),
-        )
-        .limit(1);
-      if (overlaps.length)
+      const overlap = await findOccupyingInterval(tx, {
+        shopId: shop.id,
+        barberId: barber.id,
+        start,
+        end,
+      });
+      if (overlap)
         return unavailable(
           "UNAVAILABLE_INTERVAL",
           "That time was just taken. Choose another available time.",

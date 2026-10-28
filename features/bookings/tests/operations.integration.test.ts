@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 import {
   afterAll,
@@ -369,6 +369,148 @@ describe("public booking operations", () => {
       ).rows[0].n,
     ).toBe(1);
   });
+
+  it("public creation replays only an identical request and keeps one reservation", async () => {
+    const ids = await fixture();
+    const payload = input(ids);
+    const created = await createPublicBooking({ shopId: ids.shopId }, payload);
+    if (!created.success) throw new Error("Booking fixture failed.");
+
+    await expect(
+      createPublicBooking(
+        { shopId: ids.shopId },
+        {
+          ...payload,
+          contact: { ...payload.contact, name: "Changed Guest" },
+        },
+      ),
+    ).resolves.toMatchObject({
+      success: false,
+      error: { code: "RECOVERY_MISMATCH" },
+    });
+    await expect(
+      createPublicBooking({ shopId: ids.shopId }, payload),
+    ).resolves.toEqual(created);
+
+    const counts = await database.pool.query(
+      `SELECT
+        (SELECT count(*)::int FROM bookings WHERE shop_id=$1) AS bookings,
+        (SELECT count(*)::int FROM occupied_intervals WHERE shop_id=$1) AS occupancy,
+        (SELECT count(*)::int FROM notification_work w JOIN bookings b ON b.id=w.booking_id WHERE b.shop_id=$1) AS work,
+        (SELECT count(*)::int FROM public_rate_events e WHERE e.scope='create_email_shop' AND e.key_hash=$2) AS rate_events`,
+      [
+        ids.shopId,
+        createHash("sha256")
+          .update(`${ids.shopId}:ada@example.test`)
+          .digest("hex"),
+      ],
+    );
+    expect(counts.rows[0]).toMatchObject({
+      bookings: 1,
+      occupancy: 1,
+      work: 2,
+      rate_events: 1,
+    });
+  });
+
+  it("public creation rejects a revoked replay without creating another booking", async () => {
+    const ids = await fixture();
+    const payload = input(ids);
+    const created = await createPublicBooking({ shopId: ids.shopId }, payload);
+    if (!created.success) throw new Error("Booking fixture failed.");
+    await database.pool.query(
+      "UPDATE bookings SET capability_revoked_at=$2 WHERE id=$1",
+      [created.data.bookingId, new Date("2026-11-02T08:00:00Z")],
+    );
+
+    await expect(
+      createPublicBooking({ shopId: ids.shopId }, payload),
+    ).resolves.toMatchObject({
+      success: false,
+      error: { code: "RECOVERY_MISMATCH" },
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM bookings WHERE shop_id=$1",
+          [ids.shopId],
+        )
+      ).rows[0].count,
+    ).toBe(1);
+  });
+
+  it("public creation rejects an expired replay without creating another booking", async () => {
+    const ids = await fixture();
+    const payload = input(ids);
+    const created = await createPublicBooking({ shopId: ids.shopId }, payload);
+    if (!created.success) throw new Error("Booking fixture failed.");
+    await database.pool.query(
+      "UPDATE bookings SET start_at='2026-10-20T10:00:00Z', end_at='2026-10-20T10:30:00Z' WHERE id=$1",
+      [created.data.bookingId],
+    );
+
+    await expect(
+      createPublicBooking({ shopId: ids.shopId }, payload),
+    ).resolves.toMatchObject({
+      success: false,
+      error: { code: "RECOVERY_MISMATCH" },
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM bookings WHERE shop_id=$1",
+          [ids.shopId],
+        )
+      ).rows[0].count,
+    ).toBe(1);
+  });
+
+  it.each(["hidden", "archived", "unassigned", "foreign"] as const)(
+    "public creation rejects a %s catalog offer without writing",
+    async (state) => {
+      const ids = await fixture();
+      let candidate = ids;
+      if (state === "hidden")
+        await database.pool.query(
+          "UPDATE services SET offered=false WHERE id=$1",
+          [ids.serviceId],
+        );
+      if (state === "archived")
+        await database.pool.query(
+          "UPDATE services SET archived=true WHERE id=$1",
+          [ids.serviceId],
+        );
+      if (state === "unassigned")
+        await database.pool.query(
+          "DELETE FROM barber_services WHERE shop_id=$1 AND barber_id=$2 AND service_id=$3",
+          [ids.shopId, ids.barberId, ids.serviceId],
+        );
+      if (state === "foreign") candidate = await fixture();
+
+      const result = await createPublicBooking(
+        { shopId: ids.shopId },
+        input(candidate),
+      );
+      expect(result).toMatchObject({
+        success: false,
+        error: { code: "STALE_OFFER" },
+      });
+      if (state === "foreign")
+        expect(JSON.stringify(result)).not.toContain(candidate.shopId);
+      const counts = await database.pool.query(
+        `SELECT
+          (SELECT count(*)::int FROM bookings WHERE shop_id=$1) AS bookings,
+          (SELECT count(*)::int FROM occupied_intervals WHERE shop_id=$1) AS occupancy,
+          (SELECT count(*)::int FROM notification_work w JOIN bookings b ON b.id=w.booking_id WHERE b.shop_id=$1) AS work`,
+        [ids.shopId],
+      );
+      expect(counts.rows[0]).toMatchObject({
+        bookings: 0,
+        occupancy: 0,
+        work: 0,
+      });
+    },
+  );
 
   it("owner cancellation retains the saved appointment details", async () => {
     const ids = await fixture();

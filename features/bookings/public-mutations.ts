@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import { Temporal } from "temporal-polyfill";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { barberServices, barbers, services } from "@/db/schema/catalog";
 import { bookings } from "@/db/schema/bookings";
 import { notificationWork } from "@/db/schema/notification-work";
 import { resolveEmailConfig } from "@/features/notifications/config";
@@ -16,14 +15,16 @@ import type { ActionResult } from "@/lib/action-result";
 import { calculateSlots } from "@/features/availability/slots";
 import { resolveScheduleForDate } from "@/features/availability/schedule-resolution";
 import { createPublicBookingSchema } from "./schemas";
-import { fixedBookingPrice } from "./money";
 import {
   canonicalManageUrl,
   createBearerSecret,
-  decryptCapability,
   encryptCapability,
   hashSecret,
 } from "./capabilities";
+import {
+  findCreationReplay,
+  resolveCreationOffer,
+} from "./creation-primitives";
 import type {
   BookingFailureCode,
   ManagedBookingView,
@@ -171,64 +172,6 @@ async function receiptFor(
   };
 }
 
-async function recoverExisting(
-  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
-  shopId: string,
-  recoveryKey: string,
-  digest: string,
-  now: Date,
-) {
-  const keyHash = hashSecret(recoveryKey);
-  const result = await tx.execute(
-    sql`SELECT id, recovery_payload_digest, capability_hash, capability_ciphertext, capability_key_id, capability_revoked_at, end_at FROM bookings WHERE shop_id = ${shopId} AND creation_source='public' AND recovery_key_hash = ${keyHash} LIMIT 1`,
-  );
-  const row = result.rows[0] as
-    | {
-        id: string;
-        recovery_payload_digest: string;
-        capability_hash: string;
-        capability_ciphertext: string;
-        capability_key_id: string;
-        capability_revoked_at: Date | null;
-        end_at: Date;
-      }
-    | undefined;
-  if (!row) {
-    const collision = await tx.execute(
-      sql`SELECT id FROM bookings WHERE shop_id=${shopId} AND recovery_key_hash=${keyHash} LIMIT 1`,
-    );
-    return collision.rows.length
-      ? { found: true as const, receipt: null }
-      : { found: false as const };
-  }
-  if (
-    row.recovery_payload_digest !== digest ||
-    row.capability_revoked_at ||
-    now.getTime() >= new Date(row.end_at).getTime() + 168 * 60 * 60_000
-  )
-    return { found: true as const, receipt: null };
-  try {
-    const token = decryptCapability(
-      row.capability_ciphertext,
-      row.capability_key_id,
-      `${shopId}:${row.id}`,
-    );
-    if (hashSecret(token) !== row.capability_hash)
-      return { found: true as const, receipt: null };
-    const receipt = await receiptFor(tx, row.id, "", now);
-    if (!receipt) return { found: true as const, receipt: null };
-    const shop = await tx
-      .select({ subdomain: shops.subdomain })
-      .from(shops)
-      .where(eq(shops.id, shopId))
-      .limit(1);
-    receipt.manageUrl = canonicalManageUrl(shop[0].subdomain, token);
-    return { found: true as const, receipt };
-  } catch {
-    return { found: true as const, receipt: null };
-  }
-}
-
 export async function createPublicBooking(
   context: PublicBookingContext | null,
   input: PublicBookingInput | unknown,
@@ -267,20 +210,36 @@ export async function createPublicBooking(
           "This shop is not accepting bookings right now.",
         );
 
-      const recovered = await recoverExisting(
-        tx,
-        shop.id,
-        parsed.data.recoveryKey,
-        digest,
+      const recovered = await findCreationReplay(tx, {
+        shopId: shop.id,
+        creationSource: "public",
+        recoveryKey: parsed.data.recoveryKey,
+        payloadDigest: digest,
         now,
-      );
-      if (recovered.found)
-        return recovered.receipt
-          ? { success: true, data: recovered.receipt }
-          : failure(
-              "RECOVERY_MISMATCH",
-              "This booking attempt cannot be recovered.",
+      });
+      if (recovered.status === "matched") {
+        try {
+          const receipt = await receiptFor(tx, recovered.bookingId, "", now);
+          if (receipt) {
+            receipt.manageUrl = canonicalManageUrl(
+              shop.subdomain,
+              recovered.token,
             );
+            return { success: true, data: receipt };
+          }
+        } catch {
+          // An unrecoverable receipt must not disclose a capability.
+        }
+        return failure(
+          "RECOVERY_MISMATCH",
+          "This booking attempt cannot be recovered.",
+        );
+      }
+      if (recovered.status === "mismatch")
+        return failure(
+          "RECOVERY_MISMATCH",
+          "This booking attempt cannot be recovered.",
+        );
 
       const emailAllowed = await rateEvent(
         tx,
@@ -294,60 +253,23 @@ export async function createPublicBooking(
           "RATE_LIMITED",
           "Too many booking attempts. Please wait before trying again.",
         );
-      const [service] = await tx
-        .select()
-        .from(services)
-        .where(
-          and(
-            eq(services.shopId, shop.id),
-            eq(services.id, parsed.data.serviceId),
-          ),
-        )
-        .limit(1);
-      const [barber] = await tx
-        .select()
-        .from(barbers)
-        .where(
-          and(
-            eq(barbers.shopId, shop.id),
-            eq(barbers.id, parsed.data.barberId),
-          ),
-        )
-        .limit(1);
-      const [assignment] = await tx
-        .select({ barberId: barberServices.barberId })
-        .from(barberServices)
-        .where(
-          and(
-            eq(barberServices.shopId, shop.id),
-            eq(barberServices.serviceId, parsed.data.serviceId),
-            eq(barberServices.barberId, parsed.data.barberId),
-          ),
-        )
-        .limit(1);
-      if (
-        !service ||
-        !barber ||
-        !assignment ||
-        service.archived ||
-        !service.offered ||
-        barber.archived
-      )
-        return failure(
-          "STALE_OFFER",
-          "That service or barber is no longer available. Review the current options.",
-        );
-      if (
-        service.name !== parsed.data.reviewedOffer.name ||
-        fixedBookingPrice(service.priceUsd) !==
-          parsed.data.reviewedOffer.priceUsd ||
-        String(service.durationMinutes) !==
-          parsed.data.reviewedOffer.durationMinutes
-      )
-        return failure(
-          "STALE_OFFER",
-          "The service details changed. Review the current price and duration.",
-        );
+      const offer = await resolveCreationOffer(tx, {
+        shopId: shop.id,
+        serviceId: parsed.data.serviceId,
+        barberId: parsed.data.barberId,
+        reviewedOffer: parsed.data.reviewedOffer,
+      });
+      if (!offer.ok)
+        return offer.reason === "unavailable"
+          ? failure(
+              "STALE_OFFER",
+              "That service or barber is no longer available. Review the current options.",
+            )
+          : failure(
+              "STALE_OFFER",
+              "The service details changed. Review the current price and duration.",
+            );
+      const { service, barber } = offer;
       const duration = Number(service.durationMinutes);
       if (!Number.isSafeInteger(duration))
         return failure(
