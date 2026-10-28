@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import type { ShopView } from "../queries";
+import type { ShopView } from "@/features/shops/queries";
 import type {
   BookingChangeActivityView,
   NotificationActivityRow,
