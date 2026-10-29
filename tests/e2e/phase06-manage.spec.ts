@@ -1,7 +1,49 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import type { Pool } from "pg";
 import { test, expect, ownerOrigin, captureState } from "./fixtures";
 import { addReadyCatalog } from "./publication-fixtures";
 import { chooseBookingOptions } from "./booking-flow-helpers";
+
+async function snapshot(
+  pool: Pool,
+  bookingId: string,
+  shopId: string,
+  token: string,
+) {
+  const booking = await pool.query(
+    `SELECT id, shop_id, status, revision, start_at, end_at, service_id, service_name, service_price_usd,
+            customer_name, customer_email, occupancy_id
+       FROM bookings WHERE id = $1`,
+    [bookingId],
+  );
+  const occupancy = await pool.query(
+    `SELECT id, barber_id, start_at, end_at
+       FROM occupied_intervals WHERE shop_id = $1 ORDER BY id`,
+    [shopId],
+  );
+  const keyHash = createHash("sha256")
+    .update(`${booking.rows[0]?.shop_id ?? ""}:${token}`)
+    .digest("hex");
+  const events = await pool.query(
+    "SELECT count(*)::int AS count FROM booking_changes WHERE booking_id = $1",
+    [bookingId],
+  );
+  const work = await pool.query(
+    "SELECT count(*)::int AS count FROM notification_work WHERE booking_id = $1",
+    [bookingId],
+  );
+  const attempts = await pool.query(
+    "SELECT count(*)::int AS count FROM public_rate_events WHERE scope = 'customer_change_link' AND key_hash = $1",
+    [keyHash],
+  );
+  return {
+    booking: booking.rows,
+    occupancy: occupancy.rows,
+    events: events.rows[0].count,
+    work: work.rows[0].count,
+    attempts: attempts.rows[0].count,
+  };
+}
 
 async function createBooking(
   page: import("@playwright/test").Page,
@@ -110,6 +152,19 @@ test("saved booking details survive catalog edits and unpublication without read
   );
   expect(before.rows).toHaveLength(1);
 
+  const token = manageUrl.pathname.split("/").at(-1)!;
+  const { rows: bookingRows } = await database.pool.query(
+    "SELECT id FROM bookings WHERE shop_id = $1",
+    [owner.shopId],
+  );
+  const bookingId = bookingRows[0].id as string;
+  const snapshotBefore = await snapshot(
+    database.pool,
+    bookingId,
+    owner.shopId,
+    token,
+  );
+
   const response = await request.get(manageUrl.toString());
   expect(response.status()).toBe(200);
   expect(response.headers()["cache-control"]).toBe("private, no-store");
@@ -143,10 +198,30 @@ test("saved booking details survive catalog edits and unpublication without read
     await captureState(page, `manage-details-${viewport.label}`, info);
   }
   await page.setViewportSize({ width: 1024, height: 900 });
-  const previewRequests: string[] = [];
-  page.on("request", (request) => {
-    if (!["GET", "HEAD"].includes(request.method()))
-      previewRequests.push(request.method());
+  const mutationRequests: Array<{
+    method: string;
+    url: string;
+    postData: string | null;
+  }> = [];
+  const readActionRequests: Array<{ url: string; postData: string | null }> =
+    [];
+  page.on("request", (req) => {
+    if (!["GET", "HEAD"].includes(req.method())) {
+      const postData = req.postData() ?? "";
+      const isReadAction =
+        req.method() === "POST" &&
+        Boolean(req.headers()["next-action"]) &&
+        !postData.includes('"confirmed":true');
+      if (isReadAction) {
+        readActionRequests.push({ url: req.url(), postData });
+      } else {
+        mutationRequests.push({
+          method: req.method(),
+          url: req.url(),
+          postData,
+        });
+      }
+    }
   });
   const storageBefore = await page.evaluate(() => ({
     local: { ...localStorage },
@@ -165,13 +240,12 @@ test("saved booking details survive catalog edits and unpublication without read
   await page.setViewportSize({ width: 320, height: 800 });
   await captureState(page, "manage-edit-phone-320", info);
   await page.setViewportSize({ width: 1024, height: 900 });
-  const previewTime = page.getByRole("radio", { name: "9:15 AM", exact: true });
+  const previewTime = page.getByRole("radio", { name: "09:15", exact: true });
+  await expect(previewTime).toBeVisible();
   await previewTime.focus();
   await previewTime.press("Space");
   await expect(previewTime).toBeChecked();
-  await page
-    .getByRole("button", { name: "Review change · Preview only" })
-    .click();
+  await page.getByRole("button", { name: "Review change" }).click();
   await expect(
     page.getByRole("heading", { name: "A quick look before we change it." }),
   ).toBeVisible();
@@ -186,9 +260,10 @@ test("saved booking details survive catalog edits and unpublication without read
   await page.setViewportSize({ width: 1024, height: 900 });
   await expect(
     page.getByRole("button", {
-      name: "Confirm appointment change · Unavailable",
+      name: "Confirm appointment change",
+      exact: true,
     }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   await page.getByRole("button", { name: "Back to your booking" }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
   await captureState(page, "manage-discard-dialog-desktop", info);
@@ -208,13 +283,21 @@ test("saved booking details survive catalog edits and unpublication without read
   await captureState(page, "manage-cancel-dialog-phone", info);
   await page.setViewportSize({ width: 1024, height: 900 });
   await page.getByRole("button", { name: "Keep appointment" }).click();
-  expect(previewRequests).toEqual([]);
+  expect(mutationRequests).toEqual([]);
+  expect(readActionRequests.length).toBeGreaterThan(0);
   expect(
     await page.evaluate(() => ({
       local: { ...localStorage },
       session: { ...sessionStorage },
     })),
   ).toEqual(storageBefore);
+  const snapshotAfter = await snapshot(
+    database.pool,
+    bookingId,
+    owner.shopId,
+    token,
+  );
+  expect(snapshotAfter).toEqual(snapshotBefore);
   await expect(page.getByText("Fresh Cut", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Ada Lovelace")).toBeVisible();
   await expect(

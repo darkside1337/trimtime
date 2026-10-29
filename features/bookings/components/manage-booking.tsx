@@ -88,8 +88,16 @@ export function ManageBooking({
           ) : (
             <BookingPreview
               booking={booking}
+              token={token}
               headingRef={screenHeadingRef}
               onClose={() => setDialog("discard")}
+              onReplaced={() => {
+                setScreen("details");
+                setAnnouncement(
+                  "Appointment updated. Your new time is reserved.",
+                );
+                router.refresh();
+              }}
             />
           )}
         </section>

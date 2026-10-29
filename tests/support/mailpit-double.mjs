@@ -66,6 +66,8 @@ export function createMailpitDouble() {
         recipient: behavior.mismatchRecipient
           ? `wrong-${recipient}`
           : recipient,
+        subject: input?.Subject,
+        text: input?.Text,
         headers: {
           "X-TrimTime-Attempt-ID": [
             behavior.mismatchHeader ? `wrong-${attempt}` : attempt,
@@ -94,7 +96,13 @@ export function createMailpitDouble() {
       return json(
         response,
         200,
-        match[2] ? message.headers : { To: [{ Address: message.recipient }] },
+        match[2]
+          ? message.headers
+          : {
+              To: [{ Address: message.recipient }],
+              Subject: message.subject,
+              Text: message.text,
+            },
       );
     }
 

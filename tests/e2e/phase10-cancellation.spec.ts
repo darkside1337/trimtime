@@ -54,8 +54,13 @@ async function snapshot(pool: Pool, bookingId: string, token: string) {
     "SELECT shop_id, status, revision, start_at, end_at, occupancy_id FROM bookings WHERE id=$1",
     [bookingId],
   );
+  const shopId = (booking.rows[0]?.shop_id as string | undefined) ?? "";
+  const occupancy = await pool.query(
+    "SELECT id, barber_id, start_at, end_at FROM occupied_intervals WHERE shop_id=$1 ORDER BY id",
+    [shopId],
+  );
   const keyHash = createHash("sha256")
-    .update(`${booking.rows[0]?.shop_id ?? ""}:${token}`)
+    .update(`${shopId}:${token}`)
     .digest("hex");
   const events = await pool.query(
     "SELECT count(*)::int AS count FROM booking_changes WHERE booking_id=$1",
@@ -71,6 +76,7 @@ async function snapshot(pool: Pool, bookingId: string, token: string) {
   );
   return {
     booking: booking.rows,
+    occupancy: occupancy.rows,
     events: events.rows[0].count,
     work: work.rows[0].count,
     attempts: attempts.rows[0].count,
@@ -870,11 +876,32 @@ test("replacement edit, review, and discard previews remain non-mutating", async
     .digest("hex");
 
   try {
+    const before = await snapshot(database.pool, bookingId, token);
     await page.goto(manageUrl.toString());
-    const writes: string[] = [];
-    page.on("request", (request) => {
-      if (!["GET", "HEAD"].includes(request.method()))
-        writes.push(request.method());
+    const mutationRequests: Array<{
+      method: string;
+      url: string;
+      postData: string | null;
+    }> = [];
+    const readActionRequests: Array<{ url: string; postData: string | null }> =
+      [];
+    page.on("request", (req) => {
+      if (!["GET", "HEAD"].includes(req.method())) {
+        const postData = req.postData() ?? "";
+        const isReadAction =
+          req.method() === "POST" &&
+          Boolean(req.headers()["next-action"]) &&
+          !postData.includes('"confirmed":true');
+        if (isReadAction) {
+          readActionRequests.push({ url: req.url(), postData });
+        } else {
+          mutationRequests.push({
+            method: req.method(),
+            url: req.url(),
+            postData,
+          });
+        }
+      }
     });
     const storageBefore = await page.evaluate(() => ({
       local: { ...localStorage },
@@ -884,29 +911,36 @@ test("replacement edit, review, and discard previews remain non-mutating", async
     await expect(
       page.getByRole("heading", { name: "A fresh time. Your call." }),
     ).toBeVisible();
-    const start = page.getByRole("radio", { name: "9:15 AM", exact: true });
+    const start = page.getByRole("radio", { name: "09:15", exact: true });
+    await expect(start).toBeVisible();
     await start.focus();
     await start.press("Space");
     await expect(start).toBeChecked();
-    await page
-      .getByRole("button", { name: "Review change · Preview only" })
-      .click();
+    await page.getByRole("button", { name: "Review change" }).click();
     await expect(
       page.getByRole("heading", { name: "A quick look before we change it." }),
     ).toBeVisible();
+    await expect(
+      page.getByRole("button", {
+        name: "Confirm appointment change",
+        exact: true,
+      }),
+    ).toBeEnabled();
     await page.getByRole("button", { name: "Back to your booking" }).click();
     await expect(page.getByRole("dialog")).toBeVisible();
     await page.getByRole("button", { name: "Discard preview choices" }).click();
     await expect(
       page.getByRole("button", { name: "Open change preview" }),
     ).toBeVisible();
-    expect(writes).toEqual([]);
+    expect(mutationRequests).toEqual([]);
+    expect(readActionRequests.length).toBeGreaterThan(0);
     expect(
       await page.evaluate(() => ({
         local: { ...localStorage },
         session: { ...sessionStorage },
       })),
     ).toEqual(storageBefore);
+    expect(await snapshot(database.pool, bookingId, token)).toEqual(before);
     expect(
       (
         await database.pool.query(

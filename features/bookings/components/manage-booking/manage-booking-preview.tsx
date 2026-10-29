@@ -3,25 +3,19 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { ManagedBookingView } from "../../types";
+import type {
+  CustomerReplacementChoices,
+  CustomerReplacementReceipt,
+  ManagedBookingView,
+  ReplaceCustomerBookingInput,
+} from "../../types";
+import {
+  getCustomerReplacementChoicesAction,
+  getCustomerReplacementSlotsAction,
+  replaceCustomerBookingAction,
+} from "../../actions";
+import { createRecoveryKey } from "../recovery-key";
 import { appointmentTime } from "./appointment-time";
-
-const sampleServices = ["Classic cut", "Beard tidy", "Cut & beard"];
-const sampleBarbers = ["Amal", "Youssef", "Leila"];
-const sampleTimes = [
-  "9:00 AM",
-  "9:15 AM",
-  "9:30 AM",
-  "9:45 AM",
-  "10:00 AM",
-  "10:15 AM",
-  "10:30 AM",
-  "10:45 AM",
-  "11:00 AM",
-  "11:15 AM",
-  "11:30 AM",
-  "11:45 AM",
-];
 
 function AppointmentSummary({
   booking,
@@ -68,40 +62,339 @@ function AppointmentSummary({
   );
 }
 
+function formatSlotTime(
+  startAt: string,
+  durationMinutes: number,
+  timeZone: string,
+) {
+  const start = new Date(startAt);
+  const end = new Date(start.getTime() + durationMinutes * 60_000);
+  const dateFmt = new Intl.DateTimeFormat("en", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    timeZone,
+  });
+  const timeFmt = new Intl.DateTimeFormat("en", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone,
+  });
+  return {
+    date: dateFmt.format(start),
+    range: `${timeFmt.format(start)} – ${timeFmt.format(end)}`,
+    localTime: timeFmt.format(start),
+  };
+}
+
+import {
+  checkCutoffWithin12Hours,
+  type AuthoritativeServerClock,
+} from "./cutoff-warning";
+export { checkCutoffWithin12Hours, type AuthoritativeServerClock };
+
 export function BookingPreview({
   booking,
+  token,
   onClose,
   headingRef,
+  onReplaced,
 }: {
   booking: ManagedBookingView;
+  token: string;
   onClose: () => void;
   headingRef: RefObject<HTMLHeadingElement | null>;
+  onReplaced?: (receipt: CustomerReplacementReceipt) => void;
 }) {
   const original = appointmentTime(booking);
-  const [service, setService] = useState(booking.service.name);
-  const [barber, setBarber] = useState(booking.barber.name);
+
+  const [choices, setChoices] = useState<CustomerReplacementChoices | null>(
+    null,
+  );
+  const [loadingChoices, setLoadingChoices] = useState(true);
+  const [choicesError, setChoicesError] = useState<string | null>(null);
+
+  const [serviceId, setServiceId] = useState("");
+  const [barberId, setBarberId] = useState("");
   const [date, setDate] = useState(original.dateTime);
-  const [time, setTime] = useState("");
+  const [startAt, setStartAt] = useState("");
+
+  const [slots, setSlots] = useState<
+    Array<{ start: string; end: string; localStart: string; offset: string }>
+  >([]);
+  const [loadingSlots, setLoadingSlots] = useState(false);
+  const [slotsError, setSlotsError] = useState<string | null>(null);
+
   const [screen, setScreen] = useState<"edit" | "review">("edit");
   const reviewHeadingRef = useRef<HTMLHeadingElement>(null);
 
-  useEffect(() => {
-    (screen === "review" ? reviewHeadingRef : headingRef).current?.focus();
-  }, [screen, headingRef]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [uncertain, setUncertain] = useState(false);
+  const [staleBooking, setStaleBooking] = useState(false);
+  const [reloadChoicesCount, setReloadChoicesCount] = useState(0);
+  const [, setReviewTick] = useState(0);
 
-  const options = (items: string[], current: string) =>
-    Array.from(new Set([current, ...items]));
+  const operationKey = useRef(createRecoveryKey());
+  const submittedPayload = useRef<ReplaceCustomerBookingInput | null>(null);
+  const slotRequestId = useRef(0);
+
+  const [serverClock, setServerClock] =
+    useState<AuthoritativeServerClock | null>(null);
+
+  function updateAuthoritativeTime(
+    serverNowIso?: string,
+    networkDelayMs: number = 0,
+  ) {
+    if (!serverNowIso) return;
+    const serverTimeMs = new Date(serverNowIso).getTime();
+    if (!Number.isNaN(serverTimeMs)) {
+      setServerClock({
+        serverTimeMs,
+        recordedAtMonotonicMs: performance.now(),
+        networkDelayMs,
+      });
+    }
+  }
+
+  function handleStartSelection(slotIso: string) {
+    setStartAt(slotIso);
+  }
+
+  function handleProceedToReview() {
+    setScreen("review");
+  }
+
+  useEffect(() => {
+    if (screen !== "review" || !startAt) return;
+    const timer = setInterval(() => {
+      setReviewTick((t) => t + 1);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [screen, startAt]);
+
+  const isWithin12Hours = startAt
+    ? checkCutoffWithin12Hours(startAt, serverClock)
+    : false;
+
+  useEffect(() => {
+    let active = true;
+    const reqStartMonotonic = performance.now();
+    getCustomerReplacementChoicesAction(token)
+      .then((res) => {
+        if (!active) return;
+        setLoadingChoices(false);
+        if (res.success) {
+          const reqEndMonotonic = performance.now();
+          const roundTripMs = Math.max(0, reqEndMonotonic - reqStartMonotonic);
+          setChoices(res.data);
+          updateAuthoritativeTime(res.data.serverNow, roundTripMs);
+          setLoadingSlots(true);
+          setServiceId((prev) => {
+            const currentSvc =
+              res.data.services.find((s) => s.id === prev) ??
+              res.data.retainedService;
+            return currentSvc.id;
+          });
+          setBarberId((prev) => {
+            const currentBarber =
+              res.data.barbers.find((b) => b.id === prev) ??
+              res.data.barbers.find((b) => b.name === booking.barber.name) ??
+              res.data.barbers[0];
+            return currentBarber ? currentBarber.id : "";
+          });
+        } else {
+          setChoicesError(res.error.message);
+        }
+      })
+      .catch(() => {
+        if (!active) return;
+        setLoadingChoices(false);
+        setChoicesError("Could not load booking choices. Please try again.");
+      });
+    return () => {
+      active = false;
+    };
+  }, [token, reloadChoicesCount, booking.barber.name]);
+
+  useEffect(() => {
+    if (!loadingChoices) {
+      (screen === "review" ? reviewHeadingRef : headingRef).current?.focus();
+    }
+  }, [screen, headingRef, loadingChoices]);
+
+  // Fetch slots whenever choices, service, barber, or date changes
+  useEffect(() => {
+    const reqId = ++slotRequestId.current;
+    if (!choices || !serviceId || !barberId || !date) {
+      return;
+    }
+    const reqStartMonotonic = performance.now();
+
+    getCustomerReplacementSlotsAction({
+      token,
+      expectedRevision: choices.revision,
+      serviceId,
+      barberId,
+      date,
+    })
+      .then((res) => {
+        if (slotRequestId.current !== reqId) return;
+        setLoadingSlots(false);
+        if (res.success) {
+          const reqEndMonotonic = performance.now();
+          const roundTripMs = Math.max(0, reqEndMonotonic - reqStartMonotonic);
+          setSlots(res.data.slots);
+          updateAuthoritativeTime(res.data.serverNow, roundTripMs);
+        } else {
+          setSlots([]);
+          setSlotsError(res.error.message);
+        }
+      })
+      .catch(() => {
+        if (slotRequestId.current !== reqId) return;
+        setLoadingSlots(false);
+        setSlots([]);
+        setSlotsError("Could not load times. Please try again.");
+      });
+  }, [token, choices, serviceId, barberId, date]);
+
+  const selectedService = choices?.services.find((s) => s.id === serviceId) ??
+    choices?.retainedService ?? {
+      id: serviceId,
+      name: booking.service.name,
+      priceUsd: booking.service.priceUsd,
+      durationMinutes: booking.service.durationMinutes,
+    };
+
+  const selectedBarber = choices?.barbers.find((b) => b.id === barberId) ?? {
+    id: barberId,
+    name: booking.barber.name,
+  };
+
+  const availableBarbers =
+    choices?.barbers.filter((b) => {
+      const svc = choices.services.find((s) => s.id === serviceId);
+      return svc ? svc.barberIds.includes(b.id) : true;
+    }) ?? [];
+
+  async function handleConfirm(retryPayload?: ReplaceCustomerBookingInput) {
+    if (busy || !choices) return;
+    const payload: ReplaceCustomerBookingInput = retryPayload ?? {
+      token,
+      expectedRevision: choices.revision,
+      operationKey: operationKey.current,
+      confirmed: true,
+      serviceId,
+      barberId,
+      startAt,
+      reviewedOffer: {
+        name: selectedService.name,
+        priceUsd: Number(selectedService.priceUsd).toFixed(2),
+        durationMinutes: String(selectedService.durationMinutes),
+      },
+    };
+    if (!retryPayload) submittedPayload.current = payload;
+    setBusy(true);
+    setError("");
+    setUncertain(false);
+    setStaleBooking(false);
+
+    try {
+      const result = await replaceCustomerBookingAction(payload);
+      if (!result.success) {
+        setUncertain(false);
+        if (
+          result.error.code === "STALE_BOOKING" ||
+          result.error.code === "RECOVERY_MISMATCH"
+        ) {
+          setStaleBooking(true);
+          setError(result.error.message);
+        } else if (result.error.code === "STALE_OFFER") {
+          setError("Service details have changed. Please review again.");
+          setReloadChoicesCount((c) => c + 1);
+          setScreen("edit");
+        } else if (result.error.code === "UNAVAILABLE_INTERVAL") {
+          setError(
+            "The selected time is no longer available. Please choose another time.",
+          );
+          setStartAt("");
+          setScreen("edit");
+          // Trigger slot refresh
+          setChoices({ ...choices });
+        } else {
+          setError(result.error.message);
+        }
+        return;
+      }
+      onReplaced?.(result.data);
+    } catch {
+      setUncertain(true);
+      setError(
+        "The change result is unknown. Retry or reload your booking details.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function retry() {
+    if (submittedPayload.current) void handleConfirm(submittedPayload.current);
+  }
+
+  function reload() {
+    window.location.reload();
+  }
+
+  if (loadingChoices) {
+    return (
+      <section className="border-t-[3px] border-[#242424] pt-7">
+        <p className="text-sm text-[#72726e]">Loading available options…</p>
+      </section>
+    );
+  }
+
+  if (choicesError) {
+    return (
+      <section className="border-t-[3px] border-[#242424] pt-7">
+        <div className="border border-[#9f2d20] bg-[#fdf2f2] p-4 text-sm text-[#9f2d20]">
+          {choicesError}
+        </div>
+        <div className="mt-4">
+          <Button variant="outline" onClick={onClose}>
+            Back to your booking
+          </Button>
+        </div>
+      </section>
+    );
+  }
 
   if (screen === "review") {
+    const selectedSlot = slots.find((s) => s.start === startAt);
+    const isAmbiguous = selectedSlot
+      ? slots.filter((s) => s.localStart === selectedSlot.localStart).length > 1
+      : false;
+
+    const slotDetails = startAt
+      ? formatSlotTime(
+          startAt,
+          selectedService.durationMinutes,
+          choices?.timeZone ?? booking.shop.timeZone,
+        )
+      : null;
+
     return (
       <section className="border-t-[3px] border-[#242424] pt-7">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-[#72726e]">
-            Preview only · no booking changes are saved
-          </p>
-          <Button variant="link" onClick={() => setScreen("edit")}>
-            Back to choices
-          </Button>
+          {!uncertain ? (
+            <Button
+              disabled={busy}
+              variant="link"
+              onClick={() => setScreen("edit")}
+            >
+              Back to choices
+            </Button>
+          ) : null}
         </div>
         <h2
           className="font-[family-name:var(--font-shop-display)] text-[clamp(36px,5vw,52px)] font-bold uppercase leading-none"
@@ -111,51 +404,104 @@ export function BookingPreview({
           A quick look before we change it.
         </h2>
         <p className="mt-3 text-sm text-[#72726e]">
-          Your original appointment stays reserved. These sample choices are
-          shown only to demonstrate the review screen.
+          Your original appointment stays reserved until you confirm this
+          change.
         </p>
+
+        {isWithin12Hours ? (
+          <div
+            role="note"
+            className="mt-5 border border-[#d97706] bg-[#fffbeb] p-4 text-xs font-medium text-[#92400e]"
+          >
+            This appointment will be within 12 hours. Further online changes or
+            cancellation will be unavailable; contact the shop.
+          </div>
+        ) : null}
+
         <div className="mt-7 grid gap-6 md:grid-cols-2">
           <AppointmentSummary booking={booking} title="Currently booked" />
           <section className="border-t border-[#242424] bg-[#f7f7f5] p-5">
-            <p className="text-xs font-semibold uppercase tracking-wide text-[#72726e]">
-              Sample preview values · not a live offer
-            </p>
-            <h3 className="mt-2 font-[family-name:var(--font-shop-display)] text-[30px] font-bold leading-tight">
+            <h3 className="font-[family-name:var(--font-shop-display)] text-[30px] font-bold leading-tight">
               Your new appointment
             </h3>
             <dl className="mt-4 grid gap-4 text-sm">
               <div>
                 <dt className="text-xs text-[#72726e]">Service</dt>
-                <dd>{service}</dd>
+                <dd>
+                  {selectedService.name} · {selectedService.durationMinutes}{" "}
+                  minutes
+                </dd>
               </div>
               <div>
                 <dt className="text-xs text-[#72726e]">Barber</dt>
-                <dd>{barber}</dd>
+                <dd>{selectedBarber.name}</dd>
               </div>
               <div>
                 <dt className="text-xs text-[#72726e]">Date and time</dt>
                 <dd>
-                  {date} · {time}
+                  {slotDetails?.date} · {slotDetails?.range}
+                  {isAmbiguous && selectedSlot
+                    ? ` · UTC${selectedSlot.offset}`
+                    : ""}
                 </dd>
               </div>
               <div>
-                <dt className="text-xs text-[#72726e]">Price</dt>
-                <dd>Sample only · pay at the shop</dd>
+                <dt className="text-xs text-[#72726e]">Total · USD</dt>
+                <dd>
+                  ${Number(selectedService.priceUsd).toFixed(2)} · Pay at the
+                  shop
+                </dd>
               </div>
             </dl>
           </section>
         </div>
-        <p className="mt-5 text-sm">
-          {booking.shop.timeZone}. Your contact details and private booking link
-          stay the same.
+        <p className="mt-5 text-sm text-[#72726e]">
+          {choices?.timeZone ?? booking.shop.timeZone}. Your contact details and
+          private booking link stay the same.
         </p>
+
+        {busy ? (
+          <p
+            aria-live="polite"
+            className="mt-4 text-xs text-[#72726e]"
+            role="status"
+          >
+            Updating appointment…
+          </p>
+        ) : null}
+
+        {error ? (
+          <p className="mt-4 text-sm text-[#9f2d20]" role="alert">
+            {error}
+          </p>
+        ) : null}
+
         <div className="mt-7 flex flex-wrap items-center justify-between gap-4">
-          <Button variant="link" onClick={onClose}>
-            Back to your booking
-          </Button>
-          <Button className="max-w-full whitespace-normal text-center" disabled>
-            Confirm appointment change · Unavailable
-          </Button>
+          {uncertain ? (
+            <div className="flex gap-3">
+              <Button disabled={busy} variant="outline" onClick={reload}>
+                Reload booking details
+              </Button>
+              <Button disabled={busy} onClick={retry}>
+                Retry change
+              </Button>
+            </div>
+          ) : staleBooking ? (
+            <Button onClick={reload}>Reload booking details</Button>
+          ) : (
+            <>
+              <Button disabled={busy} variant="link" onClick={onClose}>
+                Back to your booking
+              </Button>
+              <Button
+                disabled={busy}
+                onClick={() => void handleConfirm()}
+                className="bg-[#21734f] text-white hover:bg-[#1a5c3f]"
+              >
+                Confirm appointment change
+              </Button>
+            </>
+          )}
         </div>
       </section>
     );
@@ -164,9 +510,6 @@ export function BookingPreview({
   return (
     <section className="border-t-[3px] border-[#242424] pt-7">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <p className="text-xs font-semibold uppercase tracking-wide text-[#72726e]">
-          Preview only · choices stay in this browser view
-        </p>
         <Button variant="link" onClick={onClose}>
           Back to your booking
         </Button>
@@ -181,121 +524,198 @@ export function BookingPreview({
             A fresh time. Your call.
           </h2>
           <p className="mt-3 text-sm text-[#72726e]">
-            Your original chair stays reserved. Review sample choices; no
-            booking change can be saved.
+            Your original chair stays reserved until you review and confirm a
+            change.
           </p>
         </div>
         <Button variant="link" onClick={onClose}>
           Keep original
         </Button>
       </div>
-      <p className="mt-5 border border-[#e6e6e2] bg-[#f7f7f5] p-3 text-xs text-[#72726e]">
-        Sample options demonstrate the future screen. They are not shop
-        availability and cannot change this booking.
-      </p>
+
+      {error ? (
+        <p className="mt-4 text-sm text-[#9f2d20]" role="alert">
+          {error}
+        </p>
+      ) : null}
+
       <div className="mt-6 grid gap-8 lg:grid-cols-[minmax(0,1fr)_280px]">
         <div className="grid min-w-0 gap-7">
           <fieldset className="grid gap-3 border-0 p-0">
             <legend className="mb-1 text-sm font-semibold">
               1. Choose your service
             </legend>
-            {options(sampleServices, booking.service.name).map(
-              (item, index) => (
-                <label
-                  className={cn(
-                    "flex min-h-[72px] cursor-pointer items-center gap-4 border border-[#e6e6e2] px-4 py-3 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[#21734f]",
-                    service === item && "border-[#21734f] bg-[#f7f7f5]",
-                  )}
-                  key={item}
-                >
-                  <input
-                    checked={service === item}
-                    name="preview-service"
-                    onChange={() => setService(item)}
-                    type="radio"
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="block font-semibold">{item}</span>
-                    <span className="text-xs text-[#72726e]">
-                      {item === booking.service.name
-                        ? "Your current service"
-                        : "Sample preview choice"}
-                    </span>
+            {choices?.services.map((svc) => (
+              <label
+                className={cn(
+                  "flex min-h-[72px] cursor-pointer items-center gap-4 border border-[#e6e6e2] px-4 py-3 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[#21734f]",
+                  serviceId === svc.id && "border-[#21734f] bg-[#f7f7f5]",
+                )}
+                key={svc.id}
+              >
+                <input
+                  checked={serviceId === svc.id}
+                  name="replacement-service"
+                  onChange={() => {
+                    slotRequestId.current += 1;
+                    const nextBarberId = svc.barberIds.includes(barberId)
+                      ? barberId
+                      : (svc.barberIds[0] ?? "");
+                    setServiceId(svc.id);
+                    setBarberId(nextBarberId);
+                    setStartAt("");
+                    setSlots([]);
+                    setSlotsError(null);
+                    setLoadingSlots(Boolean(date && nextBarberId));
+                  }}
+                  type="radio"
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block font-semibold">{svc.name}</span>
+                  <span className="text-xs text-[#72726e]">
+                    {svc.durationMinutes} minutes
+                    {svc.id === choices.retainedService.id
+                      ? " · Your current service"
+                      : ""}
                   </span>
-                  <span className="text-right text-sm text-[#72726e]">
-                    {index === 0 && item === booking.service.name
-                      ? `$${Number(booking.service.priceUsd).toFixed(2)}`
-                      : "Sample price"}
-                  </span>
-                </label>
-              ),
-            )}
+                </span>
+                <span className="text-right text-sm text-[#72726e]">
+                  ${Number(svc.priceUsd).toFixed(2)}
+                </span>
+              </label>
+            ))}
           </fieldset>
+
           <fieldset className="grid gap-3 border-0 p-0">
             <legend className="mb-1 text-sm font-semibold">
               2. Choose your barber
             </legend>
-            {options(sampleBarbers, booking.barber.name).map((item) => (
-              <label
-                className={cn(
-                  "flex min-h-[64px] cursor-pointer items-center gap-4 border border-[#e6e6e2] px-4 py-3 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[#21734f]",
-                  barber === item && "border-[#21734f] bg-[#f7f7f5]",
-                )}
-                key={item}
-              >
-                <input
-                  checked={barber === item}
-                  name="preview-barber"
-                  onChange={() => setBarber(item)}
-                  type="radio"
-                />
-                <span>{item}</span>
-              </label>
-            ))}
+            {availableBarbers.length === 0 ? (
+              <p className="text-xs text-[#72726e]">
+                No barbers available for this service.
+              </p>
+            ) : (
+              availableBarbers.map((b) => (
+                <label
+                  className={cn(
+                    "flex min-h-[64px] cursor-pointer items-center gap-4 border border-[#e6e6e2] px-4 py-3 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[#21734f]",
+                    barberId === b.id && "border-[#21734f] bg-[#f7f7f5]",
+                  )}
+                  key={b.id}
+                >
+                  <input
+                    checked={barberId === b.id}
+                    name="replacement-barber"
+                    onChange={() => {
+                      slotRequestId.current += 1;
+                      setBarberId(b.id);
+                      setStartAt("");
+                      setSlots([]);
+                      setSlotsError(null);
+                      setLoadingSlots(Boolean(date && serviceId));
+                    }}
+                    type="radio"
+                  />
+                  <span>{b.name}</span>
+                </label>
+              ))
+            )}
           </fieldset>
+
           <label
             className="grid max-w-lg gap-2 text-sm font-semibold"
-            htmlFor="preview-date"
+            htmlFor="replacement-date"
           >
-            3. Choose a date · sample only
+            Choose a date
             <input
               className="min-h-11 rounded-[2px] border border-[#e6e6e2] px-3 font-normal"
-              id="preview-date"
-              onChange={(event) => setDate(event.target.value)}
+              id="replacement-date"
+              onChange={(event) => {
+                const newDate = event.target.value;
+                slotRequestId.current += 1;
+                setDate(newDate);
+                setStartAt("");
+                setSlots([]);
+                setSlotsError(null);
+                setLoadingSlots(Boolean(newDate && serviceId && barberId));
+              }}
               type="date"
               value={date}
             />
           </label>
+
           <fieldset className="grid gap-3 border-0 p-0">
             <legend className="mb-1 text-sm font-semibold">
-              4. Choose a start time · sample only
+              4. Choose a start time
             </legend>
-            <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-              {sampleTimes.map((item) => (
-                <label
-                  className={cn(
-                    "grid min-h-11 cursor-pointer place-items-center border border-[#e6e6e2] px-2 text-center text-xs",
-                    "has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[#21734f]",
-                    time === item && "border-[#21734f] bg-[#21734f] text-white",
-                  )}
-                  key={item}
-                >
-                  <input
-                    checked={time === item}
-                    className="sr-only"
-                    name="preview-time"
-                    onChange={() => setTime(item)}
-                    type="radio"
-                  />
-                  {item}
-                </label>
-              ))}
-            </div>
+            {loadingSlots ? (
+              <p className="text-xs text-[#72726e]">Loading times…</p>
+            ) : slotsError ? (
+              <p className="text-xs text-[#9f2d20]">{slotsError}</p>
+            ) : !date ? (
+              <p className="text-xs text-[#72726e]">
+                Choose a date to view available times.
+              </p>
+            ) : !barberId || availableBarbers.length === 0 ? (
+              <p className="text-xs text-[#72726e]">
+                No barbers available for this service.
+              </p>
+            ) : slots.length === 0 ? (
+              <p className="text-xs text-[#72726e]">
+                No available times on this date.
+              </p>
+            ) : (
+              <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                {slots.map((slot) => {
+                  const isAmbiguous =
+                    slots.filter((s) => s.localStart === slot.localStart)
+                      .length > 1;
+                  const label = isAmbiguous
+                    ? `${slot.localStart} · UTC${slot.offset}`
+                    : slot.localStart;
+
+                  return (
+                    <label
+                      className={cn(
+                        "grid min-h-11 cursor-pointer place-items-center border border-[#e6e6e2] px-2 text-center text-xs",
+                        "has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[#21734f]",
+                        startAt === slot.start &&
+                          "border-[#21734f] bg-[#21734f] text-white",
+                      )}
+                      key={slot.start}
+                    >
+                      <input
+                        checked={startAt === slot.start}
+                        className="sr-only"
+                        name="replacement-start"
+                        onChange={() => {
+                          handleStartSelection(slot.start);
+                        }}
+                        type="radio"
+                        value={slot.start}
+                      />
+                      {label}
+                    </label>
+                  );
+                })}
+              </div>
+            )}
           </fieldset>
-          <Button disabled={!date || !time} onClick={() => setScreen("review")}>
-            Review change · Preview only
+
+          <Button
+            disabled={
+              !date ||
+              !barberId ||
+              !startAt ||
+              loadingSlots ||
+              !slots.some((s) => s.start === startAt)
+            }
+            onClick={handleProceedToReview}
+          >
+            Review change
           </Button>
         </div>
+
         <aside className="h-fit bg-[#f7f7f5] p-5">
           <p className="text-xs font-semibold">
             Your original chair · still reserved
@@ -305,7 +725,8 @@ export function BookingPreview({
           <p className="mt-3">{original.date}</p>
           <p>{original.range}</p>
           <p className="mt-4 text-xs text-[#72726e]">
-            Nothing changes unless a later release supports a confirmed update.
+            Your original appointment remains intact unless you explicitly
+            confirm a change.
           </p>
         </aside>
       </div>
