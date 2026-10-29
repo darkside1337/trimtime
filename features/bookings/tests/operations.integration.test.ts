@@ -9,7 +9,6 @@ import {
   it,
   vi,
 } from "vitest";
-import { applyMigrations } from "@/db/migrate.mts";
 import { openTestDatabase } from "@/tests/support/database";
 import {
   readLockWaiters,
@@ -69,7 +68,6 @@ describe("public booking operations", () => {
     ).toString("base64");
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-11-02T08:00:00Z"));
-    await applyMigrations(database.pool, "db/migrations");
     ({ testAuth } = await import("@/tests/support/auth"));
     ({ readOwnerContext } = await import("@/server/owner-context"));
     ({ createShop, setOwnShopPublication, updateOwnShop } =

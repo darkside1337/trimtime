@@ -1,5 +1,4 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { applyMigrations } from "@/db/migrate.mts";
 import { openTestDatabase } from "@/tests/support/database";
 
 describe("owner context", () => {
@@ -18,7 +17,6 @@ describe("owner context", () => {
       "test-secret-that-is-long-enough-for-better-auth";
     process.env.GOOGLE_CLIENT_ID = "test-google-client";
     process.env.GOOGLE_CLIENT_SECRET = "test-google-secret";
-    await applyMigrations(database.pool, "db/migrations");
 
     ({ testAuth } = await import("@/tests/support/auth"));
     ({ readOwnerContext } = await import("@/server/owner-context"));

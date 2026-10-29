@@ -1,6 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { applyMigrations } from "@/db/migrate.mts";
 import { openTestDatabase } from "@/tests/support/database";
 import { hashSecret } from "../capabilities";
 
@@ -23,7 +22,6 @@ describe("managed booking reads", () => {
     process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-11-02T08:00:00Z"));
-    await applyMigrations(database.pool, "db/migrations");
     ({ getManagedBooking } = await import("../queries"));
     await database.pool.query(
       "INSERT INTO \"user\" (id,name,email) VALUES ($1,'Read Owner',$2)",

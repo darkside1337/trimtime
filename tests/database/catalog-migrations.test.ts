@@ -7,7 +7,6 @@ describe("catalog migrations", () => {
 
   beforeAll(async () => {
     database = await openTestDatabase();
-    await applyMigrations(database.pool, "db/migrations");
   });
 
   afterAll(async () => {

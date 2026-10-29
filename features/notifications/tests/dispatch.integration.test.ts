@@ -8,7 +8,6 @@ import {
   it,
   vi,
 } from "vitest";
-import { applyMigrations } from "@/db/migrate.mts";
 import { openTestDatabase } from "@/tests/support/database";
 import {
   createRateKeyTracker,
@@ -73,7 +72,6 @@ describe("initial notification dispatch", () => {
     process.env.MAILPIT_ORIGIN = "http://127.0.0.1:8025";
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-11-02T08:00:00Z"));
-    await applyMigrations(database.pool, "db/migrations");
     ({ testAuth } = await import("@/tests/support/auth"));
     ({ createShop, setOwnShopPublication } =
       await import("@/features/shops/mutations"));

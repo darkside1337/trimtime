@@ -1,7 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { applyMigrations } from "@/db/migrate.mts";
 import { openTestDatabase } from "@/tests/support/database";
 import { shopInput } from "@/tests/support/shops";
 import type { WeeklySchedule } from "../types";
@@ -62,7 +61,6 @@ describe("availability operations", () => {
       32,
       7,
     ).toString("base64");
-    await applyMigrations(database.pool, "db/migrations");
     ({ testAuth } = await import("@/tests/support/auth"));
     ({ readOwnerContext } = await import("@/server/owner-context"));
     ({ createShop } = await import("@/features/shops/mutations"));

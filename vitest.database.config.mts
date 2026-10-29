@@ -9,6 +9,7 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    globalSetup: "./tests/support/database-global-setup.ts",
     include: [
       "tests/database/**/*.test.ts",
       "features/**/tests/*.integration.test.ts",

@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { Pool, PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { applyMigrations } from "../../db/migrate.mts";
 import { openTestDatabase } from "../support/database";
 
 const baselineMigrations = [
@@ -96,7 +95,6 @@ describe("customer cancellation migration", () => {
 
   beforeAll(async () => {
     database = await openTestDatabase();
-    await applyMigrations(database.pool, "db/migrations");
   });
 
   afterAll(async () => {

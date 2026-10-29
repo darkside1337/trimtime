@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { applyMigrations } from "../../db/migrate.mts";
 import { openTestDatabase } from "../support/database";
 
 describe("owner booking changes migration", () => {
@@ -10,7 +9,6 @@ describe("owner booking changes migration", () => {
 
   beforeAll(async () => {
     database = await openTestDatabase();
-    await applyMigrations(database.pool, "db/migrations");
     await database.pool.query(`CREATE SCHEMA ${schema}`);
     for (const [table, ddl] of Object.entries({
       shops: `id text PRIMARY KEY`,

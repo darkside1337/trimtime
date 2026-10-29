@@ -9,7 +9,6 @@ describe("product and fixture migration ledgers", () => {
 
   beforeAll(async () => {
     database = await openTestDatabase();
-    await applyMigrations(database.pool, "db/migrations");
     await applyMigrations(
       database.pool,
       "tests/fixtures/migrations",

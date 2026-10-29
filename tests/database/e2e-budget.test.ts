@@ -1,13 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { expect, it } from "vitest";
-import { applyMigrations } from "../../db/migrate.mts";
 import { openTestDatabase } from "../support/database";
 import { withE2eBudget } from "../support/e2e-budget";
 
 it("releases an owned budget after setup fails and refuses an existing budget", async () => {
   const { pool } = await openTestDatabase();
   const day = "2098-01-01";
-  await applyMigrations(pool, "db/migrations");
   const owner = randomUUID();
   let inserted = false;
   try {

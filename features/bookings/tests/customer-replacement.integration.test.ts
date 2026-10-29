@@ -9,7 +9,6 @@ import {
   it,
   vi,
 } from "vitest";
-import { applyMigrations } from "@/db/migrate.mts";
 import { openTestDatabase } from "@/tests/support/database";
 import {
   waitForLockCleanup as waitForSharedLockCleanup,
@@ -72,7 +71,6 @@ describe("customer replacement integration", () => {
     ).toString("base64");
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date(NOW));
-    await applyMigrations(database.pool, "db/migrations");
     ({ testAuth } = await import("@/tests/support/auth"));
     ({ readOwnerContext } = await import("@/server/owner-context"));
     ({ createShop, setOwnShopPublication } =
