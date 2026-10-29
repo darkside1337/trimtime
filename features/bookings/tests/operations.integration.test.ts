@@ -11,6 +11,11 @@ import {
 } from "vitest";
 import { applyMigrations } from "@/db/migrate.mts";
 import { openTestDatabase } from "@/tests/support/database";
+import {
+  readLockWaiters,
+  waitForLockWaiters,
+  type RequestIdentity,
+} from "@/tests/support/database-locks";
 import { shopInput } from "@/tests/support/shops";
 import { calculateSlots } from "@/features/availability/slots";
 
@@ -216,35 +221,24 @@ describe("public booking operations", () => {
     shopId: string,
     firstOperation: () => Promise<First>,
     secondOperation: () => Promise<Second>,
+    identities?: [RequestIdentity, RequestIdentity],
   ): Promise<[First, Second]> {
     const locker = await database.pool.connect();
     await locker.query("BEGIN");
     await locker.query("SELECT id FROM shops WHERE id=$1 FOR UPDATE", [shopId]);
     try {
       const first = firstOperation();
-      await vi.waitFor(
-        async () => {
-          const waiting = await database.pool
-            .query(`SELECT count(*)::int AS count
-            FROM pg_stat_activity WHERE datname=current_database()
-              AND wait_event_type='Lock' AND pid<>pg_backend_pid()
-              AND query ILIKE '%shops%' AND query ILIKE '%for update%'`);
-          expect(waiting.rows[0].count).toBeGreaterThanOrEqual(1);
-        },
-        { timeout: 5000, interval: 50 },
+      await waitForLockWaiters(
+        database.pool,
+        locker,
+        1,
+        identities ? [identities[0]] : undefined,
+        { description: "first queued booking operation" },
       );
       const second = secondOperation();
-      await vi.waitFor(
-        async () => {
-          const waiting = await database.pool
-            .query(`SELECT count(*)::int AS count
-            FROM pg_stat_activity WHERE datname=current_database()
-              AND wait_event_type='Lock' AND pid<>pg_backend_pid()
-              AND query ILIKE '%shops%' AND query ILIKE '%for update%'`);
-          expect(waiting.rows[0].count).toBeGreaterThanOrEqual(2);
-        },
-        { timeout: 5000, interval: 50 },
-      );
+      await waitForLockWaiters(database.pool, locker, 2, identities, {
+        description: "second queued booking operation",
+      });
       await locker.query("COMMIT");
       return await Promise.all([first, second]);
     } finally {
@@ -914,17 +908,9 @@ describe("public booking operations", () => {
       operationKey: randomBytes(32).toString("base64url"),
     });
     try {
-      await vi.waitFor(
-        async () => {
-          const waiting = await database.pool.query(
-            `SELECT count(*)::int AS count FROM pg_stat_activity
-             WHERE datname=current_database() AND wait_event_type='Lock'
-               AND query ILIKE '%from "shops"%' AND query ILIKE '%for update%'`,
-          );
-          expect(waiting.rows[0].count).toBeGreaterThan(0);
-        },
-        { timeout: 5000, interval: 50 },
-      );
+      await waitForLockWaiters(database.pool, locker, 1, ["owner_cancel"], {
+        description: "owner cancellation",
+      });
       vi.setSystemTime(new Date("2026-11-02T10:30:00Z"));
       await locker.query("COMMIT");
       await expect(request).resolves.toMatchObject({
@@ -1548,11 +1534,13 @@ describe("public booking operations", () => {
               ids.shopId,
               () => move(0),
               () => move(1),
+              ["owner_move", "owner_move"],
             )
           : await queueShopOperations(
               ids.shopId,
               () => move(1),
               () => move(0),
+              ["owner_move", "owner_move"],
             ).then(([secondResult, firstResult]) => [
               firstResult,
               secondResult,
@@ -1614,10 +1602,14 @@ describe("public booking operations", () => {
           operationKey: randomBytes(32).toString("base64url"),
         });
       const [moveResult, cancelResult] = moveFirst
-        ? await queueShopOperations(ids.shopId, move, cancel)
-        : await queueShopOperations(ids.shopId, cancel, move).then(
-            ([cancelResult, moveResult]) => [moveResult, cancelResult],
-          );
+        ? await queueShopOperations(ids.shopId, move, cancel, [
+            "owner_move",
+            "owner_cancel",
+          ])
+        : await queueShopOperations(ids.shopId, cancel, move, [
+            "owner_cancel",
+            "owner_move",
+          ]).then(([cancelResult, moveResult]) => [moveResult, cancelResult]);
       if (moveFirst) {
         expect(moveResult).toMatchObject({ success: true });
         expect(cancelResult).toMatchObject({
@@ -1685,10 +1677,14 @@ describe("public booking operations", () => {
           note: "Competing block",
         });
       const [moveResult, blockResult] = moveFirst
-        ? await queueShopOperations(ids.shopId, move, block)
-        : await queueShopOperations(ids.shopId, block, move).then(
-            ([blockResult, moveResult]) => [moveResult, blockResult],
-          );
+        ? await queueShopOperations(ids.shopId, move, block, [
+            "owner_move",
+            "shop_edit",
+          ])
+        : await queueShopOperations(ids.shopId, block, move, [
+            "shop_edit",
+            "owner_move",
+          ]).then(([blockResult, moveResult]) => [moveResult, blockResult]);
       expect(moveResult.success).toBe(moveFirst);
       expect(blockResult.success).toBe(!moveFirst);
       const targetOccupancy = await database.pool.query(
@@ -1789,11 +1785,13 @@ describe("public booking operations", () => {
               ids.shopId,
               () => move(0),
               () => move(1),
+              ["owner_move", "owner_move"],
             )
           : await queueShopOperations(
               ids.shopId,
               () => move(1),
               () => move(0),
+              ["owner_move", "owner_move"],
             ).then(([secondResult, firstResult]) => [
               firstResult,
               secondResult,
@@ -1850,8 +1848,11 @@ describe("public booking operations", () => {
         }),
       );
     };
-    const [moved, archived] = await queueShopOperations(ids.shopId, move, () =>
-      archiveBarber(ids.context, ids.barberId),
+    const [moved, archived] = await queueShopOperations(
+      ids.shopId,
+      move,
+      () => archiveBarber(ids.context, ids.barberId),
+      ["owner_move", "shop_edit"],
     );
     expect(moved).toMatchObject({
       success: true,
@@ -2091,10 +2092,14 @@ describe("public booking operations", () => {
           );
         };
         const [editResult, moveResult] = editFirst
-          ? await queueShopOperations(ids.shopId, edit, move)
-          : await queueShopOperations(ids.shopId, move, edit).then(
-              ([moveResult, editResult]) => [editResult, moveResult],
-            );
+          ? await queueShopOperations(ids.shopId, edit, move, [
+              "shop_edit",
+              "owner_move",
+            ])
+          : await queueShopOperations(ids.shopId, move, edit, [
+              "owner_move",
+              "shop_edit",
+            ]).then(([moveResult, editResult]) => [editResult, moveResult]);
         if (editFirst) {
           expect(editResult).toMatchObject({ success: true });
           expect(moveResult).toMatchObject({
@@ -3909,15 +3914,9 @@ describe("public booking operations", () => {
       recoveryKey: randomBytes(32).toString("base64url"),
     });
     try {
-      await vi.waitFor(
-        async () => {
-          const blocked = await database.pool
-            .query(`SELECT count(*)::int AS count FROM pg_stat_activity
-          WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%FOR UPDATE OF s%'`);
-          expect(blocked.rows[0].count).toBeGreaterThan(0);
-        },
-        { timeout: 5000, interval: 50 },
-      );
+      await waitForLockWaiters(database.pool, locker, 1, ["owner_create"], {
+        description: "owner booking creation",
+      });
       vi.setSystemTime(new Date("2026-11-02T10:37:00Z"));
       await locker.query("COMMIT");
       await expect(request).resolves.toMatchObject({
@@ -3927,6 +3926,128 @@ describe("public booking operations", () => {
     } finally {
       await locker.query("ROLLBACK").catch(() => undefined);
       locker.release();
+    }
+  });
+
+  it("keeps an unrelated lock wait from satisfying the shop barrier", async () => {
+    const ids = await fixture();
+    const unrelated = await fixture();
+    const created = await createPublicBooking(
+      { shopId: ids.shopId },
+      input(ids),
+    );
+    if (!created.success) throw new Error("Booking fixture failed.");
+    const { moveOwnerBooking } = await import("../mutations");
+
+    const barrier = await database.pool.connect();
+    const unrelatedLocker = await database.pool.connect();
+    const unrelatedWaiter = await database.pool.connect();
+    let barrierOpen = true;
+    let unrelatedLockerOpen = true;
+    let request: ReturnType<typeof moveOwnerBooking> | undefined;
+    let unrelatedWait: Promise<unknown> | undefined;
+    try {
+      await barrier.query("BEGIN");
+      await barrier.query("SELECT id FROM shops WHERE id=$1 FOR UPDATE", [
+        ids.shopId,
+      ]);
+      await unrelatedLocker.query("BEGIN");
+      await unrelatedLocker.query(
+        "SELECT id FROM shops WHERE id=$1 FOR UPDATE",
+        [unrelated.shopId],
+      );
+      // Same statement shape as the queued booking requests, but blocked by a
+      // different lock owner, so it must never count for this barrier.
+      unrelatedWait = unrelatedWaiter.query(
+        "SELECT id FROM shops WHERE id=$1 FOR UPDATE",
+        [unrelated.shopId],
+      );
+      const [unrelatedBlocked] = await waitForLockWaiters(
+        database.pool,
+        unrelatedLocker,
+        1,
+        ["shop_edit"],
+        { description: "unrelated shop edit" },
+      );
+
+      const legacyGlobal = await database.pool.query(
+        `SELECT count(*)::int AS count FROM pg_stat_activity
+         WHERE datname=current_database() AND wait_event_type='Lock'
+           AND pid<>pg_backend_pid() AND query ILIKE '%shops%'
+           AND query ILIKE '%for update%'`,
+      );
+      expect(legacyGlobal.rows[0].count).toBeGreaterThanOrEqual(1);
+      await expect(readLockWaiters(database.pool, barrier)).resolves.toEqual(
+        [],
+      );
+      await expect(
+        waitForLockWaiters(database.pool, barrier, 0),
+      ).resolves.toEqual([]);
+
+      request = moveOwnerBooking(
+        ids.context,
+        moveInput(ids, created.data.bookingId),
+      );
+      const [queued] = await waitForLockWaiters(
+        database.pool,
+        barrier,
+        1,
+        ["owner_move"],
+        { description: "owner move behind the shop barrier" },
+      );
+      expect(queued.pid).not.toBe(unrelatedBlocked.pid);
+
+      const mismatched = await waitForLockWaiters(
+        database.pool,
+        barrier,
+        1,
+        ["replace"],
+        {
+          description: "mismatched request identity",
+          timeoutMs: 100,
+          intervalMs: 10,
+        },
+      ).then(
+        () => undefined,
+        (error: unknown) => error as Error,
+      );
+      expect(mismatched).toBeInstanceOf(Error);
+      expect(mismatched?.message).toMatch(/Timed out after 100ms/);
+      expect(mismatched?.message).toContain("Barrier PID:");
+      expect(mismatched?.message).toContain("Expected identities: replace");
+      expect(mismatched?.message).toContain("Observed barrier waiters");
+
+      const legacyDuring = await database.pool.query(
+        `SELECT count(*)::int AS count FROM pg_stat_activity
+         WHERE datname=current_database() AND wait_event_type='Lock'
+           AND pid<>pg_backend_pid() AND query ILIKE '%shops%'
+           AND query ILIKE '%for update%'`,
+      );
+      expect(legacyDuring.rows[0].count).toBeGreaterThanOrEqual(2);
+
+      await unrelatedLocker.query("COMMIT");
+      unrelatedLockerOpen = false;
+      await unrelatedWait;
+      await barrier.query("COMMIT");
+      barrierOpen = false;
+      await expect(request).resolves.toMatchObject({
+        success: true,
+        data: {
+          appointment: {
+            revision: 1,
+            startAt: "2026-11-02T11:07:00.000Z",
+          },
+        },
+      });
+    } finally {
+      if (barrierOpen) await barrier.query("ROLLBACK").catch(() => undefined);
+      if (unrelatedLockerOpen)
+        await unrelatedLocker.query("ROLLBACK").catch(() => undefined);
+      await request?.catch(() => undefined);
+      await unrelatedWait?.catch(() => undefined);
+      unrelatedWaiter.release();
+      unrelatedLocker.release();
+      barrier.release();
     }
   });
 
@@ -3997,16 +4118,12 @@ describe("public booking operations", () => {
       })();
 
       try {
-        await vi.waitFor(
-          async () => {
-            const waiting = await database.pool
-              .query(`SELECT count(*)::int AS count
-            FROM pg_stat_activity WHERE datname=current_database()
-              AND wait_event_type='Lock' AND pid <> pg_backend_pid()
-              AND query ILIKE '%for update%'`);
-            expect(waiting.rows[0].count).toBeGreaterThanOrEqual(2);
-          },
-          { timeout: 5000, interval: 50 },
+        await waitForLockWaiters(
+          database.pool,
+          locker,
+          2,
+          ["owner_create", "shop_edit"],
+          { description: `owner creation versus ${edit} edit` },
         );
         await locker.query("COMMIT");
         const [created, changed] = await Promise.all([

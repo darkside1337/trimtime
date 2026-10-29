@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import {
   afterAll,
   afterEach,
@@ -11,6 +11,11 @@ import {
 } from "vitest";
 import { applyMigrations } from "@/db/migrate.mts";
 import { openTestDatabase } from "@/tests/support/database";
+import {
+  waitForBlockedRequest,
+  waitForLockWaiters as waitForSharedLockWaiters,
+  type RequestIdentity,
+} from "@/tests/support/database-locks";
 import { shopInput } from "@/tests/support/shops";
 import { decryptCapability, hashSecret } from "../capabilities";
 
@@ -226,35 +231,20 @@ describe("customer cancellation", () => {
     };
   }
 
-  async function waitForLockWaiters(expected: number) {
-    for (let attempt = 0; attempt < 500; attempt += 1) {
-      const state = await database.pool.query(
-        `SELECT count(*)::int AS count FROM pg_stat_activity
-         WHERE datname = current_database()
-           AND state = 'active'
-           AND wait_event_type = 'Lock'`,
-      );
-      if (state.rows[0].count >= expected) return;
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-    throw new Error(`Did not observe ${expected} lock waiter(s).`);
+  async function waitForLockWaiters(
+    lock: PoolClient,
+    expected: number,
+    identities?: RequestIdentity[],
+  ) {
+    return waitForSharedLockWaiters(database.pool, lock, expected, identities, {
+      description: "customer cancellation queue",
+    });
   }
 
-  async function waitForBlockedCancellation() {
-    for (let attempt = 0; attempt < 500; attempt += 1) {
-      const state = await database.pool.query(
-        `SELECT EXISTS (
-           SELECT 1 FROM pg_stat_activity
-           WHERE datname = current_database()
-             AND state = 'active'
-             AND wait_event_type = 'Lock'
-             AND lower(query) LIKE '%for update of s%'
-         ) AS waiting`,
-      );
-      if (state.rows[0].waiting) return;
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-    throw new Error("The cancellation request did not wait for the shop lock.");
+  async function waitForBlockedCancellation(lock: PoolClient) {
+    return waitForBlockedRequest(database.pool, lock, "cancel", {
+      description: "customer cancellation",
+    });
   }
 
   it("cancels an eligible booking", async () => {
@@ -820,12 +810,12 @@ describe("customer cancellation", () => {
           durationMinutes: "30",
         },
       });
-      await waitForLockWaiters(1);
+      await waitForLockWaiters(moveFirstLock, 1, ["owner_move"]);
       moveFirstCancel = cancelCustomerBooking(
         { shopId: moveFirstIds.shopId },
         cancellationInput(moveFirst.token),
       );
-      await waitForLockWaiters(2);
+      await waitForLockWaiters(moveFirstLock, 2, ["owner_move", "cancel"]);
       await moveFirstLock.query("COMMIT");
       moveFirstOpen = false;
       await expect(moveRequest).resolves.toMatchObject({ success: true });
@@ -866,7 +856,7 @@ describe("customer cancellation", () => {
         { shopId: cancelFirstIds.shopId },
         cancellationInput(cancelFirst.token),
       );
-      await waitForLockWaiters(1);
+      await waitForLockWaiters(cancelFirstLock, 1, ["cancel"]);
       laterMove = moveOwnerBooking(cancelFirstIds.context, {
         bookingId: cancelFirst.bookingId,
         expectedRevision: 0,
@@ -880,7 +870,7 @@ describe("customer cancellation", () => {
           durationMinutes: "30",
         },
       });
-      await waitForLockWaiters(2);
+      await waitForLockWaiters(cancelFirstLock, 2, ["cancel", "owner_move"]);
       await cancelFirstLock.query("COMMIT");
       cancelFirstOpen = false;
       await expect(cancelRequest).resolves.toMatchObject({ success: true });
@@ -1559,7 +1549,7 @@ describe("customer cancellation", () => {
         { shopId: ids.shopId },
         cancellationInput(booking.token),
       );
-      await waitForBlockedCancellation();
+      await waitForBlockedCancellation(lock);
       vi.setSystemTime(new Date("2026-11-01T22:00:00.001Z"));
       await lock.query("COMMIT");
       transactionOpen = false;
@@ -1617,7 +1607,7 @@ describe("customer cancellation", () => {
         { shopId: ids.shopId },
         cancellationInput(booking.token),
       );
-      await waitForBlockedCancellation();
+      await waitForBlockedCancellation(lock);
       await lock.query("COMMIT");
       transactionOpen = false;
       await expect(request).resolves.toEqual(unavailable);

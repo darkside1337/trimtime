@@ -11,6 +11,11 @@ import {
 } from "vitest";
 import { applyMigrations } from "@/db/migrate.mts";
 import { openTestDatabase } from "@/tests/support/database";
+import {
+  waitForLockCleanup as waitForSharedLockCleanup,
+  waitForLockWaiters as waitForSharedLockWaiters,
+  type RequestIdentity,
+} from "@/tests/support/database-locks";
 import { shopInput } from "@/tests/support/shops";
 import { decryptCapability, hashSecret } from "../capabilities";
 
@@ -243,144 +248,21 @@ describe("customer replacement integration", () => {
     return row.count as number;
   }
 
-  type ExpectedRequestIdentity =
-    "replace" | "cancel" | "owner_move" | "public_booking" | string | RegExp;
-
-  function matchesIdentity(
-    query: string,
-    identity: ExpectedRequestIdentity,
-  ): boolean {
-    if (identity === "replace") {
-      return (
-        query.includes("s.time_zone") &&
-        !query.includes('"shops"."owner_id"') &&
-        /for update/i.test(query)
-      );
-    }
-    if (identity === "cancel") {
-      return (
-        query.includes("owner_email") &&
-        !query.includes("time_zone") &&
-        /for update/i.test(query)
-      );
-    }
-    if (identity === "owner_move") {
-      return (
-        (query.includes('"shops"."owner_id"') ||
-          query.includes('"owner_id" =')) &&
-        /for update/i.test(query)
-      );
-    }
-    if (identity === "public_booking") {
-      return query.includes("published") && /for update/i.test(query);
-    }
-    if (typeof identity === "string") {
-      return query.includes(identity);
-    }
-    if (identity instanceof RegExp) {
-      return identity.test(query);
-    }
-    return false;
-  }
-
-  const barrierPidMap = new WeakMap<object, number>();
-  async function resolveBarrierPid(barrier: {
-    query: (
-      sql: string,
-      params?: unknown[],
-    ) => Promise<{ rows: { pid?: number }[] }>;
-  }): Promise<number> {
-    const cached = barrierPidMap.get(barrier);
-    if (cached !== undefined) return cached;
-    const res = await barrier.query("SELECT pg_backend_pid() AS pid");
-    const pid = Number(res.rows[0]?.pid);
-    barrierPidMap.set(barrier, pid);
-    return pid;
-  }
-
   async function waitForLockWaiters(
     barrier: PoolClient,
     expected: number,
-    expectedIdentities?: ExpectedRequestIdentity[],
+    expectedIdentities?: RequestIdentity[],
   ) {
-    const barrierPid = await resolveBarrierPid(barrier);
-    const maxAttempts = 500;
-
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      const result = await database.pool.query(
-        `WITH RECURSIVE lock_chain(pid, query, wait_event_type, wait_event, blockers, depth) AS (
-          SELECT
-            a.pid,
-            a.query,
-            a.wait_event_type,
-            a.wait_event,
-            pg_blocking_pids(a.pid) AS blockers,
-            1 AS depth
-          FROM pg_stat_activity a
-          WHERE a.datname = current_database()
-            AND a.pid <> $1
-            AND $1 = ANY(pg_blocking_pids(a.pid))
-          UNION
-          SELECT
-            a.pid,
-            a.query,
-            a.wait_event_type,
-            a.wait_event,
-            pg_blocking_pids(a.pid) AS blockers,
-            lc.depth + 1 AS depth
-          FROM pg_stat_activity a
-          JOIN lock_chain lc ON lc.pid = ANY(pg_blocking_pids(a.pid))
-          WHERE a.datname = current_database()
-            AND a.pid <> $1
-        )
-        SELECT DISTINCT pid, query, wait_event_type, wait_event, blockers, depth
-        FROM lock_chain
-        ORDER BY depth ASC, pid ASC`,
-        [barrierPid],
-      );
-
-      const waiters = result.rows as {
-        pid: number;
-        query: string;
-        wait_event_type: string;
-        wait_event: string;
-        blockers: number[];
-        depth: number;
-      }[];
-
-      if (expected === 0) {
-        if (waiters.length === 0) return waiters;
-      } else if (waiters.length >= expected) {
-        const lockWaiters = waiters.filter((w) => w.wait_event_type === "Lock");
-        if (lockWaiters.length >= expected) {
-          if (!expectedIdentities || expectedIdentities.length === 0) {
-            return lockWaiters;
-          }
-          const remainingWaiters = [...lockWaiters];
-          const allMatched = expectedIdentities.every((expectedId) => {
-            const matchIdx = remainingWaiters.findIndex((w) =>
-              matchesIdentity(w.query, expectedId),
-            );
-            if (matchIdx !== -1) {
-              remainingWaiters.splice(matchIdx, 1);
-              return true;
-            }
-            return false;
-          });
-          if (allMatched) {
-            return lockWaiters;
-          }
-        }
-      }
-    }
-
-    throw new Error(
-      `Did not observe ${expected} lock waiter(s) for barrier PID ${barrierPid} after ${maxAttempts} checks.`,
+    return waitForSharedLockWaiters(
+      database.pool,
+      barrier,
+      expected,
+      expectedIdentities,
     );
   }
 
   async function waitForLockCleanup(barrier: PoolClient) {
-    return waitForLockWaiters(barrier, 0);
+    return waitForSharedLockCleanup(database.pool, barrier);
   }
 
   it("1. valid token returns real choices; no sample services", async () => {
