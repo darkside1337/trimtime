@@ -116,6 +116,8 @@ pnpm dev:local
 `pnpm dev:local` starts the persistent dev database, applies any pending
 migrations, then starts the HTTPS app. Run it again after stopping the app;
 the migration step is safe to repeat and only applies unapplied migrations.
+It uses the system certificate store and disables Node's automatic IPv4/IPv6
+selection for local Google sign-in on networks where IPv6 is unavailable.
 
 Marketing runs at `https://localtest.me:3000`; owner sign-in runs at
 `https://app.localtest.me:3000/sign-in`. Google must authorize
