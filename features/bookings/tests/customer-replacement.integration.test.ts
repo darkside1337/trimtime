@@ -168,13 +168,8 @@ describe("customer replacement integration", () => {
       if (!publication.success)
         throw new Error("Published shop fixture failed.");
     }
-    const row = (
-      await database.pool.query("SELECT id FROM shops WHERE owner_id=$1", [
-        owner.id,
-      ])
-    ).rows[0];
     return {
-      shopId: row.id as string,
+      shopId: shop.data.id,
       ownerId: owner.id,
       context,
       serviceId: service.data.id,

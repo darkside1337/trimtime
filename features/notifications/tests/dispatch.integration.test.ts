@@ -178,15 +178,10 @@ describe("initial notification dispatch", () => {
       published: true,
       expectedPublished: false,
     });
-    const row = (
-      await database.pool.query("SELECT id FROM shops WHERE owner_id=$1", [
-        owner.id,
-      ])
-    ).rows[0];
     return {
       owner,
       context,
-      shopId: row.id as string,
+      shopId: shop.data.id,
       barberId: barber.data.id,
       serviceId: service.data.id,
     };
