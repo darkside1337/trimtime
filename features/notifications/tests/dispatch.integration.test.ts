@@ -10,11 +10,15 @@ import {
 } from "vitest";
 import { applyMigrations } from "@/db/migrate.mts";
 import { openTestDatabase } from "@/tests/support/database";
+import {
+  createRateKeyTracker,
+  trackCreateEmailRateKey,
+  trackCustomerChangeRateKey,
+} from "@/tests/support/rate-keys";
 import { shopInput } from "@/tests/support/shops";
 import { notificationBookingInput } from "@/tests/support/notifications";
 import type { MailpitTransportResult } from "../mailpit";
 import { notificationContentIdentity } from "../content-identity";
-import { hashSecret } from "@/features/bookings/capabilities";
 
 const captured: MailpitTransportResult = {
   status: "captured",
@@ -44,7 +48,7 @@ describe("initial notification dispatch", () => {
   let getActivity: typeof import("../queries").getOwnNotificationActivity;
   const ownerIds: string[] = [];
   const budgetDays = new Set<string>();
-  const rateKeyHashes: string[] = [];
+  const rateKeys = createRateKeyTracker();
   const week = Array.from({ length: 7 }, (_, index) => ({
     working: index === 0 ? [{ start: 540, end: 1020 }] : [],
     breaks: [],
@@ -76,13 +80,20 @@ describe("initial notification dispatch", () => {
     ({ saveBarber } = await import("@/features/barbers/mutations"));
     ({ saveService } = await import("@/features/catalog/mutations"));
     ({ saveShopSchedule } = await import("@/features/availability/mutations"));
-    ({ createPublicBooking } = await import("@/features/bookings/mutations"));
-    ({ createOwnerBooking } = await import("@/features/bookings/mutations"));
-    ({ moveOwnerBooking } = await import("@/features/bookings/mutations"));
-    ({ cancelOwnerBooking } = await import("@/features/bookings/mutations"));
-    ({ cancelCustomerBooking } = await import("@/features/bookings/mutations"));
-    ({ replaceCustomerBooking } =
-      await import("@/features/bookings/mutations"));
+    const mutations = await import("@/features/bookings/mutations");
+    createPublicBooking = (context, input) => {
+      trackCreateEmailRateKey(rateKeys, context, input);
+      return mutations.createPublicBooking(context, input);
+    };
+    cancelCustomerBooking = (context, input) => {
+      trackCustomerChangeRateKey(rateKeys, context, input);
+      return mutations.cancelCustomerBooking(context, input);
+    };
+    replaceCustomerBooking = (context, input) => {
+      trackCustomerChangeRateKey(rateKeys, context, input);
+      return mutations.replaceCustomerBooking(context, input);
+    };
+    ({ createOwnerBooking, moveOwnerBooking, cancelOwnerBooking } = mutations);
     ({ getManagedBooking } = await import("@/features/bookings/queries"));
     ({ dispatchInitialBookingNotifications: dispatch } =
       await import("../dispatch"));
@@ -111,12 +122,7 @@ describe("initial notification dispatch", () => {
       );
       budgetDays.clear();
     }
-    if (rateKeyHashes.length) {
-      await database.pool.query(
-        "DELETE FROM public_rate_keys WHERE key_hash = ANY($1::text[])",
-        [rateKeyHashes.splice(0)],
-      );
-    }
+    if (database) await rateKeys.deleteAll(database.pool);
   });
 
   afterAll(async () => {
@@ -131,12 +137,7 @@ describe("initial notification dispatch", () => {
         [[...budgetDays]],
       );
     }
-    if (rateKeyHashes.length) {
-      await database?.pool.query(
-        "DELETE FROM public_rate_keys WHERE key_hash = ANY($1::text[])",
-        [rateKeyHashes],
-      );
-    }
+    if (database) await rateKeys.deleteAll(database.pool);
     await Promise.all(
       ownerIds.map((id) =>
         testAuth.$context.then(({ test }) => test.deleteUser(id)),
@@ -232,7 +233,6 @@ describe("initial notification dispatch", () => {
     expectedRevision = 0,
   ) {
     const token = created.manageUrl.split("/manage/")[1];
-    rateKeyHashes.push(hashSecret(`${ids.shopId}:${token}`));
     const result = await cancelCustomerBooking(
       { shopId: ids.shopId },
       {
@@ -256,7 +256,6 @@ describe("initial notification dispatch", () => {
     expectedRevision = 0,
   ) {
     const token = created.manageUrl.split("/manage/")[1];
-    rateKeyHashes.push(hashSecret(`${ids.shopId}:${token}`));
     const result = await replaceCustomerBooking(
       { shopId: ids.shopId },
       {

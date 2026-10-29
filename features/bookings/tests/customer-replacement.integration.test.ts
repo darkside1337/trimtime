@@ -16,6 +16,11 @@ import {
   waitForLockWaiters as waitForSharedLockWaiters,
   type RequestIdentity,
 } from "@/tests/support/database-locks";
+import {
+  createRateKeyTracker,
+  trackCreateEmailRateKey,
+  trackCustomerChangeRateKey,
+} from "@/tests/support/rate-keys";
 import { shopInput } from "@/tests/support/shops";
 import { decryptCapability, hashSecret } from "../capabilities";
 
@@ -45,7 +50,8 @@ describe("customer replacement integration", () => {
   let getCustomerReplacementChoices: typeof import("../queries").getCustomerReplacementChoices;
   let getCustomerReplacementSlots: typeof import("../queries").getCustomerReplacementSlots;
   const ownerIds: string[] = [];
-  const rateKeyHashes: string[] = [];
+  const rateKeys = createRateKeyTracker();
+  const ownedBudgetDays = new Set<string>();
   const week = Array.from({ length: 7 }, () => ({
     working: [{ start: 540, end: 1020 }],
     breaks: [],
@@ -75,13 +81,21 @@ describe("customer replacement integration", () => {
     ({ saveService } = await import("@/features/catalog/mutations"));
     ({ saveShopSchedule, saveBarberSchedule, saveShopDateSchedule } =
       await import("@/features/availability/mutations"));
-    ({
-      createPublicBooking,
-      createOwnerBooking,
-      replaceCustomerBooking,
-      cancelCustomerBooking,
-      moveOwnerBooking,
-    } = await import("../mutations"));
+    ({ moveOwnerBooking } = await import("../mutations"));
+    const mutations = await import("../mutations");
+    createPublicBooking = (context, input) => {
+      trackCreateEmailRateKey(rateKeys, context, input);
+      return mutations.createPublicBooking(context, input);
+    };
+    createOwnerBooking = mutations.createOwnerBooking;
+    cancelCustomerBooking = (context, input) => {
+      trackCustomerChangeRateKey(rateKeys, context, input);
+      return mutations.cancelCustomerBooking(context, input);
+    };
+    replaceCustomerBooking = (context, input) => {
+      trackCustomerChangeRateKey(rateKeys, context, input);
+      return mutations.replaceCustomerBooking(context, input);
+    };
     ({
       getCustomerReplacementChoices,
       getCustomerReplacementSlots,
@@ -94,15 +108,17 @@ describe("customer replacement integration", () => {
 
   afterAll(async () => {
     vi.useRealTimers();
-    if (rateKeyHashes.length)
-      await database?.pool.query(
-        `DELETE FROM public_rate_keys WHERE scope='customer_change_link' AND key_hash = ANY($1::text[])`,
-        [rateKeyHashes],
-      );
+    if (database) await rateKeys.deleteAll(database.pool);
     await database?.pool.query(
       'DELETE FROM "shops" WHERE owner_id = ANY($1::text[])',
       [ownerIds],
     );
+    if (ownedBudgetDays.size)
+      await database?.pool.query(
+        "DELETE FROM outbound_budget WHERE day = ANY($1::date[])",
+        [[...ownedBudgetDays]],
+      );
+    ownedBudgetDays.clear();
     await Promise.all(
       ownerIds.map((id) =>
         testAuth.$context.then(({ test }) => test.deleteUser(id)),
@@ -197,7 +213,6 @@ describe("customer replacement integration", () => {
     );
     if (!created.success) throw new Error("Booking fixture failed.");
     const token = new URL(created.data.manageUrl).pathname.split("/").at(-1)!;
-    rateKeyHashes.push(hashSecret(`${ids.shopId}:${token}`));
     return { ...created.data, token };
   }
 
@@ -2916,7 +2931,6 @@ describe("customer replacement integration", () => {
       stored.capability_key_id,
       `${ids.shopId}:${created.data.bookingId}`,
     );
-    rateKeyHashes.push(hashSecret(`${ids.shopId}:${token}`));
 
     // 2. Customer successfully moves owner-created booking within valid rules
     const validMove = await replaceCustomerBooking(
@@ -4260,11 +4274,6 @@ describe("customer replacement integration", () => {
       // Public booking succeeds and owns 11:00 - 11:30
       expect(resPublic1.success).toBe(true);
       if (!resPublic1.success) return;
-      rateKeyHashes.push(
-        hashSecret(
-          `${ids1.shopId}:${new URL(resPublic1.data.manageUrl).pathname.split("/").at(-1)!}`,
-        ),
-      );
 
       // Replacement fails with UNAVAILABLE_INTERVAL
       expect(resReplace1).toMatchObject({
@@ -4862,7 +4871,6 @@ describe("customer replacement integration", () => {
       stored.capability_key_id,
       `${ids.shopId}:${created.data.bookingId}`,
     );
-    rateKeyHashes.push(hashSecret(`${ids.shopId}:${token}`));
 
     const receipt = await replaceCustomerBooking(
       { shopId: ids.shopId },
@@ -4923,13 +4931,19 @@ describe("customer replacement integration", () => {
     )!;
     const alertWork = workItems.find((w) => w.kind === "owner_alert")!;
 
-    await database.pool.query(
-      "INSERT INTO outbound_budget (day, allocation_count) VALUES ('2026-11-01', 1) ON CONFLICT (day) DO UPDATE SET allocation_count = outbound_budget.allocation_count + 1",
+    const budgetInsert = await database.pool.query(
+      `INSERT INTO outbound_budget (day, allocation_count)
+       SELECT candidate.day::date, 1 FROM generate_series('2100-01-01'::date, '2109-12-31'::date, '1 day') AS candidate(day)
+       WHERE NOT EXISTS (SELECT 1 FROM outbound_budget WHERE outbound_budget.day = candidate.day::date)
+       LIMIT 1 ON CONFLICT (day) DO NOTHING RETURNING day::text`,
     );
+    const budgetDay = budgetInsert.rows[0]?.day as string | undefined;
+    if (!budgetDay) throw new Error("Could not claim an isolated budget day.");
+    ownedBudgetDays.add(budgetDay);
     const attemptId = randomUUID();
     await database.pool.query(
-      "INSERT INTO notification_attempts (id, work_id, budget_day, outcome, capture_id) VALUES ($1, $2, '2026-11-01', 'captured', 'capture-rev0')",
-      [attemptId, confirmationWork.id],
+      "INSERT INTO notification_attempts (id, work_id, budget_day, outcome, capture_id) VALUES ($1, $2, $3, 'captured', 'capture-rev0')",
+      [attemptId, confirmationWork.id, budgetDay],
     );
     await database.pool.query(
       "UPDATE notification_work SET status = 'captured', reason = NULL WHERE id = $1",

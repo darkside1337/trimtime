@@ -16,6 +16,11 @@ import {
   waitForLockWaiters as waitForSharedLockWaiters,
   type RequestIdentity,
 } from "@/tests/support/database-locks";
+import {
+  createRateKeyTracker,
+  trackCreateEmailRateKey,
+  trackCustomerChangeRateKey,
+} from "@/tests/support/rate-keys";
 import { shopInput } from "@/tests/support/shops";
 import { decryptCapability, hashSecret } from "../capabilities";
 
@@ -44,7 +49,7 @@ describe("customer cancellation", () => {
   let getManagedBooking: typeof import("../queries").getManagedBooking;
   let previewPublishedShopSlots: typeof import("@/features/availability/queries").previewPublishedShopSlots;
   const ownerIds: string[] = [];
-  const rateKeyHashes: string[] = [];
+  const rateKeys = createRateKeyTracker();
   const week = Array.from({ length: 7 }, () => ({
     working: [{ start: 540, end: 1020 }],
     breaks: [],
@@ -74,10 +79,16 @@ describe("customer cancellation", () => {
     ({ saveService, setServiceOffered } =
       await import("@/features/catalog/mutations"));
     ({ saveShopSchedule } = await import("@/features/availability/mutations"));
-    ({ createPublicBooking, cancelCustomerBooking } =
-      await import("../mutations"));
-    ({ createOwnerBooking, cancelOwnerBooking, moveOwnerBooking } =
-      await import("../mutations"));
+    const mutations = await import("../mutations");
+    createPublicBooking = (context, input) => {
+      trackCreateEmailRateKey(rateKeys, context, input);
+      return mutations.createPublicBooking(context, input);
+    };
+    cancelCustomerBooking = (context, input) => {
+      trackCustomerChangeRateKey(rateKeys, context, input);
+      return mutations.cancelCustomerBooking(context, input);
+    };
+    ({ createOwnerBooking, cancelOwnerBooking, moveOwnerBooking } = mutations);
     ({ getManagedBooking } = await import("../queries"));
     ({ previewPublishedShopSlots } =
       await import("@/features/availability/queries"));
@@ -88,11 +99,7 @@ describe("customer cancellation", () => {
 
   afterAll(async () => {
     vi.useRealTimers();
-    if (rateKeyHashes.length)
-      await database?.pool.query(
-        `DELETE FROM public_rate_keys WHERE scope='customer_change_link' AND key_hash = ANY($1::text[])`,
-        [rateKeyHashes],
-      );
+    if (database) await rateKeys.deleteAll(database.pool);
     await database?.pool.query(
       'DELETE FROM "shops" WHERE owner_id = ANY($1::text[])',
       [ownerIds],
@@ -204,7 +211,6 @@ describe("customer cancellation", () => {
     );
     if (!created.success) throw new Error("Booking fixture failed.");
     const token = new URL(created.data.manageUrl).pathname.split("/").at(-1)!;
-    rateKeyHashes.push(hashSecret(`${ids.shopId}:${token}`));
     return { ...created.data, token };
   }
 
@@ -1071,7 +1077,6 @@ describe("customer cancellation", () => {
       stored.capability_key_id,
       `${ids.shopId}:${created.data.bookingId}`,
     );
-    rateKeyHashes.push(hashSecret(`${ids.shopId}:${token}`));
     const receipt = await cancelCustomerBooking(
       { shopId: ids.shopId },
       cancellationInput(token),

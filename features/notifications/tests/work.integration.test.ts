@@ -10,9 +10,13 @@ import {
 } from "vitest";
 import { applyMigrations } from "@/db/migrate.mts";
 import { openTestDatabase } from "@/tests/support/database";
+import {
+  createRateKeyTracker,
+  trackCreateEmailRateKey,
+  trackCustomerChangeRateKey,
+} from "@/tests/support/rate-keys";
 import { shopInput } from "@/tests/support/shops";
 import { notificationBookingInput } from "@/tests/support/notifications";
-import { hashSecret } from "@/features/bookings/capabilities";
 
 describe("notification work", () => {
   let database: Awaited<ReturnType<typeof openTestDatabase>>;
@@ -33,7 +37,7 @@ describe("notification work", () => {
   let getManagedBooking: typeof import("@/features/bookings/queries").getManagedBooking;
   let getOwnAppointment: typeof import("@/features/bookings/queries").getOwnAppointment;
   const ownerIds: string[] = [];
-  const rateKeyHashes: string[] = [];
+  const rateKeys = createRateKeyTracker();
   const week = Array.from({ length: 7 }, (_, index) => ({
     working: index === 0 ? [{ start: 540, end: 1020 }] : [],
     breaks: [],
@@ -65,11 +69,16 @@ describe("notification work", () => {
     ({ saveBarber } = await import("@/features/barbers/mutations"));
     ({ saveService } = await import("@/features/catalog/mutations"));
     ({ saveShopSchedule } = await import("@/features/availability/mutations"));
-    ({ createPublicBooking } = await import("@/features/bookings/mutations"));
-    ({ createOwnerBooking } = await import("@/features/bookings/mutations"));
-    ({ cancelOwnerBooking } = await import("@/features/bookings/mutations"));
-    ({ moveOwnerBooking } = await import("@/features/bookings/mutations"));
-    ({ cancelCustomerBooking } = await import("@/features/bookings/mutations"));
+    const mutations = await import("@/features/bookings/mutations");
+    createPublicBooking = (context, input) => {
+      trackCreateEmailRateKey(rateKeys, context, input);
+      return mutations.createPublicBooking(context, input);
+    };
+    cancelCustomerBooking = (context, input) => {
+      trackCustomerChangeRateKey(rateKeys, context, input);
+      return mutations.cancelCustomerBooking(context, input);
+    };
+    ({ createOwnerBooking, cancelOwnerBooking, moveOwnerBooking } = mutations);
     ({ getOwnBookingActivity, getOwnNotificationActivity } =
       await import("../queries"));
     ({ getManagedBooking, getOwnAppointment } =
@@ -86,11 +95,7 @@ describe("notification work", () => {
 
   afterAll(async () => {
     vi.useRealTimers();
-    if (rateKeyHashes.length)
-      await database?.pool.query(
-        "DELETE FROM public_rate_keys WHERE key_hash = ANY($1::text[])",
-        [rateKeyHashes],
-      );
+    if (database) await rateKeys.deleteAll(database.pool);
     await database?.pool.query(
       'DELETE FROM "shops" WHERE owner_id = ANY($1::text[])',
       [ownerIds],
@@ -275,7 +280,6 @@ describe("notification work", () => {
     });
     expect(moved.success).toBe(true);
     const token = created.data.manageUrl.split("/manage/")[1];
-    rateKeyHashes.push(hashSecret(`${own.shopId}:${token}`));
     const cancelled = await cancelCustomerBooking(
       { shopId: own.shopId },
       {

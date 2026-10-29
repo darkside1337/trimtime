@@ -16,6 +16,10 @@ import {
   waitForLockWaiters,
   type RequestIdentity,
 } from "@/tests/support/database-locks";
+import {
+  createRateKeyTracker,
+  trackCreateEmailRateKey,
+} from "@/tests/support/rate-keys";
 import { shopInput } from "@/tests/support/shops";
 import { calculateSlots } from "@/features/availability/slots";
 
@@ -44,6 +48,7 @@ describe("public booking operations", () => {
   let getOwnAppointment: typeof import("../queries").getOwnAppointment;
   let getOwnNotificationActivity: typeof import("@/features/notifications/queries").getOwnNotificationActivity;
   const ownerIds: string[] = [];
+  const rateKeys = createRateKeyTracker();
   const week = Array.from({ length: 7 }, (_, index) => ({
     working: index === 0 ? [{ start: 540, end: 1020 }] : [],
     breaks: [],
@@ -80,8 +85,12 @@ describe("public booking operations", () => {
       saveBarberDateSchedule,
       createTimeBlock,
     } = await import("@/features/availability/mutations"));
-    ({ createPublicBooking } = await import("../mutations"));
-    ({ createOwnerBooking } = await import("../mutations"));
+    const mutations = await import("../mutations");
+    createPublicBooking = (context, input) => {
+      trackCreateEmailRateKey(rateKeys, context, input);
+      return mutations.createPublicBooking(context, input);
+    };
+    ({ createOwnerBooking } = mutations);
     ({ getOwnCalendar, getOwnAppointment } = await import("../queries"));
     ({ getOwnNotificationActivity } =
       await import("@/features/notifications/queries"));
@@ -92,6 +101,7 @@ describe("public booking operations", () => {
 
   afterAll(async () => {
     vi.useRealTimers();
+    if (database) await rateKeys.deleteAll(database.pool);
     await database?.pool.query(
       'DELETE FROM "shops" WHERE owner_id = ANY($1::text[])',
       [ownerIds],
