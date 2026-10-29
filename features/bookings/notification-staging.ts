@@ -81,17 +81,31 @@ export async function stageCustomerChangeNotifications(
       contentIdentity: params.contentIdentity,
       reason: "channel_unavailable",
     });
-  if (params.ownerEmail !== undefined) {
-    const owner = channelState(params.emailConfig, params.ownerEmail);
+  let ownerEmail = params.ownerEmail;
+  if (ownerEmail === undefined) {
+    const change = await tx.execute(
+      sql`SELECT c.actor_type, u.email FROM booking_changes c JOIN shops s ON s.id=c.shop_id JOIN "user" u ON u.id=s.owner_id WHERE c.id=${params.changeId}`,
+    );
+    const row = change.rows[0] as
+      { actor_type: string; email: string | null } | undefined;
+    if (row?.actor_type === "customer") {
+      ownerEmail = row.email ?? null;
+    }
+  }
+  if (ownerEmail !== undefined) {
+    const owner = channelState(params.emailConfig, ownerEmail);
     work.push({
       id: randomUUID(),
       bookingId: params.bookingId,
       bookingRevision: params.revision,
       changeId: params.changeId,
-      kind: "owner_cancellation",
+      kind:
+        params.kind === "customer_cancellation"
+          ? "owner_cancellation"
+          : "owner_move",
       channel: "email",
       status: owner.status,
-      recipient: params.ownerEmail,
+      recipient: ownerEmail,
       contentIdentity: params.contentIdentity,
       reason: owner.reason,
     });

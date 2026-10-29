@@ -4,6 +4,7 @@ import {
   renderCustomerUpdate,
   renderOwnerAlert,
   renderOwnerCancellationAlert,
+  renderOwnerMoveAlert,
 } from "../messages";
 
 const booking = {
@@ -168,6 +169,29 @@ describe("booking messages", () => {
     expect(owner.text).not.toContain("You have cancelled your booking.");
   });
 
+  it("attributes a customer-initiated reschedule to the customer and keeps shop wording for owner reschedules", () => {
+    const moved = {
+      booking,
+      recipient: booking.customerEmail,
+      manageUrl: "https://northside.trimtime.test/manage/secret-token",
+      kind: "move" as const,
+      before: { startAt: booking.startAt, endAt: booking.endAt },
+    };
+
+    const customer = renderCustomerUpdate({ ...moved, actor: "customer" });
+    expect(customer.text).toContain("You have rescheduled your booking.");
+    expect(customer.text).toContain(
+      "Customer changes require at least 12 hours' notice.",
+    );
+    expect(customer.text).not.toContain(
+      "The shop has rescheduled your booking.",
+    );
+
+    const owner = renderCustomerUpdate(moved);
+    expect(owner.text).toContain("The shop has rescheduled your booking.");
+    expect(owner.text).not.toContain("You have rescheduled your booking.");
+  });
+
   it("sends the owner alert to the account email without including the manage token", () => {
     const message = renderOwnerAlert({
       booking,
@@ -197,6 +221,32 @@ describe("booking messages", () => {
     expect(message.subject).toBe("Customer cancelled — Northside Barber");
     expect(message.text).toContain(
       "The customer has cancelled this appointment.",
+    );
+    expect(message.text).toContain("Customer: Ari Client <ari@example.test>");
+    expect(message.text).toContain("Service: Cut — $25.00 USD (30 minutes)");
+    expect(message.text).toContain("Barber: Sam Barber");
+    expect(message.text).toContain(
+      "Start: Jan 15, 2026, 9:00 AM America/New_York (UTC-05:00)",
+    );
+    expect(message.text).toContain("Booking ID: booking-1");
+    expect(message.text).toContain(
+      "Owner activity: https://app.localhost:3100/activity",
+    );
+    expect(message.text).not.toContain("manage/");
+    expect(message.text).not.toContain("secret-token");
+  });
+
+  it("tells the owner a customer rescheduled with saved details and no manage token", () => {
+    const message = renderOwnerMoveAlert({
+      booking,
+      recipient: "owner@example.test",
+      activityUrl: "https://app.localhost:3100/activity",
+    });
+
+    expect(message.to).toBe("owner@example.test");
+    expect(message.subject).toBe("Customer rescheduled — Northside Barber");
+    expect(message.text).toContain(
+      "The customer has rescheduled this appointment. The saved details are retained:",
     );
     expect(message.text).toContain("Customer: Ari Client <ari@example.test>");
     expect(message.text).toContain("Service: Cut — $25.00 USD (30 minutes)");

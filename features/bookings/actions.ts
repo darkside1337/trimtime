@@ -9,6 +9,9 @@ import { classifyHost, hasOwnerOrigin, hasRequestOrigin } from "@/server/hosts";
 import { readOwnerContext } from "@/server/owner-context";
 import type {
   CustomerCancellationReceipt,
+  CustomerReplacementChoices,
+  CustomerReplacementReceipt,
+  CustomerReplacementSlotsView,
   ManagedBookingView,
   PublicBookingInput,
   PublicBookingReceipt,
@@ -20,9 +23,14 @@ import {
   createOwnerBooking,
   createPublicBooking,
   moveOwnerBooking,
+  replaceCustomerBooking,
 } from "./mutations";
 import { cancelCustomerBooking } from "./customer-mutations";
-import { getManagedBooking } from "./queries";
+import {
+  getCustomerReplacementChoices,
+  getCustomerReplacementSlots,
+  getManagedBooking,
+} from "./queries";
 import { previewPublicSlots } from "@/features/shops/public-queries";
 import { dispatchInitialBookingNotifications } from "@/features/notifications/dispatch";
 
@@ -106,6 +114,44 @@ export async function getManagedBookingAction(
   return getManagedBooking(context, token);
 }
 
+export async function getCustomerReplacementChoicesAction(
+  token: string,
+): Promise<ActionResult<CustomerReplacementChoices>> {
+  const requestHeaders = await headers();
+  if (
+    classifyHost(requestHeaders) !== "shop" ||
+    !hasRequestOrigin(requestHeaders)
+  )
+    return {
+      success: false,
+      error: {
+        code: "UNAVAILABLE",
+        message: "This booking link is unavailable.",
+      },
+    };
+  const context = await resolvePublicRequest(requestHeaders);
+  return getCustomerReplacementChoices(context, token);
+}
+
+export async function getCustomerReplacementSlotsAction(
+  input: unknown,
+): Promise<ActionResult<CustomerReplacementSlotsView>> {
+  const requestHeaders = await headers();
+  if (
+    classifyHost(requestHeaders) !== "shop" ||
+    !hasRequestOrigin(requestHeaders)
+  )
+    return {
+      success: false,
+      error: {
+        code: "UNAVAILABLE",
+        message: "This booking link is unavailable.",
+      },
+    };
+  const context = await resolvePublicRequest(requestHeaders);
+  return getCustomerReplacementSlots(context, input);
+}
+
 function customerCancellationToken(input: unknown) {
   if (typeof input !== "object" || input === null || !("token" in input))
     return null;
@@ -140,6 +186,41 @@ export async function cancelCustomerBookingAction(
     after(() =>
       dispatchInitialBookingNotifications(bookingId).catch(() => {
         console.error("Customer cancellation notification dispatch failed.", {
+          bookingId,
+        });
+      }),
+    );
+  }
+  return result;
+}
+
+export async function replaceCustomerBookingAction(
+  input: unknown,
+): Promise<ActionResult<CustomerReplacementReceipt>> {
+  const requestHeaders = await headers();
+  if (
+    classifyHost(requestHeaders) !== "shop" ||
+    !hasRequestOrigin(requestHeaders)
+  )
+    return {
+      success: false,
+      error: {
+        code: "UNAVAILABLE",
+        message: "This booking link is unavailable.",
+      },
+    };
+  const context = await resolvePublicRequest(requestHeaders);
+  const result = await replaceCustomerBooking(context, input);
+  if (result.success) {
+    const { bookingId } = result.data;
+    revalidatePath("/owner");
+    revalidatePath(`/owner/appointments/${bookingId}`);
+    revalidatePath("/owner/activity");
+    const token = customerCancellationToken(input);
+    if (token) revalidatePath(`/manage/${token}`);
+    after(() =>
+      dispatchInitialBookingNotifications(bookingId).catch(() => {
+        console.error("Customer replacement notification dispatch failed.", {
           bookingId,
         });
       }),

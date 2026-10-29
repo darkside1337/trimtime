@@ -74,6 +74,7 @@ const categories = [
   "Owner alert",
   "Customer update",
   "Owner cancellation alert",
+  "Owner reschedule alert",
 ] as const;
 const channels = ["All", "Email", "WhatsApp"] as const;
 
@@ -83,6 +84,7 @@ function title(row: Row) {
   if (row.kind === "customer_confirmation") return "Customer confirmation";
   if (row.kind === "owner_alert") return "Owner alert";
   if (row.kind === "owner_cancellation") return "Owner cancellation alert";
+  if (row.kind === "owner_move") return "Owner reschedule alert";
   return row.kind === "customer_move"
     ? "Reschedule update"
     : "Cancellation update";

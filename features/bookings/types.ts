@@ -58,6 +58,21 @@ export type CancelCustomerBookingInput = {
   confirmed: true;
 };
 
+export type ReplaceCustomerBookingInput = {
+  token: string;
+  expectedRevision: number;
+  operationKey: string;
+  confirmed: true;
+  serviceId: string;
+  barberId: string;
+  startAt: string;
+  reviewedOffer: {
+    name: string;
+    priceUsd: string;
+    durationMinutes: string;
+  };
+};
+
 export type CustomerCancellationReceipt = {
   bookingId: string;
   operation: {
@@ -66,6 +81,58 @@ export type CustomerCancellationReceipt = {
     committedAt: string;
   };
   status: "cancelled";
+};
+
+export type CustomerReplacementReceipt = {
+  bookingId: string;
+  operation: {
+    id: string;
+    revision: number;
+    committedAt: string;
+    snapshot: Record<string, unknown>;
+  };
+};
+
+export type CustomerReplacementChoices = {
+  bookingId: string;
+  revision: number;
+  timeZone: string;
+  serverNow: string;
+  retainedService: {
+    id: string;
+    name: string;
+    priceUsd: string;
+    durationMinutes: number;
+  };
+  barbers: { id: string; name: string }[];
+  services: {
+    id: string;
+    name: string;
+    priceUsd: string;
+    durationMinutes: number;
+    barberIds: string[];
+    hidden: boolean;
+  }[];
+};
+
+export type GetCustomerReplacementSlotsInput = {
+  token: string;
+  expectedRevision: number;
+  serviceId: string;
+  barberId: string;
+  date: string;
+};
+
+export type CustomerReplacementSlotsView = {
+  timeZone: string;
+  date: string;
+  serverNow: string;
+  slots: {
+    start: string;
+    end: string;
+    localStart: string;
+    offset: string;
+  }[];
 };
 
 export type PublicBookingReceipt = {

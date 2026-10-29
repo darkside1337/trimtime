@@ -18,7 +18,8 @@ export type NotificationActivityRow = {
     | "owner_alert"
     | "customer_move"
     | "customer_cancellation"
-    | "owner_cancellation";
+    | "owner_cancellation"
+    | "owner_move";
   channel: "email" | "whatsapp";
   status: NotificationStatus;
   recipient: string | null;

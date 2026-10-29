@@ -131,7 +131,9 @@ export function renderCustomerUpdate(input: {
       demoNotice,
       "",
       moved
-        ? "The shop has rescheduled your booking. Here are the current saved details:"
+        ? actor === "customer"
+          ? "You have rescheduled your booking. Here are the current saved details:"
+          : "The shop has rescheduled your booking. Here are the current saved details:"
         : actor === "customer"
           ? "You have cancelled your booking. The saved appointment details are retained:"
           : "The shop has cancelled your booking. The saved appointment details are retained:",
@@ -186,6 +188,29 @@ export function renderOwnerCancellationAlert(input: {
       demoNotice,
       "",
       "The customer has cancelled this appointment. The saved details are retained:",
+      `Customer: ${booking.customerName}${booking.customerEmail ? ` <${booking.customerEmail}>` : " (no email provided)"}`,
+      ...bookingDetails(booking),
+      `Booking ID: ${booking.id}`,
+      `Owner activity: ${input.activityUrl}`,
+    ].join("\n"),
+  );
+}
+
+export function renderOwnerMoveAlert(input: {
+  booking: BookingMessageSnapshot;
+  recipient: string;
+  activityUrl: string;
+}): OutboundMessage {
+  const { booking } = input;
+  return createMessage(
+    input.recipient,
+    `Customer rescheduled — ${safeHeader(booking.shop.name)}`,
+    [
+      `Hello ${booking.shop.name},`,
+      "",
+      demoNotice,
+      "",
+      "The customer has rescheduled this appointment. The saved details are retained:",
       `Customer: ${booking.customerName}${booking.customerEmail ? ` <${booking.customerEmail}>` : " (no email provided)"}`,
       ...bookingDetails(booking),
       `Booking ID: ${booking.id}`,

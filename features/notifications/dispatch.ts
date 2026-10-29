@@ -16,6 +16,7 @@ import {
   renderCustomerUpdate,
   renderOwnerAlert,
   renderOwnerCancellationAlert,
+  renderOwnerMoveAlert,
   type BookingMessageSnapshot,
   type OutboundMessage,
 } from "./messages";
@@ -172,24 +173,30 @@ async function authorize(input: {
       rawWork.changeRevision === null ? null : Number(rawWork.changeRevision);
     const currentCancellation =
       changeKind === "cancel" && changeRevision === workRevision;
+    const currentMove =
+      changeKind === "move" && changeRevision === workRevision;
     const eligibleState =
       kind === "customer_confirmation" || kind === "owner_alert"
         ? booking.status === "confirmed" && booking.revision === 0
         : kind === "customer_move"
           ? booking.status === "confirmed" &&
             booking.revision === workRevision &&
-            changeKind === "move" &&
-            changeRevision === workRevision
-          : kind === "customer_cancellation"
-            ? booking.status === "cancelled" &&
+            currentMove
+          : kind === "owner_move"
+            ? booking.status === "confirmed" &&
               booking.revision === workRevision &&
-              currentCancellation
-            : kind === "owner_cancellation"
+              currentMove &&
+              changeActor === "customer"
+            : kind === "customer_cancellation"
               ? booking.status === "cancelled" &&
                 booking.revision === workRevision &&
-                currentCancellation &&
-                changeActor === "customer"
-              : false;
+                currentCancellation
+              : kind === "owner_cancellation"
+                ? booking.status === "cancelled" &&
+                  booking.revision === workRevision &&
+                  currentCancellation &&
+                  changeActor === "customer"
+                : false;
     if (
       !eligibleState ||
       booking.capabilityRevokedAt ||
@@ -252,6 +259,12 @@ async function authorize(input: {
             before,
           });
         }
+      } else if (kind === "owner_move") {
+        message = renderOwnerMoveAlert({
+          booking,
+          recipient,
+          activityUrl: `${process.env.APP_ORIGIN}/activity`,
+        });
       } else if (kind === "owner_cancellation") {
         message = renderOwnerCancellationAlert({
           booking,
@@ -377,7 +390,7 @@ export async function dispatchInitialBookingNotifications(
   };
   const items = await db.execute(sql`
     SELECT id FROM notification_work WHERE booking_id=${bookingId} AND channel='email'
-    ORDER BY CASE WHEN kind='customer_confirmation' THEN 0 ELSE 1 END
+    ORDER BY CASE WHEN kind IN ('customer_confirmation', 'customer_move', 'customer_cancellation') THEN 0 ELSE 1 END
   `);
   for (const row of items.rows as { id: string }[]) {
     try {

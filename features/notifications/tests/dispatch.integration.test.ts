@@ -38,6 +38,7 @@ describe("initial notification dispatch", () => {
   let moveOwnerBooking: typeof import("@/features/bookings/mutations").moveOwnerBooking;
   let cancelOwnerBooking: typeof import("@/features/bookings/mutations").cancelOwnerBooking;
   let cancelCustomerBooking: typeof import("@/features/bookings/mutations").cancelCustomerBooking;
+  let replaceCustomerBooking: typeof import("@/features/bookings/mutations").replaceCustomerBooking;
   let getManagedBooking: typeof import("@/features/bookings/queries").getManagedBooking;
   let dispatch: typeof import("../dispatch").dispatchInitialBookingNotifications;
   let getActivity: typeof import("../queries").getOwnNotificationActivity;
@@ -80,6 +81,8 @@ describe("initial notification dispatch", () => {
     ({ moveOwnerBooking } = await import("@/features/bookings/mutations"));
     ({ cancelOwnerBooking } = await import("@/features/bookings/mutations"));
     ({ cancelCustomerBooking } = await import("@/features/bookings/mutations"));
+    ({ replaceCustomerBooking } =
+      await import("@/features/bookings/mutations"));
     ({ getManagedBooking } = await import("@/features/bookings/queries"));
     ({ dispatchInitialBookingNotifications: dispatch } =
       await import("../dispatch"));
@@ -246,6 +249,39 @@ describe("initial notification dispatch", () => {
     return result.data;
   }
 
+  async function customerReplacement(
+    ids: Awaited<ReturnType<typeof fixture>>,
+    created: { bookingId: string; manageUrl: string },
+    changes: Record<string, unknown> = {},
+    expectedRevision = 0,
+  ) {
+    const token = created.manageUrl.split("/manage/")[1];
+    rateKeyHashes.push(hashSecret(`${ids.shopId}:${token}`));
+    const result = await replaceCustomerBooking(
+      { shopId: ids.shopId },
+      {
+        token,
+        expectedRevision,
+        operationKey: randomBytes(32).toString("base64url"),
+        confirmed: true,
+        serviceId: ids.serviceId,
+        barberId: ids.barberId,
+        startAt: "2026-11-02T11:00:00.000Z",
+        reviewedOffer: {
+          name: "Cut",
+          priceUsd: "25.00",
+          durationMinutes: "30",
+        },
+        ...changes,
+      },
+    );
+    if (!result.success)
+      throw new Error(
+        `Customer replacement fixture failed: ${result.error.code}`,
+      );
+    return result.data;
+  }
+
   async function setBudget(day: string, count: number) {
     if (budgetDays.has(day)) {
       await database.pool.query(
@@ -274,6 +310,17 @@ describe("initial notification dispatch", () => {
       await database.pool.query(
         `SELECT kind,status,reason FROM notification_work
          WHERE booking_id=$1 AND kind IN ('customer_cancellation','owner_cancellation')
+         ORDER BY kind`,
+        [bookingId],
+      )
+    ).rows;
+  }
+
+  async function moveWork(bookingId: string) {
+    return (
+      await database.pool.query(
+        `SELECT kind,status,reason FROM notification_work
+         WHERE booking_id=$1 AND kind IN ('customer_move','owner_move')
          ORDER BY kind`,
         [bookingId],
       )
@@ -535,6 +582,221 @@ describe("initial notification dispatch", () => {
       ).rows[0],
     ).toEqual({ status: "cancelled", revision: 1 });
   });
+
+  it("dispatches customer and owner move messages at the replaced revision", async () => {
+    vi.setSystemTime(new Date("2026-11-01T08:00:00Z"));
+    const ids = await fixture();
+    const created = await booking(ids, "customer-move@example.test");
+    const receipt = await customerReplacement(ids, created);
+    expect(receipt).toMatchObject({
+      bookingId: created.bookingId,
+      operation: { revision: 1 },
+    });
+
+    const messages: { to: string; subject: string; text: string }[] = [];
+    await dispatchTracked(created.bookingId, {
+      send: async ({ message, onInvoked }) => {
+        messages.push(message);
+        await onInvoked();
+        return captured;
+      },
+    });
+
+    expect(messages).toHaveLength(2);
+    const token = created.manageUrl.split("/manage/")[1];
+    const customer = messages.find(
+      (message) => message.to === "customer-move@example.test",
+    );
+    expect(customer).toMatchObject({
+      subject: "Booking updated — Juniper Barber",
+    });
+    expect(customer?.text).toContain("You have rescheduled your booking.");
+    expect(customer?.text).toContain(
+      "Customer changes require at least 12 hours' notice.",
+    );
+    expect(customer?.text).not.toContain(
+      "The shop has rescheduled your booking.",
+    );
+    expect(customer?.text).toContain("Service: Cut — $25.00 USD (30 minutes)");
+    expect(customer?.text).toContain("Start: Nov 2, 2026, 11:00 AM UTC");
+
+    const owner = messages.find((message) => message.to === ids.owner.email);
+    expect(owner).toMatchObject({
+      subject: "Customer rescheduled — Juniper Barber",
+    });
+    expect(owner?.text).toContain(
+      "The customer has rescheduled this appointment. The saved details are retained:",
+    );
+    expect(owner?.text).toContain(
+      "Customer: Ada Lovelace <customer-move@example.test>",
+    );
+    expect(owner?.text).toContain("Service: Cut — $25.00 USD (30 minutes)");
+    expect(owner?.text).toContain("Barber: Sam");
+    expect(owner?.text).toContain("Start: Nov 2, 2026, 11:00 AM UTC");
+    expect(owner?.text).toContain("Booking ID:");
+    expect(owner?.text).toContain(
+      "Owner activity: http://app.localhost:3100/activity",
+    );
+    expect(owner?.text).not.toContain("/manage/");
+    expect(owner?.text).not.toContain(token);
+
+    expect(
+      (await rows(ids))
+        .map(({ kind, status }) => ({ kind, status }))
+        .sort((a, b) => a.kind.localeCompare(b.kind)),
+    ).toEqual([
+      { kind: "customer_confirmation", status: "suppressed" },
+      { kind: "customer_move", status: "captured" },
+      { kind: "owner_alert", status: "suppressed" },
+      { kind: "owner_move", status: "captured" },
+    ]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status,revision FROM bookings WHERE id=$1",
+          [created.bookingId],
+        )
+      ).rows[0],
+    ).toEqual({ status: "confirmed", revision: 1 });
+  });
+
+  it("rejects replacement work with mismatched actor, event, revision, or recipient linkage", async () => {
+    vi.setSystemTime(new Date("2026-11-01T08:00:00Z"));
+    const suppressed = [
+      {
+        kind: "customer_move",
+        status: "suppressed",
+        reason: "work_no_longer_eligible",
+      },
+      {
+        kind: "owner_move",
+        status: "suppressed",
+        reason: "work_no_longer_eligible",
+      },
+    ];
+    const expectDenied = async (bookingId: string) => {
+      let calls = 0;
+      await dispatchTracked(bookingId, {
+        send: async ({ onInvoked }) => {
+          calls++;
+          await onInvoked();
+          return captured;
+        },
+      });
+      expect(calls).toBe(0);
+      expect(await moveWork(bookingId)).toEqual(suppressed);
+    };
+
+    const wrongActor = await fixture();
+    const wrongActorBooking = await booking(wrongActor, "ada@example.test");
+    const wrongActorReceipt = await customerReplacement(
+      wrongActor,
+      wrongActorBooking,
+    );
+    await database.pool.query(
+      "UPDATE booking_changes SET actor_type='owner',actor_id=$2 WHERE id=$1",
+      [wrongActorReceipt.operation.id, wrongActor.owner.id],
+    );
+    const wrongActorCalls: string[] = [];
+    await dispatchTracked(wrongActorBooking.bookingId, {
+      send: async ({ message, onInvoked }) => {
+        wrongActorCalls.push(message.to);
+        await onInvoked();
+        return captured;
+      },
+    });
+    expect(wrongActorCalls).toEqual(["ada@example.test"]);
+    expect(await moveWork(wrongActorBooking.bookingId)).toEqual([
+      {
+        kind: "customer_move",
+        status: "captured",
+        reason: null,
+      },
+      {
+        kind: "owner_move",
+        status: "suppressed",
+        reason: "work_no_longer_eligible",
+      },
+    ]);
+
+    const wrongRevision = await fixture();
+    const wrongRevisionBooking = await booking(
+      wrongRevision,
+      "ada@example.test",
+    );
+    await customerReplacement(wrongRevision, wrongRevisionBooking);
+    await database.pool.query(
+      "UPDATE notification_work SET booking_revision=2 WHERE booking_id=$1 AND kind IN ('customer_move','owner_move')",
+      [wrongRevisionBooking.bookingId],
+    );
+    await expectDenied(wrongRevisionBooking.bookingId);
+
+    const wrongRecipient = await fixture();
+    const wrongRecipientBooking = await booking(
+      wrongRecipient,
+      "ada@example.test",
+    );
+    await customerReplacement(wrongRecipient, wrongRecipientBooking);
+    await database.pool.query(
+      `UPDATE notification_work SET recipient=CASE kind
+         WHEN 'owner_move' THEN 'ada@example.test'
+         ELSE $2 END
+       WHERE booking_id=$1 AND kind IN ('customer_move','owner_move')`,
+      [wrongRecipientBooking.bookingId, wrongRecipient.owner.email],
+    );
+    await expectDenied(wrongRecipientBooking.bookingId);
+  });
+
+  it.each(["rejected", "interrupted"] as const)(
+    "keeps the replacement committed and sends owner move work when customer delivery is %s",
+    async (outcome) => {
+      vi.setSystemTime(new Date("2026-11-01T08:00:00Z"));
+      const ids = await fixture();
+      const created = await booking(ids, `customer-${outcome}@example.test`);
+      await customerReplacement(ids, created);
+      const calls: string[] = [];
+      await dispatchTracked(created.bookingId, {
+        send: async ({ message, onInvoked }) => {
+          calls.push(message.to);
+          await onInvoked();
+          if (message.to === `customer-${outcome}@example.test`) {
+            if (outcome === "interrupted")
+              throw new Error("transport interrupted");
+            return {
+              status: "failed",
+              reason: "permanent_rejection",
+              captureId: null,
+              invoked: true,
+            };
+          }
+          return captured;
+        },
+      });
+
+      expect(calls).toHaveLength(2);
+      const activity = await rows(ids);
+      const customer = activity.find((row) => row.kind === "customer_move");
+      const owner = activity.find((row) => row.kind === "owner_move");
+      expect(customer).toMatchObject(
+        outcome === "interrupted"
+          ? { status: "unknown", reason: "transport_interrupted" }
+          : { status: "failed", reason: "permanent_rejection" },
+      );
+      expect(owner).toMatchObject({
+        status: "captured",
+        reason: null,
+        attempt: { outcome: "captured" },
+      });
+      expect(
+        (
+          await database.pool.query(
+            "SELECT status,revision FROM bookings WHERE id=$1",
+            [created.bookingId],
+          )
+        ).rows[0],
+      ).toEqual({ status: "confirmed", revision: 1 });
+    },
+  );
 
   it("rejects cancellation work with mismatched actor, event, revision, or recipient linkage", async () => {
     vi.setSystemTime(new Date("2026-11-01T08:00:00Z"));
