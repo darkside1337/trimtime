@@ -8,6 +8,7 @@ import { resolvePublicRequest } from "@/server/public-request";
 import { classifyHost, hasOwnerOrigin, hasRequestOrigin } from "@/server/hosts";
 import { readOwnerContext } from "@/server/owner-context";
 import type {
+  CustomerCancellationReceipt,
   ManagedBookingView,
   PublicBookingInput,
   PublicBookingReceipt,
@@ -20,6 +21,7 @@ import {
   createPublicBooking,
   moveOwnerBooking,
 } from "./mutations";
+import { cancelCustomerBooking } from "./customer-mutations";
 import { getManagedBooking } from "./queries";
 import { previewPublicSlots } from "@/features/shops/public-queries";
 import { dispatchInitialBookingNotifications } from "@/features/notifications/dispatch";
@@ -102,6 +104,48 @@ export async function getManagedBookingAction(
 ): Promise<ActionResult<ManagedBookingView>> {
   const context = await resolvePublicRequest(await headers());
   return getManagedBooking(context, token);
+}
+
+function customerCancellationToken(input: unknown) {
+  if (typeof input !== "object" || input === null || !("token" in input))
+    return null;
+  const token = (input as { token?: unknown }).token;
+  return typeof token === "string" && token.length > 0 ? token : null;
+}
+
+export async function cancelCustomerBookingAction(
+  input: unknown,
+): Promise<ActionResult<CustomerCancellationReceipt>> {
+  const requestHeaders = await headers();
+  if (
+    classifyHost(requestHeaders) !== "shop" ||
+    !hasRequestOrigin(requestHeaders)
+  )
+    return {
+      success: false,
+      error: {
+        code: "UNAVAILABLE",
+        message: "This booking link is unavailable.",
+      },
+    };
+  const context = await resolvePublicRequest(requestHeaders);
+  const result = await cancelCustomerBooking(context, input);
+  if (result.success) {
+    const { bookingId } = result.data;
+    revalidatePath("/owner");
+    revalidatePath(`/owner/appointments/${bookingId}`);
+    revalidatePath("/owner/activity");
+    const token = customerCancellationToken(input);
+    if (token) revalidatePath(`/manage/${token}`);
+    after(() =>
+      dispatchInitialBookingNotifications(bookingId).catch(() => {
+        console.error("Customer cancellation notification dispatch failed.", {
+          bookingId,
+        });
+      }),
+    );
+  }
+  return result;
 }
 
 export async function moveOwnerBookingAction(

@@ -196,13 +196,13 @@ test("saved booking details survive catalog edits and unpublication without read
   await captureState(page, "manage-discard-dialog-phone", info);
   await page.setViewportSize({ width: 1024, height: 900 });
   await page.getByRole("button", { name: "Discard preview choices" }).click();
-  await page.getByRole("button", { name: "Preview cancellation" }).click();
+  await page.getByRole("button", { name: "Cancel appointment" }).click();
   await expect(page.getByRole("dialog")).toContainText(
-    "This appointment will not be cancelled.",
+    "Cancelling releases this time.",
   );
   await expect(
-    page.getByRole("button", { name: "Yes, cancel appointment · Unavailable" }),
-  ).toBeDisabled();
+    page.getByRole("button", { name: "Yes, cancel appointment" }),
+  ).toBeEnabled();
   await captureState(page, "manage-cancel-dialog-desktop", info);
   await page.setViewportSize({ width: 390, height: 844 });
   await captureState(page, "manage-cancel-dialog-phone", info);
@@ -368,7 +368,7 @@ test("cutoff, cancelled, and past appointments show live view-only guidance", as
     page.getByRole("button", { name: "Open change preview" }),
   ).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "Preview cancellation" }),
+    page.getByRole("button", { name: "Cancel appointment" }),
   ).toHaveCount(0);
   await captureState(page, "manage-cutoff", info);
 

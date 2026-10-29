@@ -1,4 +1,6 @@
+import { sql } from "drizzle-orm";
 import {
+  check,
   foreignKey,
   index,
   pgTable,
@@ -14,7 +16,13 @@ export const publicRateKeys = pgTable(
     scope: text("scope").notNull(),
     keyHash: text("key_hash").notNull(),
   },
-  (table) => [primaryKey({ columns: [table.scope, table.keyHash] })],
+  (table) => [
+    primaryKey({ columns: [table.scope, table.keyHash] }),
+    check(
+      "public_rate_keys_scope_check",
+      sql`${table.scope} IN ('create_email_shop', 'customer_change_link')`,
+    ),
+  ],
 );
 
 export const publicRateEvents = pgTable(

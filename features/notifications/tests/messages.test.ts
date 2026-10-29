@@ -3,6 +3,7 @@ import {
   renderCustomerConfirmation,
   renderCustomerUpdate,
   renderOwnerAlert,
+  renderOwnerCancellationAlert,
 } from "../messages";
 
 const booking = {
@@ -146,6 +147,27 @@ describe("booking messages", () => {
     );
   });
 
+  it("attributes a customer-initiated cancellation to the customer and keeps shop wording for owner cancellations", () => {
+    const cancelled = {
+      booking,
+      recipient: booking.customerEmail,
+      manageUrl: "https://northside.trimtime.test/manage/secret-token",
+      kind: "cancel" as const,
+      before: { startAt: booking.startAt, endAt: booking.endAt },
+    };
+
+    const customer = renderCustomerUpdate({ ...cancelled, actor: "customer" });
+    expect(customer.text).toContain("You have cancelled your booking.");
+    expect(customer.text).toContain(
+      "Your manage link is now read-only because this booking was cancelled.",
+    );
+    expect(customer.text).not.toContain("The shop has cancelled your booking.");
+
+    const owner = renderCustomerUpdate(cancelled);
+    expect(owner.text).toContain("The shop has cancelled your booking.");
+    expect(owner.text).not.toContain("You have cancelled your booking.");
+  });
+
   it("sends the owner alert to the account email without including the manage token", () => {
     const message = renderOwnerAlert({
       booking,
@@ -156,6 +178,32 @@ describe("booking messages", () => {
     expect(message.to).toBe("owner@example.test");
     expect(message.subject).toBe("New customer booking — Northside Barber");
     expect(message.text).toContain("Customer: Ari Client <ari@example.test>");
+    expect(message.text).toContain("Booking ID: booking-1");
+    expect(message.text).toContain(
+      "Owner activity: https://app.localhost:3100/activity",
+    );
+    expect(message.text).not.toContain("manage/");
+    expect(message.text).not.toContain("secret-token");
+  });
+
+  it("tells the owner a customer cancelled with saved details and no manage token", () => {
+    const message = renderOwnerCancellationAlert({
+      booking,
+      recipient: "owner@example.test",
+      activityUrl: "https://app.localhost:3100/activity",
+    });
+
+    expect(message.to).toBe("owner@example.test");
+    expect(message.subject).toBe("Customer cancelled — Northside Barber");
+    expect(message.text).toContain(
+      "The customer has cancelled this appointment.",
+    );
+    expect(message.text).toContain("Customer: Ari Client <ari@example.test>");
+    expect(message.text).toContain("Service: Cut — $25.00 USD (30 minutes)");
+    expect(message.text).toContain("Barber: Sam Barber");
+    expect(message.text).toContain(
+      "Start: Jan 15, 2026, 9:00 AM America/New_York (UTC-05:00)",
+    );
     expect(message.text).toContain("Booking ID: booking-1");
     expect(message.text).toContain(
       "Owner activity: https://app.localhost:3100/activity",

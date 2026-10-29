@@ -68,6 +68,20 @@ describe("managed booking reads", () => {
     }
   });
 
+  it("includes the saved revision for explicit customer confirmation", async () => {
+    await expect(
+      getManagedBooking({ shopId: ids.shop }, token),
+    ).resolves.toMatchObject({
+      success: true,
+      data: {
+        revision: 0,
+        status: "confirmed",
+        startAt: "2026-11-02T10:00:00.000Z",
+        endAt: "2026-11-02T10:30:00.000Z",
+      },
+    });
+  });
+
   it("returns only the scoped saved details without mutation, and hides invalid tokens", async () => {
     const context = { shopId: ids.shop };
     const before = await database.pool.query(

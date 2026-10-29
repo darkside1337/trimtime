@@ -12,7 +12,7 @@ export function ManageBookingDetails({
   headingRef,
   refreshingStatus,
   refreshRequested,
-  onPreviewCancellation,
+  onCancelAppointment,
   onChangePreview,
   refreshMessageStatus,
 }: {
@@ -21,7 +21,7 @@ export function ManageBookingDetails({
   headingRef: RefObject<HTMLHeadingElement | null>;
   refreshingStatus: boolean;
   refreshRequested: boolean;
-  onPreviewCancellation: () => void;
+  onCancelAppointment: () => void;
   onChangePreview: () => void;
   refreshMessageStatus: () => void;
 }) {
@@ -59,9 +59,9 @@ export function ManageBookingDetails({
             <Button
               className="max-[767px]:whitespace-normal"
               variant="link"
-              onClick={onPreviewCancellation}
+              onClick={onCancelAppointment}
             >
-              Preview cancellation
+              Cancel appointment
             </Button>
           ) : null}
           <Button
@@ -87,24 +87,24 @@ export function ManageBookingDetails({
               ? "This appointment is past and unmarked."
               : booking.changeCutoffPassed
                 ? `Online changes are not available within 12 hours of your start. Contact ${booking.shop.publicContact}.`
-                : "Online changes are not available yet. Contact the shop if your plans change."}
+                : "You can cancel online until 12 hours before your start. Contact the shop if you need help."}
         </p>
       </div>
 
       <dl className="grid grid-cols-2 gap-x-8 gap-y-7 border-b border-[#e6e6e2] py-7 max-[767px]:gap-x-4">
-        <div className="grid gap-1">
+        <div className="grid min-w-0 gap-1">
           <dt className="text-xs text-[#72726e]">Service</dt>
-          <dd className="font-[family-name:var(--font-shop-display)] text-[32px] leading-tight">
+          <dd className="wrap-anywhere font-[family-name:var(--font-shop-display)] text-[32px] leading-tight">
             {booking.service.name}
           </dd>
         </div>
-        <div className="grid gap-1">
+        <div className="grid min-w-0 gap-1">
           <dt className="text-xs text-[#72726e]">Your barber</dt>
-          <dd className="font-[family-name:var(--font-shop-display)] text-[32px] leading-tight">
+          <dd className="wrap-anywhere font-[family-name:var(--font-shop-display)] text-[32px] leading-tight">
             {booking.barber.name}
           </dd>
         </div>
-        <div className="grid gap-1">
+        <div className="grid min-w-0 gap-1">
           <dt className="text-xs text-[#72726e]">Reserved for</dt>
           <dd>{booking.customer.name}</dd>
           <dd className="wrap-anywhere text-xs">
@@ -114,18 +114,18 @@ export function ManageBookingDetails({
             <dd className="text-xs">{booking.customer.phone}</dd>
           ) : null}
         </div>
-        <div className="grid gap-1">
+        <div className="grid min-w-0 gap-1">
           <dt className="text-xs text-[#72726e]">Duration</dt>
           <dd>{booking.service.durationMinutes} minutes</dd>
         </div>
-        <div className="grid gap-1">
+        <div className="grid min-w-0 gap-1">
           <dt className="text-xs text-[#72726e]">Total · USD</dt>
-          <dd className="font-[family-name:var(--font-shop-display)] text-[32px] leading-tight">
+          <dd className="wrap-anywhere font-[family-name:var(--font-shop-display)] text-[32px] leading-tight">
             ${Number(booking.service.priceUsd).toFixed(2)}
           </dd>
           <dd className="text-xs text-[#72726e]">Pay at the shop</dd>
         </div>
-        <div className="grid gap-1">
+        <div className="grid min-w-0 gap-1">
           <dt className="text-xs text-[#72726e]">Where</dt>
           <dd>{booking.shop.name}</dd>
           <dd className="text-xs text-[#72726e]">{booking.shop.address}</dd>
@@ -147,7 +147,7 @@ export function ManageBookingDetails({
             ? "Keep these details for your records. Contact the shop if you need help."
             : booking.changeCutoffPassed
               ? "Your appointment starts within 12 hours. Contact the shop if your plans change."
-              : "Customer changes are not available yet. Contact the shop if your plans change."}
+              : "You can cancel this appointment online until 12 hours before your start."}
         </p>
         <p className="mt-2 text-[#72726e]" role="status">
           {customerEmailStatusCopy(booking.notifications.email)}

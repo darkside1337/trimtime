@@ -79,6 +79,7 @@ export async function getOwnBookingActivity(
     };
   const result = await db.execute(sql`
     SELECT c.id, c.booking_id AS "bookingId", c.kind,
+      c.actor_type AS "actorType",
       c.applied_revision AS revision, c.committed_at AS "committedAt",
       c.before_snapshot AS before, c.after_snapshot AS after
     FROM booking_changes c
@@ -95,6 +96,7 @@ export async function getOwnBookingActivity(
           id: String(item.id),
           bookingId: String(item.bookingId),
           kind: item.kind as "move" | "cancel",
+          actorType: item.actorType as "owner" | "customer",
           revision: Number(item.revision),
           committedAt: new Date(item.committedAt as Date).toISOString(),
           before: item.before as Record<string, unknown>,

@@ -23,6 +23,21 @@ export async function suppressSupersededNotificationWork(
     );
 }
 
+function channelState(emailConfig: EmailConfig, recipient: string | null) {
+  return {
+    status: !recipient
+      ? ("skipped" as const)
+      : emailConfig.mode === "mailpit"
+        ? ("not_attempted" as const)
+        : ("unavailable" as const),
+    reason: !recipient
+      ? "recipient_missing"
+      : emailConfig.mode === "unavailable"
+        ? emailConfig.reason
+        : null,
+  };
+}
+
 export async function stageCustomerChangeNotifications(
   tx: BookingTransaction,
   params: {
@@ -35,18 +50,10 @@ export async function stageCustomerChangeNotifications(
     customerPhone: string | null;
     whatsappOptIn: boolean;
     emailConfig: EmailConfig;
+    ownerEmail?: string | null;
   },
 ) {
-  const emailStatus = !params.customerEmail
-    ? "skipped"
-    : params.emailConfig.mode === "mailpit"
-      ? "not_attempted"
-      : "unavailable";
-  const emailReason = !params.customerEmail
-    ? "recipient_missing"
-    : params.emailConfig.mode === "unavailable"
-      ? params.emailConfig.reason
-      : null;
+  const email = channelState(params.emailConfig, params.customerEmail);
   const work: (typeof notificationWork.$inferInsert)[] = [
     {
       id: randomUUID(),
@@ -55,10 +62,10 @@ export async function stageCustomerChangeNotifications(
       changeId: params.changeId,
       kind: params.kind,
       channel: "email",
-      status: emailStatus,
+      status: email.status,
       recipient: params.customerEmail,
       contentIdentity: params.contentIdentity,
-      reason: emailReason,
+      reason: email.reason,
     },
   ];
   if (params.whatsappOptIn && params.customerPhone)
@@ -74,5 +81,20 @@ export async function stageCustomerChangeNotifications(
       contentIdentity: params.contentIdentity,
       reason: "channel_unavailable",
     });
+  if (params.ownerEmail !== undefined) {
+    const owner = channelState(params.emailConfig, params.ownerEmail);
+    work.push({
+      id: randomUUID(),
+      bookingId: params.bookingId,
+      bookingRevision: params.revision,
+      changeId: params.changeId,
+      kind: "owner_cancellation",
+      channel: "email",
+      status: owner.status,
+      recipient: params.ownerEmail,
+      contentIdentity: params.contentIdentity,
+      reason: owner.reason,
+    });
+  }
   await tx.insert(notificationWork).values(work);
 }

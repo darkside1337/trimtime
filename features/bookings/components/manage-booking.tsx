@@ -24,13 +24,16 @@ export { UnavailableManageBooking } from "./manage-booking/manage-booking-unavai
 export function ManageBooking({
   booking,
   past,
+  token,
 }: {
   booking: ManagedBookingView;
   past: boolean;
+  token: string;
 }) {
   const router = useRouter();
   const [screen, setScreen] = useState<PreviewScreen>("details");
   const [dialog, setDialog] = useState<PreviewDialog>(null);
+  const [announcement, setAnnouncement] = useState("");
   const [refreshingStatus, startRefresh] = useTransition();
   const [refreshRequested, setRefreshRequested] = useState(false);
   const screenHeadingRef = useRef<HTMLHeadingElement>(null);
@@ -78,7 +81,7 @@ export function ManageBooking({
               headingRef={screenHeadingRef}
               refreshingStatus={refreshingStatus}
               refreshRequested={refreshRequested}
-              onPreviewCancellation={() => setDialog("cancel")}
+              onCancelAppointment={() => setDialog("cancel")}
               onChangePreview={() => setScreen("edit")}
               refreshMessageStatus={refreshMessageStatus}
             />
@@ -95,13 +98,22 @@ export function ManageBooking({
       </div>
 
       <Footer name={booking.shop.name} />
+      <p aria-live="polite" className="sr-only" role="status">
+        {announcement}
+      </p>
       <ManageBookingDialogs
         booking={booking}
+        token={token}
         dialog={dialog}
         onOpenChange={(open) => setDialog(open ? dialog : null)}
         onDiscard={() => {
           setDialog(null);
           setScreen("details");
+        }}
+        onCancelled={() => {
+          setDialog(null);
+          setAnnouncement("Appointment cancelled. The time has been released.");
+          router.refresh();
         }}
       />
     </main>

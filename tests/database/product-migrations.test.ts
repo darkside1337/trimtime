@@ -41,7 +41,7 @@ describe("product and fixture migration ledgers", () => {
     );
 
     expect(fixture.rows[0]?.note).toBe("separate-ledger");
-    expect(product.rows[0]?.count).toBe(10);
+    expect(product.rows[0]?.count).toBe(11);
     expect(fixtureLedger.rows[0]?.count).toBe(1);
   });
 });

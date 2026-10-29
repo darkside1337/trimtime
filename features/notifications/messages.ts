@@ -116,9 +116,11 @@ export function renderCustomerUpdate(input: {
   manageUrl: string;
   kind: "move" | "cancel";
   before: { startAt: Date | string; endAt: Date | string };
+  actor?: "owner" | "customer";
 }): OutboundMessage {
   const { booking, kind, before } = input;
   const moved = kind === "move";
+  const actor = input.actor ?? "owner";
   const subject = moved ? "Booking updated" : "Booking cancelled";
   return createMessage(
     input.recipient,
@@ -130,7 +132,9 @@ export function renderCustomerUpdate(input: {
       "",
       moved
         ? "The shop has rescheduled your booking. Here are the current saved details:"
-        : "The shop has cancelled your booking. The saved appointment details are retained:",
+        : actor === "customer"
+          ? "You have cancelled your booking. The saved appointment details are retained:"
+          : "The shop has cancelled your booking. The saved appointment details are retained:",
       moved
         ? "Customer changes require at least 12 hours' notice.\nFor changes with less than 12 hours remaining, contact the shop."
         : "Your manage link is now read-only because this booking was cancelled.",
@@ -159,6 +163,29 @@ export function renderOwnerAlert(input: {
       "",
       demoNotice,
       "",
+      `Customer: ${booking.customerName}${booking.customerEmail ? ` <${booking.customerEmail}>` : " (no email provided)"}`,
+      ...bookingDetails(booking),
+      `Booking ID: ${booking.id}`,
+      `Owner activity: ${input.activityUrl}`,
+    ].join("\n"),
+  );
+}
+
+export function renderOwnerCancellationAlert(input: {
+  booking: BookingMessageSnapshot;
+  recipient: string;
+  activityUrl: string;
+}): OutboundMessage {
+  const { booking } = input;
+  return createMessage(
+    input.recipient,
+    `Customer cancelled — ${safeHeader(booking.shop.name)}`,
+    [
+      `Hello ${booking.shop.name},`,
+      "",
+      demoNotice,
+      "",
+      "The customer has cancelled this appointment. The saved details are retained:",
       `Customer: ${booking.customerName}${booking.customerEmail ? ` <${booking.customerEmail}>` : " (no email provided)"}`,
       ...bookingDetails(booking),
       `Booking ID: ${booking.id}`,

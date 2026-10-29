@@ -20,9 +20,10 @@ export const bookingChanges = pgTable(
     id: uuid("id").primaryKey(),
     shopId: text("shop_id").notNull(),
     bookingId: uuid("booking_id").notNull(),
-    actorId: text("actor_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "cascade" }),
+    actorId: text("actor_id").references(() => user.id, {
+      onDelete: "cascade",
+    }),
+    actorType: text("actor_type").notNull().default("owner"),
     kind: text("kind").notNull(),
     appliedRevision: integer("applied_revision").notNull(),
     committedAt: timestamp("committed_at", { withTimezone: true, mode: "date" })
@@ -56,6 +57,14 @@ export const bookingChanges = pgTable(
     check(
       "booking_changes_kind_check",
       sql`${table.kind} IN ('move', 'cancel')`,
+    ),
+    check(
+      "booking_changes_actor_type_check",
+      sql`${table.actorType} IN ('owner', 'customer')`,
+    ),
+    check(
+      "booking_changes_actor_check",
+      sql`(${table.actorType} = 'owner' AND ${table.actorId} IS NOT NULL) OR (${table.actorType} = 'customer' AND ${table.actorId} IS NULL AND ${table.kind} = 'cancel')`,
     ),
     check("booking_changes_revision_check", sql`${table.appliedRevision} > 0`),
   ],

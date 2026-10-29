@@ -1,5 +1,8 @@
-import { expect, it } from "vitest";
-import { publicBookingContactSchema } from "../schemas";
+import { describe, expect, it } from "vitest";
+import {
+  cancelCustomerBookingSchema,
+  publicBookingContactSchema,
+} from "../schemas";
 
 it("requires a phone when WhatsApp consent is selected", () => {
   const result = publicBookingContactSchema.safeParse({
@@ -69,4 +72,73 @@ it("accepts email-only contact and requires phone only with explicit consent", (
       whatsappOptIn: true,
     }).whatsappOptIn,
   ).toBe(true);
+});
+
+describe("customer cancellation input", () => {
+  const valid = {
+    token: "t".repeat(43),
+    expectedRevision: 0,
+    operationKey: "k".repeat(43),
+    confirmed: true as const,
+  };
+
+  it("accepts an explicit confirmation with revision zero and a fresh operation key", () => {
+    expect(cancelCustomerBookingSchema.parse(valid)).toEqual(valid);
+  });
+
+  it("rejects unconfirmed, missing, and non-literal confirmation values", () => {
+    const withoutConfirmation = {
+      token: valid.token,
+      expectedRevision: valid.expectedRevision,
+      operationKey: valid.operationKey,
+    };
+    for (const invalid of [
+      { ...valid, confirmed: false },
+      { ...valid, confirmed: "true" },
+      withoutConfirmation,
+    ]) {
+      expect(cancelCustomerBookingSchema.safeParse(invalid).success).toBe(
+        false,
+      );
+    }
+  });
+
+  it("preserves a whitespace-padded capability token byte for byte", () => {
+    const padded = `  ${valid.token}\t`;
+
+    expect(
+      cancelCustomerBookingSchema.parse({ ...valid, token: padded }).token,
+    ).toBe(padded);
+  });
+
+  it("rejects malformed revision, token, operation key, and non-object input", () => {
+    for (const invalid of [
+      { ...valid, expectedRevision: -1 },
+      { ...valid, expectedRevision: 0.5 },
+      { ...valid, token: "" },
+      { ...valid, operationKey: "k".repeat(42) },
+      { ...valid, operationKey: "!".repeat(43) },
+      null,
+      "not-an-object",
+      42,
+      [],
+    ]) {
+      expect(cancelCustomerBookingSchema.safeParse(invalid).success).toBe(
+        false,
+      );
+    }
+  });
+
+  it("rejects caller-supplied shop, booking, and actor authority", () => {
+    for (const extra of [
+      { shopId: "foreign-shop" },
+      { bookingId: "123e4567-e89b-42d3-a456-426614174000" },
+      { actorId: "foreign-owner" },
+      { actorType: "customer" },
+    ]) {
+      expect(
+        cancelCustomerBookingSchema.safeParse({ ...valid, ...extra }).success,
+      ).toBe(false);
+    }
+  });
 });

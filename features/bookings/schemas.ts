@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { Temporal } from "temporal-polyfill";
+import type { CancelCustomerBookingInput } from "./types";
 
 export const publicBookingContactSchema = z
   .object({
@@ -93,6 +94,16 @@ export const cancelOwnerBookingSchema = z
     operationKey: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
   })
   .strict();
+
+export const cancelCustomerBookingSchema: z.ZodType<CancelCustomerBookingInput> =
+  z
+    .object({
+      token: z.string().min(1),
+      expectedRevision: z.number().int().nonnegative(),
+      operationKey: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+      confirmed: z.literal(true),
+    })
+    .strict();
 
 export const moveOwnerBookingSchema = z
   .object({

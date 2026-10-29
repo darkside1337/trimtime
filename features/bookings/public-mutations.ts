@@ -46,7 +46,7 @@ function payloadDigest(
   );
 }
 
-async function rateEvent(
+export async function recordRateEvent(
   tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
   scope: string,
   rawKey: string,
@@ -72,6 +72,7 @@ async function rateEvent(
 
 function savedView(
   row: {
+    revision: number;
     status: "confirmed" | "cancelled";
     startAt: Date | string;
     endAt: Date | string;
@@ -94,6 +95,7 @@ function savedView(
   const startAt = new Date(row.startAt);
   const endAt = new Date(row.endAt);
   return {
+    revision: row.revision,
     status: row.status,
     startAt: startAt.toISOString(),
     endAt: endAt.toISOString(),
@@ -130,7 +132,7 @@ async function receiptFor(
   now: Date,
 ): Promise<PublicBookingReceipt | null> {
   const result = await tx.execute(
-    sql`SELECT b.id, b.status, b.start_at AS "startAt", b.end_at AS "endAt", b.service_name AS "serviceName", b.service_price_usd AS "servicePriceUsd", b.service_duration_minutes AS "serviceDurationMinutes", b.barber_name AS "barberName", b.customer_name AS "customerName", b.customer_email AS "customerEmail", b.customer_phone AS "customerPhone", b.whatsapp_opt_in AS "whatsappOptIn", s.name AS "shopName", s.public_contact AS "publicContact", s.address AS "address", s.time_zone AS "timeZone", w.status AS "emailStatus", w.reason AS "emailReason", w.claimed_at AS "emailClaimedAt", w.updated_at AS "emailUpdatedAt"
+    sql`SELECT b.id, b.revision, b.status, b.start_at AS "startAt", b.end_at AS "endAt", b.service_name AS "serviceName", b.service_price_usd AS "servicePriceUsd", b.service_duration_minutes AS "serviceDurationMinutes", b.barber_name AS "barberName", b.customer_name AS "customerName", b.customer_email AS "customerEmail", b.customer_phone AS "customerPhone", b.whatsapp_opt_in AS "whatsappOptIn", s.name AS "shopName", s.public_contact AS "publicContact", s.address AS "address", s.time_zone AS "timeZone", w.status AS "emailStatus", w.reason AS "emailReason", w.claimed_at AS "emailClaimedAt", w.updated_at AS "emailUpdatedAt"
       FROM bookings b JOIN shops s ON s.id = b.shop_id LEFT JOIN notification_work w ON w.booking_id=b.id AND w.kind='customer_confirmation' AND w.channel='email' WHERE b.id = ${bookingId}`,
   );
   const row = result.rows[0] as
@@ -233,7 +235,7 @@ export async function createPublicBooking(
           "This booking attempt cannot be recovered.",
         );
 
-      const emailAllowed = await rateEvent(
+      const emailAllowed = await recordRateEvent(
         tx,
         "create_email_shop",
         `${shop.id}:${parsed.data.contact.email}`,

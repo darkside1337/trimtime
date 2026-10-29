@@ -69,6 +69,7 @@ export async function getManagedBooking(
     const emailWork = latestEmailNotification();
     const [row] = await db
       .select({
+        revision: bookings.revision,
         status: bookings.status,
         startAt: bookings.startAt,
         endAt: bookings.endAt,
@@ -109,6 +110,7 @@ export async function getManagedBooking(
     return {
       success: true,
       data: {
+        revision: row.revision,
         status: row.status as "confirmed" | "cancelled",
         startAt: row.startAt.toISOString(),
         endAt: row.endAt.toISOString(),

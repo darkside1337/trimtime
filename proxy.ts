@@ -24,10 +24,13 @@ export async function proxy(request: NextRequest) {
   if (surface === "shop") {
     const label = shopLabelForHost(request.headers);
     if (/^\/manage\/[^/]+\/?$/.test(pathname)) {
+      const read = request.method === "GET" || request.method === "HEAD";
+      const action =
+        request.method === "POST" &&
+        request.headers.has("next-action") &&
+        hasRequestOrigin(request.headers);
       const response =
-        request.method === "GET" || request.method === "HEAD"
-          ? NextResponse.next()
-          : shopNotFound(request);
+        read || action ? NextResponse.next() : shopNotFound(request);
       response.headers.set("Cache-Control", "private, no-store");
       response.headers.set("Referrer-Policy", "no-referrer");
       response.headers.set("X-Robots-Tag", "noindex, nofollow, noarchive");

@@ -73,6 +73,7 @@ const categories = [
   "Customer confirmation",
   "Owner alert",
   "Customer update",
+  "Owner cancellation alert",
 ] as const;
 const channels = ["All", "Email", "WhatsApp"] as const;
 
@@ -81,6 +82,7 @@ type Row = NotificationActivityRow;
 function title(row: Row) {
   if (row.kind === "customer_confirmation") return "Customer confirmation";
   if (row.kind === "owner_alert") return "Owner alert";
+  if (row.kind === "owner_cancellation") return "Owner cancellation alert";
   return row.kind === "customer_move"
     ? "Reschedule update"
     : "Cancellation update";
@@ -278,7 +280,11 @@ export function OwnerActivity({
                             : "Appointment cancelled"}
                         </h3>
                         <p>
-                          Booking #{event.bookingId} · revision {event.revision}
+                          Booking #{event.bookingId} · revision {event.revision}{" "}
+                          ·{" "}
+                          {event.actorType === "customer"
+                            ? "Customer-initiated"
+                            : "Shop-initiated"}
                         </p>
                         <small>
                           Before: {String(before.serviceName)} ·{" "}

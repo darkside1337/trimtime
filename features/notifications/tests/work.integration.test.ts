@@ -12,6 +12,7 @@ import { applyMigrations } from "@/db/migrate.mts";
 import { openTestDatabase } from "@/tests/support/database";
 import { shopInput } from "@/tests/support/shops";
 import { notificationBookingInput } from "@/tests/support/notifications";
+import { hashSecret } from "@/features/bookings/capabilities";
 
 describe("notification work", () => {
   let database: Awaited<ReturnType<typeof openTestDatabase>>;
@@ -28,9 +29,11 @@ describe("notification work", () => {
   let getOwnBookingActivity: typeof import("../queries").getOwnBookingActivity;
   let cancelOwnerBooking: typeof import("@/features/bookings/mutations").cancelOwnerBooking;
   let moveOwnerBooking: typeof import("@/features/bookings/mutations").moveOwnerBooking;
+  let cancelCustomerBooking: typeof import("@/features/bookings/mutations").cancelCustomerBooking;
   let getManagedBooking: typeof import("@/features/bookings/queries").getManagedBooking;
   let getOwnAppointment: typeof import("@/features/bookings/queries").getOwnAppointment;
   const ownerIds: string[] = [];
+  const rateKeyHashes: string[] = [];
   const week = Array.from({ length: 7 }, (_, index) => ({
     working: index === 0 ? [{ start: 540, end: 1020 }] : [],
     breaks: [],
@@ -66,6 +69,7 @@ describe("notification work", () => {
     ({ createOwnerBooking } = await import("@/features/bookings/mutations"));
     ({ cancelOwnerBooking } = await import("@/features/bookings/mutations"));
     ({ moveOwnerBooking } = await import("@/features/bookings/mutations"));
+    ({ cancelCustomerBooking } = await import("@/features/bookings/mutations"));
     ({ getOwnBookingActivity, getOwnNotificationActivity } =
       await import("../queries"));
     ({ getManagedBooking, getOwnAppointment } =
@@ -82,6 +86,11 @@ describe("notification work", () => {
 
   afterAll(async () => {
     vi.useRealTimers();
+    if (rateKeyHashes.length)
+      await database?.pool.query(
+        "DELETE FROM public_rate_keys WHERE key_hash = ANY($1::text[])",
+        [rateKeyHashes],
+      );
     await database?.pool.query(
       'DELETE FROM "shops" WHERE owner_id = ANY($1::text[])',
       [ownerIds],
@@ -241,6 +250,68 @@ describe("notification work", () => {
     });
   });
 
+  it("reports customer and owner attribution to the owning shop only", async () => {
+    vi.setSystemTime(new Date("2026-11-01T08:00:00Z"));
+    const own = await fixture();
+    const other = await fixture();
+    const created = await createPublicBooking(
+      { shopId: own.shopId },
+      notificationBookingInput(
+        own.serviceId,
+        own.barberId,
+        "attribution@example.test",
+      ),
+    );
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+    const moved = await moveOwnerBooking(own.context, {
+      bookingId: created.data.bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+      serviceId: own.serviceId,
+      barberId: own.barberId,
+      startAt: "2026-11-02T11:00:00.000Z",
+      reviewedOffer: { name: "Cut", priceUsd: "25.00", durationMinutes: "30" },
+    });
+    expect(moved.success).toBe(true);
+    const token = created.data.manageUrl.split("/manage/")[1];
+    rateKeyHashes.push(hashSecret(`${own.shopId}:${token}`));
+    const cancelled = await cancelCustomerBooking(
+      { shopId: own.shopId },
+      {
+        token,
+        expectedRevision: 1,
+        operationKey: randomBytes(32).toString("base64url"),
+        confirmed: true,
+      },
+    );
+    expect(cancelled).toMatchObject({
+      success: true,
+      data: { status: "cancelled", operation: { revision: 2 } },
+    });
+
+    const activity = await getOwnBookingActivity(own.context);
+    const foreign = await getOwnBookingActivity(other.context);
+    expect(activity.success).toBe(true);
+    if (!activity.success) return;
+    expect(activity.data.rows).toHaveLength(2);
+    expect(activity.data.rows[0]).toMatchObject({
+      bookingId: created.data.bookingId,
+      kind: "cancel",
+      revision: 2,
+      actorType: "customer",
+      before: { status: "confirmed", startAt: "2026-11-02T11:00:00.000Z" },
+      after: { status: "cancelled", startAt: "2026-11-02T11:00:00.000Z" },
+    });
+    expect(activity.data.rows[1]).toMatchObject({
+      bookingId: created.data.bookingId,
+      kind: "move",
+      revision: 1,
+      actorType: "owner",
+    });
+    expect(foreign).toMatchObject({ success: true, data: { rows: [] } });
+  });
+
   it("records a cancellation event without a channel or owner self-alert", async () => {
     process.env.EMAIL_MODE = "disabled";
     const ids = await fixture();
@@ -281,6 +352,14 @@ describe("notification work", () => {
         (row) => row.kind === "customer_confirmation",
       ),
     ).toMatchObject({ status: "skipped", reason: "recipient_missing" });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM notification_work WHERE booking_id=$1 AND kind IN ('owner_alert','owner_cancellation') AND booking_revision>0",
+          [created.data.bookingId],
+        )
+      ).rows[0].count,
+    ).toBe(0);
   });
 
   it("records update delivery as unavailable without creating an owner self-alert", async () => {

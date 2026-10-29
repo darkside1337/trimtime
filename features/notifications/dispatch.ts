@@ -15,6 +15,7 @@ import {
   renderCustomerConfirmation,
   renderCustomerUpdate,
   renderOwnerAlert,
+  renderOwnerCancellationAlert,
   type BookingMessageSnapshot,
   type OutboundMessage,
 } from "./messages";
@@ -106,8 +107,11 @@ async function authorize(input: {
       Record<string, unknown> | undefined;
     const workResult = await tx.execute(sql`
       SELECT w.id, w.kind, w.status, w.recipient, w.booking_revision AS "bookingRevision",
-        w.content_identity AS "contentIdentity", c.before_snapshot AS "beforeSnapshot"
-      FROM notification_work w LEFT JOIN booking_changes c ON c.id=w.change_id
+        w.content_identity AS "contentIdentity", c.before_snapshot AS "beforeSnapshot",
+        c.kind AS "changeKind", c.actor_type AS "changeActor",
+        c.applied_revision AS "changeRevision"
+      FROM notification_work w
+      LEFT JOIN booking_changes c ON c.id=w.change_id AND c.booking_id=w.booking_id
       WHERE w.id=${input.workId} AND w.booking_id=${input.bookingId} AND w.channel='email'
       FOR UPDATE OF w
     `);
@@ -162,15 +166,30 @@ async function authorize(input: {
       ? booking.customerEmail
       : booking.ownerEmail;
     const workRevision = Number(rawWork.bookingRevision);
+    const changeKind = rawWork.changeKind as string | null;
+    const changeActor = rawWork.changeActor as string | null;
+    const changeRevision =
+      rawWork.changeRevision === null ? null : Number(rawWork.changeRevision);
+    const currentCancellation =
+      changeKind === "cancel" && changeRevision === workRevision;
     const eligibleState =
       kind === "customer_confirmation" || kind === "owner_alert"
         ? booking.status === "confirmed" && booking.revision === 0
         : kind === "customer_move"
-          ? booking.status === "confirmed" && booking.revision === workRevision
+          ? booking.status === "confirmed" &&
+            booking.revision === workRevision &&
+            changeKind === "move" &&
+            changeRevision === workRevision
           : kind === "customer_cancellation"
             ? booking.status === "cancelled" &&
-              booking.revision === workRevision
-            : false;
+              booking.revision === workRevision &&
+              currentCancellation
+            : kind === "owner_cancellation"
+              ? booking.status === "cancelled" &&
+                booking.revision === workRevision &&
+                currentCancellation &&
+                changeActor === "customer"
+              : false;
     if (
       !eligibleState ||
       booking.capabilityRevokedAt ||
@@ -229,9 +248,16 @@ async function authorize(input: {
             recipient,
             manageUrl,
             kind: kind === "customer_move" ? "move" : "cancel",
+            actor: changeActor === "customer" ? "customer" : "owner",
             before,
           });
         }
+      } else if (kind === "owner_cancellation") {
+        message = renderOwnerCancellationAlert({
+          booking,
+          recipient,
+          activityUrl: `${process.env.APP_ORIGIN}/activity`,
+        });
       } else {
         message = renderOwnerAlert({
           booking,

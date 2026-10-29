@@ -33,5 +33,11 @@ async function ManageBookingContent({
   const context = await resolvePublicRequest(requestHeaders);
   const result = await getManagedBooking(context, token);
   if (!result.success) return <UnavailableManageBooking />;
-  return <ManageBooking booking={result.data} past={result.data.past} />;
+  return (
+    <ManageBooking
+      booking={result.data}
+      past={result.data.past}
+      token={token}
+    />
+  );
 }

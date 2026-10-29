@@ -14,6 +14,7 @@ import { shopInput } from "@/tests/support/shops";
 import { notificationBookingInput } from "@/tests/support/notifications";
 import type { MailpitTransportResult } from "../mailpit";
 import { notificationContentIdentity } from "../content-identity";
+import { hashSecret } from "@/features/bookings/capabilities";
 
 const captured: MailpitTransportResult = {
   status: "captured",
@@ -36,11 +37,13 @@ describe("initial notification dispatch", () => {
   let createOwnerBooking: typeof import("@/features/bookings/mutations").createOwnerBooking;
   let moveOwnerBooking: typeof import("@/features/bookings/mutations").moveOwnerBooking;
   let cancelOwnerBooking: typeof import("@/features/bookings/mutations").cancelOwnerBooking;
+  let cancelCustomerBooking: typeof import("@/features/bookings/mutations").cancelCustomerBooking;
   let getManagedBooking: typeof import("@/features/bookings/queries").getManagedBooking;
   let dispatch: typeof import("../dispatch").dispatchInitialBookingNotifications;
   let getActivity: typeof import("../queries").getOwnNotificationActivity;
   const ownerIds: string[] = [];
   const budgetDays = new Set<string>();
+  const rateKeyHashes: string[] = [];
   const week = Array.from({ length: 7 }, (_, index) => ({
     working: index === 0 ? [{ start: 540, end: 1020 }] : [],
     breaks: [],
@@ -76,6 +79,7 @@ describe("initial notification dispatch", () => {
     ({ createOwnerBooking } = await import("@/features/bookings/mutations"));
     ({ moveOwnerBooking } = await import("@/features/bookings/mutations"));
     ({ cancelOwnerBooking } = await import("@/features/bookings/mutations"));
+    ({ cancelCustomerBooking } = await import("@/features/bookings/mutations"));
     ({ getManagedBooking } = await import("@/features/bookings/queries"));
     ({ dispatchInitialBookingNotifications: dispatch } =
       await import("../dispatch"));
@@ -104,6 +108,12 @@ describe("initial notification dispatch", () => {
       );
       budgetDays.clear();
     }
+    if (rateKeyHashes.length) {
+      await database.pool.query(
+        "DELETE FROM public_rate_keys WHERE key_hash = ANY($1::text[])",
+        [rateKeyHashes.splice(0)],
+      );
+    }
   });
 
   afterAll(async () => {
@@ -116,6 +126,12 @@ describe("initial notification dispatch", () => {
       await database?.pool.query(
         "DELETE FROM outbound_budget WHERE day = ANY($1::date[])",
         [[...budgetDays]],
+      );
+    }
+    if (rateKeyHashes.length) {
+      await database?.pool.query(
+        "DELETE FROM public_rate_keys WHERE key_hash = ANY($1::text[])",
+        [rateKeyHashes],
       );
     }
     await Promise.all(
@@ -207,6 +223,29 @@ describe("initial notification dispatch", () => {
     return result.data;
   }
 
+  async function customerCancellation(
+    ids: Awaited<ReturnType<typeof fixture>>,
+    created: { bookingId: string; manageUrl: string },
+    expectedRevision = 0,
+  ) {
+    const token = created.manageUrl.split("/manage/")[1];
+    rateKeyHashes.push(hashSecret(`${ids.shopId}:${token}`));
+    const result = await cancelCustomerBooking(
+      { shopId: ids.shopId },
+      {
+        token,
+        expectedRevision,
+        operationKey: randomBytes(32).toString("base64url"),
+        confirmed: true,
+      },
+    );
+    if (!result.success)
+      throw new Error(
+        `Customer cancellation fixture failed: ${result.error.code}`,
+      );
+    return result.data;
+  }
+
   async function setBudget(day: string, count: number) {
     if (budgetDays.has(day)) {
       await database.pool.query(
@@ -228,6 +267,17 @@ describe("initial notification dispatch", () => {
     const result = await getActivity(ids.context);
     if (!result.success) throw new Error("Activity query failed.");
     return result.data.rows;
+  }
+
+  async function cancellationWork(bookingId: string) {
+    return (
+      await database.pool.query(
+        `SELECT kind,status,reason FROM notification_work
+         WHERE booking_id=$1 AND kind IN ('customer_cancellation','owner_cancellation')
+         ORDER BY kind`,
+        [bookingId],
+      )
+    ).rows;
   }
 
   async function dispatchTracked(
@@ -339,7 +389,7 @@ describe("initial notification dispatch", () => {
     expect(
       (
         await database.pool.query(
-          "SELECT count(*)::int AS count FROM notification_work WHERE booking_id=$1 AND kind='owner_alert' AND booking_revision>0",
+          "SELECT count(*)::int AS count FROM notification_work WHERE booking_id=$1 AND kind IN ('owner_alert','owner_cancellation') AND booking_revision>0",
           [created.bookingId],
         )
       ).rows[0].count,
@@ -406,6 +456,404 @@ describe("initial notification dispatch", () => {
       { kind: "customer_move", status: "suppressed" },
       { kind: "owner_alert", status: "suppressed" },
     ]);
+  });
+
+  it("dispatches customer and owner cancellation messages at the cancelled revision", async () => {
+    vi.setSystemTime(new Date("2026-11-01T08:00:00Z"));
+    const ids = await fixture();
+    const created = await booking(ids, "customer-cancel@example.test");
+    const receipt = await customerCancellation(ids, created);
+    expect(receipt).toMatchObject({
+      bookingId: created.bookingId,
+      status: "cancelled",
+      operation: { revision: 1 },
+    });
+
+    const messages: { to: string; subject: string; text: string }[] = [];
+    await dispatchTracked(created.bookingId, {
+      send: async ({ message, onInvoked }) => {
+        messages.push(message);
+        await onInvoked();
+        return captured;
+      },
+    });
+
+    expect(messages).toHaveLength(2);
+    const token = created.manageUrl.split("/manage/")[1];
+    const customer = messages.find(
+      (message) => message.to === "customer-cancel@example.test",
+    );
+    expect(customer).toMatchObject({
+      subject: "Booking cancelled — Juniper Barber",
+    });
+    expect(customer?.text).toContain("You have cancelled your booking.");
+    expect(customer?.text).toContain(
+      "Your manage link is now read-only because this booking was cancelled.",
+    );
+    expect(customer?.text).not.toContain(
+      "The shop has cancelled your booking.",
+    );
+    expect(customer?.text).toContain("Service: Cut — $25.00 USD (30 minutes)");
+    expect(customer?.text).toContain("Start: Nov 2, 2026, 10:00 AM UTC");
+
+    const owner = messages.find((message) => message.to === ids.owner.email);
+    expect(owner).toMatchObject({
+      subject: "Customer cancelled — Juniper Barber",
+    });
+    expect(owner?.text).toContain(
+      "The customer has cancelled this appointment. The saved details are retained:",
+    );
+    expect(owner?.text).toContain(
+      "Customer: Ada Lovelace <customer-cancel@example.test>",
+    );
+    expect(owner?.text).toContain("Service: Cut — $25.00 USD (30 minutes)");
+    expect(owner?.text).toContain("Barber: Sam");
+    expect(owner?.text).toContain("Start: Nov 2, 2026, 10:00 AM UTC");
+    expect(owner?.text).toContain("Booking ID:");
+    expect(owner?.text).toContain(
+      "Owner activity: http://app.localhost:3100/activity",
+    );
+    expect(owner?.text).not.toContain("/manage/");
+    expect(owner?.text).not.toContain(token);
+
+    expect(
+      (await rows(ids))
+        .map(({ kind, status }) => ({ kind, status }))
+        .sort((a, b) => a.kind.localeCompare(b.kind)),
+    ).toEqual([
+      { kind: "customer_cancellation", status: "captured" },
+      { kind: "customer_confirmation", status: "suppressed" },
+      { kind: "owner_alert", status: "suppressed" },
+      { kind: "owner_cancellation", status: "captured" },
+    ]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status,revision FROM bookings WHERE id=$1",
+          [created.bookingId],
+        )
+      ).rows[0],
+    ).toEqual({ status: "cancelled", revision: 1 });
+  });
+
+  it("rejects cancellation work with mismatched actor, event, revision, or recipient linkage", async () => {
+    vi.setSystemTime(new Date("2026-11-01T08:00:00Z"));
+    const suppressed = [
+      {
+        kind: "customer_cancellation",
+        status: "suppressed",
+        reason: "work_no_longer_eligible",
+      },
+      {
+        kind: "owner_cancellation",
+        status: "suppressed",
+        reason: "work_no_longer_eligible",
+      },
+    ];
+    const expectDenied = async (bookingId: string) => {
+      let calls = 0;
+      await dispatchTracked(bookingId, {
+        send: async ({ onInvoked }) => {
+          calls++;
+          await onInvoked();
+          return captured;
+        },
+      });
+      expect(calls).toBe(0);
+      expect(await cancellationWork(bookingId)).toEqual(suppressed);
+    };
+
+    const wrongActor = await fixture();
+    const wrongActorBooking = await booking(wrongActor, "ada@example.test");
+    const wrongActorReceipt = await customerCancellation(
+      wrongActor,
+      wrongActorBooking,
+    );
+    await database.pool.query(
+      "UPDATE booking_changes SET actor_type='owner',actor_id=$2 WHERE id=$1",
+      [wrongActorReceipt.operation.id, wrongActor.owner.id],
+    );
+    const wrongActorCalls: string[] = [];
+    await dispatchTracked(wrongActorBooking.bookingId, {
+      send: async ({ message, onInvoked }) => {
+        wrongActorCalls.push(message.to);
+        await onInvoked();
+        return captured;
+      },
+    });
+    expect(wrongActorCalls).toEqual(["ada@example.test"]);
+    expect(await cancellationWork(wrongActorBooking.bookingId)).toEqual([
+      {
+        kind: "customer_cancellation",
+        status: "captured",
+        reason: null,
+      },
+      {
+        kind: "owner_cancellation",
+        status: "suppressed",
+        reason: "work_no_longer_eligible",
+      },
+    ]);
+
+    const wrongEvent = await fixture();
+    const wrongEventBooking = await booking(wrongEvent, "ada@example.test");
+    const moved = await moveOwnerBooking(wrongEvent.context, {
+      bookingId: wrongEventBooking.bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+      serviceId: wrongEvent.serviceId,
+      barberId: wrongEvent.barberId,
+      startAt: "2026-11-02T11:00:00.000Z",
+      reviewedOffer: { name: "Cut", priceUsd: "25.00", durationMinutes: "30" },
+    });
+    expect(moved.success).toBe(true);
+    if (!moved.success) return;
+    await customerCancellation(wrongEvent, wrongEventBooking, 1);
+    await database.pool.query(
+      "UPDATE notification_work SET change_id=$2 WHERE booking_id=$1 AND kind IN ('customer_cancellation','owner_cancellation')",
+      [wrongEventBooking.bookingId, moved.data.operation.id],
+    );
+    await expectDenied(wrongEventBooking.bookingId);
+
+    const wrongRevision = await fixture();
+    const wrongRevisionBooking = await booking(
+      wrongRevision,
+      "ada@example.test",
+    );
+    await customerCancellation(wrongRevision, wrongRevisionBooking);
+    await database.pool.query(
+      "UPDATE notification_work SET booking_revision=2 WHERE booking_id=$1 AND kind IN ('customer_cancellation','owner_cancellation')",
+      [wrongRevisionBooking.bookingId],
+    );
+    await expectDenied(wrongRevisionBooking.bookingId);
+
+    const wrongRecipient = await fixture();
+    const wrongRecipientBooking = await booking(
+      wrongRecipient,
+      "ada@example.test",
+    );
+    await customerCancellation(wrongRecipient, wrongRecipientBooking);
+    await database.pool.query(
+      `UPDATE notification_work SET recipient=CASE kind
+         WHEN 'owner_cancellation' THEN 'ada@example.test'
+         ELSE $2 END
+       WHERE booking_id=$1 AND kind IN ('customer_cancellation','owner_cancellation')`,
+      [wrongRecipientBooking.bookingId, wrongRecipient.owner.email],
+    );
+    await expectDenied(wrongRecipientBooking.bookingId);
+  });
+
+  it("allocates one cancellation attempt per work item across concurrent dispatches", async () => {
+    vi.setSystemTime(new Date("2026-11-01T08:00:00Z"));
+    const ids = await fixture();
+    const created = await booking(ids, "customer-cancel-race@example.test");
+    await customerCancellation(ids, created);
+    await setBudget("2026-11-03", 0);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const calls: string[] = [];
+    const send = async ({ message, onInvoked }: SendInput) => {
+      calls.push(message.to);
+      await onInvoked();
+      await gate;
+      return captured;
+    };
+    const first = dispatchTracked(created.bookingId, { send });
+    const second = dispatchTracked(created.bookingId, { send });
+    await vi.waitFor(() => expect(calls).toHaveLength(2));
+    release();
+    await Promise.all([first, second]);
+    expect(calls).toHaveLength(2);
+    expect(new Set(calls)).toEqual(
+      new Set(["customer-cancel-race@example.test", ids.owner.email]),
+    );
+    expect(
+      (
+        await database.pool.query(
+          `SELECT w.kind,w.status,count(a.id)::int AS attempts
+           FROM notification_work w LEFT JOIN notification_attempts a ON a.work_id=w.id
+           WHERE w.booking_id=$1 AND w.kind IN ('customer_cancellation','owner_cancellation')
+           GROUP BY w.kind,w.status ORDER BY w.kind`,
+          [created.bookingId],
+        )
+      ).rows,
+    ).toEqual([
+      { kind: "customer_cancellation", status: "captured", attempts: 1 },
+      { kind: "owner_cancellation", status: "captured", attempts: 1 },
+    ]);
+  });
+
+  it.each(["rejected", "interrupted"] as const)(
+    "keeps the cancellation committed and sends owner work when customer delivery is %s",
+    async (outcome) => {
+      vi.setSystemTime(new Date("2026-11-01T08:00:00Z"));
+      const ids = await fixture();
+      const created = await booking(ids, `customer-${outcome}@example.test`);
+      await customerCancellation(ids, created);
+      const calls: string[] = [];
+      await dispatchTracked(created.bookingId, {
+        send: async ({ message, onInvoked }) => {
+          calls.push(message.to);
+          await onInvoked();
+          if (message.to === `customer-${outcome}@example.test`) {
+            if (outcome === "interrupted")
+              throw new Error("transport interrupted");
+            return {
+              status: "failed",
+              reason: "permanent_rejection",
+              captureId: null,
+              invoked: true,
+            };
+          }
+          return captured;
+        },
+      });
+
+      expect(calls).toHaveLength(2);
+      const activity = await rows(ids);
+      const customer = activity.find(
+        (row) => row.kind === "customer_cancellation",
+      );
+      const owner = activity.find((row) => row.kind === "owner_cancellation");
+      expect(customer).toMatchObject(
+        outcome === "interrupted"
+          ? { status: "unknown", reason: "transport_interrupted" }
+          : { status: "failed", reason: "permanent_rejection" },
+      );
+      expect(owner).toMatchObject({
+        status: "captured",
+        reason: null,
+        attempt: { outcome: "captured" },
+      });
+      expect(
+        (
+          await database.pool.query(
+            "SELECT status,revision FROM bookings WHERE id=$1",
+            [created.bookingId],
+          )
+        ).rows[0],
+      ).toEqual({ status: "cancelled", revision: 1 });
+    },
+  );
+
+  it("records cancellation skips when the shared budget is exhausted and spends only the last allocation", async () => {
+    vi.setSystemTime(new Date("2026-11-01T08:00:00Z"));
+    const exhausted = await fixture();
+    const exhaustedBooking = await booking(
+      exhausted,
+      "budget-exhausted@example.test",
+    );
+    await customerCancellation(exhausted, exhaustedBooking);
+    await setBudget("2026-11-08", 100);
+    let exhaustedCalls = 0;
+    await dispatchTracked(exhaustedBooking.bookingId, {
+      now: () => new Date("2026-11-08T12:00:00Z"),
+      send: async () => {
+        exhaustedCalls++;
+        return captured;
+      },
+    });
+    expect(exhaustedCalls).toBe(0);
+    expect(
+      (await rows(exhausted))
+        .filter((row) => row.kind.endsWith("cancellation"))
+        .map(({ kind, status, reason, attempt }) => ({
+          kind,
+          status,
+          reason,
+          attempt,
+        }))
+        .sort((a, b) => a.kind.localeCompare(b.kind)),
+    ).toEqual([
+      {
+        kind: "customer_cancellation",
+        status: "skipped",
+        reason: "daily_budget_exhausted",
+        attempt: null,
+      },
+      {
+        kind: "owner_cancellation",
+        status: "skipped",
+        reason: "daily_budget_exhausted",
+        attempt: null,
+      },
+    ]);
+
+    const last = await fixture();
+    const lastCreated = await createPublicBooking(
+      { shopId: last.shopId },
+      notificationBookingInput(
+        last.serviceId,
+        last.barberId,
+        "budget-last@example.test",
+        {
+          startAt: "2026-11-09T10:00:00.000Z",
+        },
+      ),
+    );
+    if (!lastCreated.success) throw new Error("Budget booking fixture failed.");
+    const lastBooking = lastCreated.data;
+    await customerCancellation(last, lastBooking);
+    await setBudget("2026-11-10", 99);
+    const calls: string[] = [];
+    const now = () => new Date("2026-11-10T12:00:00Z");
+    await dispatchTracked(lastBooking.bookingId, {
+      now,
+      send: async ({ message, onInvoked }) => {
+        calls.push(message.to);
+        await onInvoked();
+        return captured;
+      },
+    });
+    expect(calls).toHaveLength(1);
+    const capturedKind =
+      calls[0] === "budget-last@example.test"
+        ? "customer_cancellation"
+        : "owner_cancellation";
+    const lastStatus = (kind: string) =>
+      kind === capturedKind
+        ? { kind, status: "captured", reason: null }
+        : {
+            kind,
+            status: "skipped",
+            reason: "daily_budget_exhausted",
+          };
+    expect(
+      (await rows(last))
+        .filter((row) => row.kind.endsWith("cancellation"))
+        .map(({ kind, status, reason }) => ({ kind, status, reason }))
+        .sort((a, b) => a.kind.localeCompare(b.kind)),
+    ).toEqual([
+      lastStatus("customer_cancellation"),
+      lastStatus("owner_cancellation"),
+    ]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT allocation_count FROM outbound_budget WHERE day=$1",
+          ["2026-11-10"],
+        )
+      ).rows[0].allocation_count,
+    ).toBe(100);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM notification_attempts a JOIN notification_work w ON w.id=a.work_id WHERE w.booking_id=$1 AND w.kind IN ('customer_cancellation','owner_cancellation')",
+          [lastBooking.bookingId],
+        )
+      ).rows[0].count,
+    ).toBe(1);
+
+    await dispatchTracked(lastBooking.bookingId, {
+      now: () => new Date("2026-11-11T00:00:00Z"),
+      send: async () => {
+        calls.push("replay");
+        return captured;
+      },
+    });
+    expect(calls).toHaveLength(1);
   });
 
   it("keeps an in-flight prior revision attempt on its work after a later move", async () => {

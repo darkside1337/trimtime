@@ -29,6 +29,7 @@ export type BookingFailureCode =
 
 export type ManagedBookingView = {
   notifications: { email: CustomerEmailSummary };
+  revision: number;
   status: "confirmed" | "cancelled";
   startAt: string;
   endAt: string;
@@ -48,6 +49,23 @@ export type ManagedBookingView = {
   };
   past: boolean;
   changeCutoffPassed: boolean;
+};
+
+export type CancelCustomerBookingInput = {
+  token: string;
+  expectedRevision: number;
+  operationKey: string;
+  confirmed: true;
+};
+
+export type CustomerCancellationReceipt = {
+  bookingId: string;
+  operation: {
+    id: string;
+    revision: number;
+    committedAt: string;
+  };
+  status: "cancelled";
 };
 
 export type PublicBookingReceipt = {
