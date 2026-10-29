@@ -19,6 +19,7 @@ describe("catalog operations", () => {
   let archiveService: typeof import("../mutations").archiveService;
   let getOwnOfferingChoices: typeof import("../queries").getOwnOfferingChoices;
   let archiveBarber: typeof import("@/features/barbers/mutations").archiveBarber;
+  let OwnerUnauthorizedError: typeof import("@/features/shops/queries").OwnerUnauthorizedError;
   const userIds: string[] = [];
 
   beforeAll(async () => {
@@ -39,6 +40,7 @@ describe("catalog operations", () => {
     ({ setServiceOffered, archiveService } = await import("../mutations"));
     ({ getOwnOfferingChoices } = await import("../queries"));
     ({ archiveBarber } = await import("@/features/barbers/mutations"));
+    ({ OwnerUnauthorizedError } = await import("@/features/shops/queries"));
     ({ pool: applicationPool } = await import("@/db"));
     applicationPool.options.max = 5;
     closeApplicationPool = () => applicationPool.end();
@@ -395,6 +397,68 @@ describe("catalog operations", () => {
       ),
     ).rejects.toMatchObject({ code: "23503" });
     expect(shopA).not.toBe(shopB);
+  });
+
+  it("returns only the signed-in owner's barbers and distinguishes no shop from no session", async () => {
+    const helpers = (await testAuth.$context).test;
+    const users = await Promise.all(
+      ["barber-scope-a", "barber-scope-b", "barber-no-shop"].map((name) =>
+        helpers.saveUser(
+          helpers.createUser({
+            email: `${name}-${randomUUID()}@example.test`,
+            name,
+          }),
+        ),
+      ),
+    );
+    userIds.push(...users.map(({ id }) => id));
+    const [contextA, contextB, noShopContext] = await Promise.all(
+      users.map(async (user) =>
+        readOwnerContext((await helpers.login({ userId: user.id })).headers),
+      ),
+    );
+    await createShop(
+      contextA,
+      shopInput({ subdomain: `barber-scope-a-${randomUUID().slice(0, 8)}` }),
+    );
+    await createShop(
+      contextB,
+      shopInput({ subdomain: `barber-scope-b-${randomUUID().slice(0, 8)}` }),
+    );
+    const [barberA, barberB] = await Promise.all([
+      saveBarber(contextA, { name: "Owner A barber", serviceIds: [] }),
+      saveBarber(contextB, { name: "Owner B barber", serviceIds: [] }),
+    ]);
+    expect(barberA.success && barberB.success).toBe(true);
+    if (!barberA.success || !barberB.success) return;
+
+    const [ownA, ownB] = await Promise.all([
+      getOwnBarbers(contextA),
+      getOwnBarbers(contextB),
+    ]);
+    expect(ownA).toEqual([
+      {
+        id: barberA.data.id,
+        name: "Owner A barber",
+        archived: false,
+        serviceIds: [],
+      },
+    ]);
+    expect(ownB).toEqual([
+      {
+        id: barberB.data.id,
+        name: "Owner B barber",
+        archived: false,
+        serviceIds: [],
+      },
+    ]);
+    expect(ownA?.map(({ id }) => id)).not.toContain(barberB.data.id);
+    expect(ownB?.map(({ id }) => id)).not.toContain(barberA.data.id);
+
+    await expect(getOwnBarbers(noShopContext)).resolves.toBeNull();
+    await expect(getOwnBarbers(null)).rejects.toBeInstanceOf(
+      OwnerUnauthorizedError,
+    );
   });
 
   it("distinguishes signed-out and missing-shop writes without exposing rows", async () => {
