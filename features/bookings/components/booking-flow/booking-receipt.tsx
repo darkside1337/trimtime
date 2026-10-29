@@ -84,7 +84,10 @@ export function BookingReceipt({
         aria-labelledby="private-link-heading"
       >
         <h3 id="private-link-heading">Your private booking link</h3>
-        <a href={receipt.manageUrl} className={styles.primaryLink}>
+        <a
+          href={receipt.manageUrl}
+          className={`${styles.primaryLink} justify-self-end`}
+        >
           Open booking details <span aria-hidden="true">↗</span>
         </a>
         <p>Anyone with this link can view this booking. Keep it private.</p>

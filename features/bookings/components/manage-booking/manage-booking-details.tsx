@@ -57,8 +57,8 @@ export function ManageBookingDetails({
         <div className="mt-7 flex flex-wrap items-center justify-between gap-4 max-[767px]:grid max-[767px]:grid-cols-2">
           {!viewOnly && !booking.changeCutoffPassed ? (
             <Button
-              className="max-[767px]:whitespace-normal"
-              variant="link"
+              className="min-h-11 bg-[#a83126] px-4 text-white hover:bg-[#87271e] max-[767px]:whitespace-normal"
+              variant="destructive"
               onClick={onCancelAppointment}
             >
               Cancel appointment
