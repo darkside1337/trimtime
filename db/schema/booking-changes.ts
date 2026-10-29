@@ -64,7 +64,7 @@ export const bookingChanges = pgTable(
     ),
     check(
       "booking_changes_actor_check",
-      sql`(${table.actorType} = 'owner' AND ${table.actorId} IS NOT NULL) OR (${table.actorType} = 'customer' AND ${table.actorId} IS NULL AND ${table.kind} = 'cancel')`,
+      sql`(${table.actorType} = 'owner' AND ${table.actorId} IS NOT NULL) OR (${table.actorType} = 'customer' AND ${table.actorId} IS NULL AND ${table.kind} IN ('cancel', 'move'))`,
     ),
     check("booking_changes_revision_check", sql`${table.appliedRevision} > 0`),
   ],

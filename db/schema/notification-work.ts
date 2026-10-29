@@ -52,11 +52,11 @@ export const notificationWork = pgTable(
     }).onDelete("cascade"),
     check(
       "notification_work_change_kind_check",
-      sql`(${table.kind} IN ('customer_move', 'customer_cancellation') AND ${table.changeId} IS NOT NULL AND ${table.bookingRevision} > 0) OR (${table.kind} = 'owner_cancellation' AND ${table.changeId} IS NOT NULL AND ${table.bookingRevision} > 0 AND ${table.channel} = 'email') OR (${table.kind} IN ('customer_confirmation', 'owner_alert') AND ${table.changeId} IS NULL AND ${table.bookingRevision} = 0)`,
+      sql`(${table.kind} IN ('customer_move', 'customer_cancellation') AND ${table.changeId} IS NOT NULL AND ${table.bookingRevision} > 0) OR (${table.kind} IN ('owner_cancellation', 'owner_move') AND ${table.changeId} IS NOT NULL AND ${table.bookingRevision} > 0 AND ${table.channel} = 'email') OR (${table.kind} IN ('customer_confirmation', 'owner_alert') AND ${table.changeId} IS NULL AND ${table.bookingRevision} = 0)`,
     ),
     check(
       "notification_work_kind_check",
-      sql`${table.kind} IN ('customer_confirmation', 'owner_alert', 'customer_move', 'customer_cancellation', 'owner_cancellation')`,
+      sql`${table.kind} IN ('customer_confirmation', 'owner_alert', 'customer_move', 'customer_cancellation', 'owner_cancellation', 'owner_move')`,
     ),
     check(
       "notification_work_channel_check",
