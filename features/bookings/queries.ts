@@ -64,6 +64,7 @@ function latestEmailNotification() {
             inArray(notificationWork.kind, [
               "customer_move",
               "customer_cancellation",
+              "customer_restoration",
             ]),
           ),
         ),

@@ -4873,4 +4873,1503 @@ describe("public booking operations", () => {
       expect(persisted.rows[0].monday.working[0].start).toBe(540);
     else expect(persisted.rows.length).toBe(0);
   });
+
+  it("owner restoration reserves the retained future interval without changing details", async () => {
+    const ids = await fixture();
+    const created = await createOwnerBooking(ids.context, input(ids));
+    expect(created.success).toBe(true);
+    if (!created.success) throw new Error("Creation fixture failed.");
+
+    const { cancelOwnerBooking, restoreOwnerBooking } =
+      await import("../mutations");
+    const bookingId = created.data.bookingId;
+
+    const cancelled = await cancelOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(cancelled.success).toBe(true);
+    if (!cancelled.success) throw new Error("Cancellation fixture failed.");
+
+    const before = (
+      await database.pool.query("SELECT * FROM bookings WHERE id=$1", [
+        bookingId,
+      ])
+    ).rows[0];
+
+    const restored = await restoreOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 1,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(restored.success).toBe(true);
+    if (!restored.success) throw new Error("Restoration failed.");
+
+    const after = (
+      await database.pool.query("SELECT * FROM bookings WHERE id=$1", [
+        bookingId,
+      ])
+    ).rows[0];
+
+    expect(after.status).toBe("confirmed");
+    expect(after.revision).toBe(2);
+    expect(after.occupancy_id).toEqual(expect.any(String));
+
+    const retained = { ...before };
+    delete retained.status;
+    delete retained.revision;
+    delete retained.occupancy_id;
+    expect(after).toMatchObject(retained);
+
+    const occupancy = (
+      await database.pool.query(
+        `SELECT shop_id, barber_id, start_at, end_at
+         FROM occupied_intervals WHERE id=$1`,
+        [after.occupancy_id],
+      )
+    ).rows;
+    expect(occupancy).toHaveLength(1);
+    expect(occupancy[0]).toEqual({
+      shop_id: ids.shopId,
+      barber_id: ids.barberId,
+      start_at: new Date("2026-11-02T10:00:00.000Z"),
+      end_at: new Date("2026-11-02T10:30:00.000Z"),
+    });
+
+    expect(restored.data.operation).toMatchObject({
+      kind: "restore",
+      revision: 2,
+    });
+
+    const work = (
+      await database.pool.query(
+        "SELECT kind, channel, booking_revision FROM notification_work WHERE booking_id=$1 AND kind='customer_restoration'",
+        [bookingId],
+      )
+    ).rows;
+    expect(work).toEqual([
+      {
+        kind: "customer_restoration",
+        channel: "email",
+        booking_revision: 2,
+      },
+    ]);
+  });
+
+  it("owner restoration restores latest-saved A->B details and permits hidden service", async () => {
+    const ids = await fixture();
+    const serviceB = await saveService(ids.context, {
+      name: "Beard Trim",
+      priceUsd: "15",
+      durationMinutes: "30",
+      offered: true,
+      barberIds: [ids.barberId],
+    });
+    if (!serviceB.success) throw new Error("Service fixture failed.");
+
+    const created = await createOwnerBooking(ids.context, input(ids));
+    if (!created.success) throw new Error("Creation fixture failed.");
+    const bookingId = created.data.bookingId;
+
+    const { cancelOwnerBooking, moveOwnerBooking, restoreOwnerBooking } =
+      await import("../mutations");
+
+    const moved = await moveOwnerBooking(
+      ids.context,
+      moveInput(ids, bookingId, {
+        serviceId: serviceB.data.id,
+        reviewedOffer: {
+          name: "Beard Trim",
+          priceUsd: "15.00",
+          durationMinutes: "30",
+        },
+        startAt: "2026-11-02T11:00:00.000Z",
+      }),
+    );
+    expect(moved.success).toBe(true);
+    if (!moved.success) throw new Error("Move fixture failed.");
+
+    const cancelled = await cancelOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 1,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(cancelled.success).toBe(true);
+    if (!cancelled.success) throw new Error("Cancellation fixture failed.");
+
+    const { setServiceOffered } = await import("@/features/catalog/mutations");
+    await setServiceOffered(ids.context, {
+      id: serviceB.data.id,
+      offered: false,
+    });
+    await database.pool.query(
+      "UPDATE services SET name='Renamed Beard', price_usd=20 WHERE id=$1",
+      [serviceB.data.id],
+    );
+
+    const restored = await restoreOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 2,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(restored.success).toBe(true);
+    if (!restored.success) throw new Error("Restoration failed.");
+
+    const after = (
+      await database.pool.query("SELECT * FROM bookings WHERE id=$1", [
+        bookingId,
+      ])
+    ).rows[0];
+
+    expect(after.status).toBe("confirmed");
+    expect(after.revision).toBe(3);
+    expect(after.service_id).toBe(serviceB.data.id);
+    expect(after.service_name).toBe("Beard Trim");
+    expect(after.service_price_usd).toBe("15.00");
+    expect(after.start_at).toEqual(new Date("2026-11-02T11:00:00.000Z"));
+    expect(after.end_at).toEqual(new Date("2026-11-02T11:30:00.000Z"));
+  });
+
+  it("rejects signed-out callers, owners without shops, and foreign owners without side effects", async () => {
+    const ids = await fixture();
+    const foreign = await fixture();
+    const created = await createOwnerBooking(ids.context, input(ids));
+    if (!created.success) throw new Error("Creation fixture failed.");
+    const bookingId = created.data.bookingId;
+
+    const { cancelOwnerBooking, restoreOwnerBooking } =
+      await import("../mutations");
+
+    const cancelled = await cancelOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(cancelled.success).toBe(true);
+
+    const payload = {
+      bookingId,
+      expectedRevision: 1,
+      operationKey: randomBytes(32).toString("base64url"),
+    };
+
+    const signedOut = await restoreOwnerBooking(null, payload);
+    expect(signedOut).toMatchObject({
+      success: false,
+      error: { code: "UNAUTHENTICATED" },
+    });
+
+    const noShop = await restoreOwnerBooking({ userId: randomUUID() }, payload);
+    expect(noShop).toMatchObject({
+      success: false,
+      error: { code: "SHOP_REQUIRED" },
+    });
+
+    const foreignOwner = await restoreOwnerBooking(foreign.context, payload);
+    expect(foreignOwner).toMatchObject({
+      success: false,
+      error: { code: "NOT_FOUND" },
+    });
+    expect(JSON.stringify(foreignOwner)).not.toContain(ids.shopId);
+
+    const after = (
+      await database.pool.query(
+        "SELECT status, revision, occupancy_id FROM bookings WHERE id=$1",
+        [bookingId],
+      )
+    ).rows[0];
+    expect(after).toEqual({
+      status: "cancelled",
+      revision: 1,
+      occupancy_id: null,
+    });
+
+    const changes = await database.pool.query(
+      "SELECT count(*)::int AS count FROM booking_changes WHERE booking_id=$1 AND kind='restore'",
+      [bookingId],
+    );
+    expect(changes.rows[0].count).toBe(0);
+  });
+
+  it("enforces state, revision, and start-time boundaries, sampling time after lock wait", async () => {
+    const ids = await fixture();
+    const created = await createOwnerBooking(ids.context, input(ids));
+    if (!created.success) throw new Error("Creation fixture failed.");
+    const bookingId = created.data.bookingId;
+
+    const { cancelOwnerBooking, restoreOwnerBooking } =
+      await import("../mutations");
+
+    const confirmedRestore = await restoreOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(confirmedRestore).toMatchObject({
+      success: false,
+      error: { code: "INVALID_STATE" },
+    });
+
+    const cancelled = await cancelOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(cancelled.success).toBe(true);
+
+    const staleRestore = await restoreOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(staleRestore).toMatchObject({
+      success: false,
+      error: { code: "STALE_BOOKING" },
+    });
+
+    vi.setSystemTime(new Date("2026-11-02T10:00:00.000Z"));
+    const equalityRestore = await restoreOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 1,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(equalityRestore).toMatchObject({
+      success: false,
+      error: { code: "INVALID_STATE" },
+    });
+
+    vi.setSystemTime(new Date("2026-11-02T10:15:00.000Z"));
+    const ongoingRestore = await restoreOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 1,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(ongoingRestore).toMatchObject({
+      success: false,
+      error: { code: "INVALID_STATE" },
+    });
+
+    vi.setSystemTime(new Date("2026-11-02T11:00:00.000Z"));
+    const strictlyPastRestore = await restoreOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 1,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(strictlyPastRestore).toMatchObject({
+      success: false,
+      error: { code: "INVALID_STATE" },
+    });
+
+    vi.setSystemTime(new Date("2026-11-02T09:00:00.000Z"));
+    const locker = await database.pool.connect();
+    let lockerOpen = true;
+    try {
+      await locker.query("BEGIN");
+      await locker.query("SELECT id FROM shops WHERE id=$1 FOR UPDATE", [
+        ids.shopId,
+      ]);
+
+      const restorePromise = restoreOwnerBooking(ids.context, {
+        bookingId,
+        expectedRevision: 1,
+        operationKey: randomBytes(32).toString("base64url"),
+      });
+
+      await waitForLockWaiters(database.pool, locker, 1, ["owner_move"], {
+        description: "restore waiting on shop lock",
+      });
+
+      vi.setSystemTime(new Date("2026-11-02T10:05:00.000Z"));
+      await locker.query("COMMIT");
+      lockerOpen = false;
+
+      const lockedResult = await restorePromise;
+      expect(lockedResult).toMatchObject({
+        success: false,
+        error: { code: "INVALID_STATE" },
+      });
+    } finally {
+      if (lockerOpen) await locker.query("ROLLBACK").catch(() => undefined);
+      locker.release();
+    }
+  });
+
+  it("owner restoration rejects archived resources, removed assignments, and invalid schedule fits", async () => {
+    const ids = await fixture();
+    const created = await createOwnerBooking(ids.context, input(ids));
+    if (!created.success) throw new Error("Creation fixture failed.");
+    const bookingId = created.data.bookingId;
+
+    const { cancelOwnerBooking, restoreOwnerBooking } =
+      await import("../mutations");
+
+    const cancelled = await cancelOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(cancelled.success).toBe(true);
+
+    // 1. Barber archival
+    await archiveBarber(ids.context, ids.barberId);
+    const archivedBarberRestore = await restoreOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 1,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(archivedBarberRestore).toMatchObject({
+      success: false,
+      error: { code: "UNAVAILABLE_INTERVAL" },
+    });
+
+    // Unarchive barber for next check
+    await database.pool.query("UPDATE barbers SET archived=false WHERE id=$1", [
+      ids.barberId,
+    ]);
+
+    // 2. Service archival
+    await archiveService(ids.context, ids.serviceId);
+    const archivedServiceRestore = await restoreOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 1,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(archivedServiceRestore).toMatchObject({
+      success: false,
+      error: { code: "UNAVAILABLE_INTERVAL" },
+    });
+
+    // Unarchive service for next check
+    await database.pool.query(
+      "UPDATE services SET archived=false WHERE id=$1",
+      [ids.serviceId],
+    );
+
+    // 3. Removed assignment
+    await database.pool.query(
+      "DELETE FROM barber_services WHERE shop_id=$1 AND barber_id=$2 AND service_id=$3",
+      [ids.shopId, ids.barberId, ids.serviceId],
+    );
+    const removedAssignmentRestore = await restoreOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 1,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(removedAssignmentRestore).toMatchObject({
+      success: false,
+      error: { code: "UNAVAILABLE_INTERVAL" },
+    });
+
+    // Restore assignment
+    await database.pool.query(
+      "INSERT INTO barber_services (shop_id, barber_id, service_id) VALUES ($1,$2,$3)",
+      [ids.shopId, ids.barberId, ids.serviceId],
+    );
+
+    // 4. Time block covering the interval
+    await createTimeBlock(ids.context, {
+      barberId: ids.barberId,
+      date: "2026-11-02",
+      timeZone: "UTC",
+      start: "2026-11-02T10:00:00Z",
+      end: "2026-11-02T10:30:00Z",
+      note: "Unavailable",
+    });
+    const blockRestore = await restoreOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 1,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(blockRestore).toMatchObject({
+      success: false,
+      error: { code: "UNAVAILABLE_INTERVAL" },
+    });
+
+    // 5. Closed date schedule fit
+    await database.pool.query(
+      "DELETE FROM occupied_intervals WHERE shop_id=$1",
+      [ids.shopId],
+    );
+    const closedDate = await saveShopDateSchedule(ids.context, {
+      date: "2026-11-02",
+      timeZone: "UTC",
+      override: null,
+      closed: true,
+      revision: 0,
+    });
+    expect(closedDate.success).toBe(true);
+
+    const closedDateRestore = await restoreOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 1,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(closedDateRestore).toMatchObject({
+      success: false,
+      error: { code: "UNAVAILABLE_INTERVAL" },
+    });
+
+    // Check DB state remains cancelled, revision 1, no occupancy
+    const state = (
+      await database.pool.query(
+        "SELECT status, revision, occupancy_id FROM bookings WHERE id=$1",
+        [bookingId],
+      )
+    ).rows[0];
+    expect(state).toEqual({
+      status: "cancelled",
+      revision: 1,
+      occupancy_id: null,
+    });
+  });
+
+  it("owner restoration denies a time-block conflict with booked-or-blocked wording and unchanged state", async () => {
+    const ids = await fixture();
+    const created = await createOwnerBooking(ids.context, input(ids));
+    if (!created.success) throw new Error("Creation fixture failed.");
+    const bookingId = created.data.bookingId;
+
+    const { cancelOwnerBooking, restoreOwnerBooking } =
+      await import("../mutations");
+
+    const cancelled = await cancelOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(cancelled.success).toBe(true);
+
+    const block = await createTimeBlock(ids.context, {
+      barberId: ids.barberId,
+      date: "2026-11-02",
+      timeZone: "UTC",
+      start: "2026-11-02T10:00:00Z",
+      end: "2026-11-02T10:30:00Z",
+      note: "Unavailable",
+    });
+    expect(block.success).toBe(true);
+
+    const blockedRestore = await restoreOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 1,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(blockedRestore).toMatchObject({
+      success: false,
+      error: {
+        code: "UNAVAILABLE_INTERVAL",
+        message:
+          "This time is already booked or blocked. Free this time before restoring the appointment.",
+      },
+    });
+
+    const state = (
+      await database.pool.query(
+        `SELECT b.status,b.revision,b.occupancy_id,
+          (SELECT count(*)::int FROM booking_changes c WHERE c.booking_id=b.id) AS changes
+         FROM bookings b WHERE b.id=$1`,
+        [bookingId],
+      )
+    ).rows[0];
+    expect(state).toEqual({
+      status: "cancelled",
+      revision: 1,
+      occupancy_id: null,
+      changes: 1,
+    });
+    const blockingOccupancy = (
+      await database.pool.query(
+        "SELECT count(*)::int AS count FROM occupied_intervals WHERE shop_id=$1 AND barber_id=$2",
+        [ids.shopId, ids.barberId],
+      )
+    ).rows[0];
+    expect(blockingOccupancy.count).toBe(1);
+
+    // Removing the block proves it was the only obstacle to restoration.
+    await database.pool.query(
+      "DELETE FROM occupied_intervals WHERE shop_id=$1 AND barber_id=$2",
+      [ids.shopId, ids.barberId],
+    );
+    const unblockedRestore = await restoreOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 1,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(unblockedRestore.success).toBe(true);
+  });
+
+  it("enforces same-barber conflicts while allowing adjacency and different-barber capacity", async () => {
+    const ids = await fixture();
+    const created = await createOwnerBooking(ids.context, input(ids));
+    if (!created.success) throw new Error("Creation fixture failed.");
+    const bookingId = created.data.bookingId;
+
+    const { cancelOwnerBooking, restoreOwnerBooking } =
+      await import("../mutations");
+
+    const cancelled = await cancelOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(cancelled.success).toBe(true);
+
+    // 1. Same-barber conflict: create a competing booking in the same interval
+    const competitor = await createOwnerBooking(ids.context, {
+      serviceId: ids.serviceId,
+      barberId: ids.barberId,
+      startAt: "2026-11-02T10:00:00.000Z",
+      reviewedOffer: {
+        name: "Cut",
+        priceUsd: "25.00",
+        durationMinutes: "30",
+      },
+      contact: { name: "Competitor Guest", whatsappOptIn: false },
+      recoveryKey: randomBytes(32).toString("base64url"),
+    });
+    expect(competitor.success).toBe(true);
+    if (!competitor.success) throw new Error("Competitor fixture failed.");
+
+    const conflictRestore = await restoreOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 1,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(conflictRestore).toMatchObject({
+      success: false,
+      error: {
+        code: "UNAVAILABLE_INTERVAL",
+        message:
+          "This time is already booked or blocked. Free this time before restoring the appointment.",
+      },
+    });
+
+    // 2. Adjacency: add an adjacent booking at 10:30, cancel competitor, and restore bookingId
+    const adjacent = await createOwnerBooking(ids.context, {
+      serviceId: ids.serviceId,
+      barberId: ids.barberId,
+      startAt: "2026-11-02T10:30:00.000Z",
+      reviewedOffer: {
+        name: "Cut",
+        priceUsd: "25.00",
+        durationMinutes: "30",
+      },
+      contact: { name: "Adjacent Guest", whatsappOptIn: false },
+      recoveryKey: randomBytes(32).toString("base64url"),
+    });
+    expect(adjacent.success).toBe(true);
+
+    const cancelCompetitor = await cancelOwnerBooking(ids.context, {
+      bookingId: competitor.data.bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(cancelCompetitor.success).toBe(true);
+
+    const adjacentRestore = await restoreOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 1,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(adjacentRestore.success).toBe(true);
+
+    // 3. Different-barber capacity: cancel bookingId again, add second barber, create at same time
+    const cancelledAgain = await cancelOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 2,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(cancelledAgain.success).toBe(true);
+
+    const secondBarber = await saveBarber(ids.context, {
+      name: "Jordan",
+      serviceIds: [ids.serviceId],
+    });
+    if (!secondBarber.success) throw new Error("Second barber failed.");
+
+    const secondBarberBooking = await createOwnerBooking(ids.context, {
+      serviceId: ids.serviceId,
+      barberId: secondBarber.data.id,
+      startAt: "2026-11-02T10:00:00.000Z",
+      reviewedOffer: {
+        name: "Cut",
+        priceUsd: "25.00",
+        durationMinutes: "30",
+      },
+      contact: { name: "Jordan Guest", whatsappOptIn: false },
+      recoveryKey: randomBytes(32).toString("base64url"),
+    });
+    expect(secondBarberBooking.success).toBe(true);
+    if (!secondBarberBooking.success)
+      throw new Error("Second barber booking failed.");
+
+    const differentBarberRestore = await restoreOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 3,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(differentBarberRestore.success).toBe(true);
+
+    // Verify both are confirmed in database with distinct occupancy rows
+    const occupancies = (
+      await database.pool.query(
+        "SELECT b.id, b.barber_id, b.status, o.barber_id AS occ_barber FROM bookings b JOIN occupied_intervals o ON o.id=b.occupancy_id WHERE b.id IN ($1, $2)",
+        [bookingId, secondBarberBooking.data.bookingId],
+      )
+    ).rows;
+    expect(occupancies).toHaveLength(2);
+    expect(occupancies.every((row) => row.status === "confirmed")).toBe(true);
+  });
+
+  it("recovers identical restoration requests, rejects key mismatch, and rejects distinct-key stale losers", async () => {
+    const ids = await fixture();
+    const created = await createOwnerBooking(ids.context, input(ids));
+    if (!created.success) throw new Error("Creation fixture failed.");
+    const bookingId = created.data.bookingId;
+
+    const { cancelOwnerBooking, restoreOwnerBooking } =
+      await import("../mutations");
+
+    const cancelled = await cancelOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(cancelled.success).toBe(true);
+
+    // 1. First restore
+    const key1 = randomBytes(32).toString("base64url");
+    const first = await restoreOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 1,
+      operationKey: key1,
+    });
+    expect(first.success).toBe(true);
+    if (!first.success) throw new Error("First restore failed.");
+
+    // Identical replay
+    const replay = await restoreOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 1,
+      operationKey: key1,
+    });
+    expect(replay.success).toBe(true);
+    if (!replay.success) throw new Error("Replay failed.");
+    expect(replay.data.operation.id).toBe(first.data.operation.id);
+    expect(replay.data.operation.revision).toBe(2);
+
+    const restoreChanges = (
+      await database.pool.query(
+        "SELECT count(*)::int AS count FROM booking_changes WHERE booking_id=$1 AND kind='restore'",
+        [bookingId],
+      )
+    ).rows[0].count;
+    expect(restoreChanges).toBe(1);
+
+    const restoreWork = (
+      await database.pool.query(
+        "SELECT count(*)::int AS count FROM notification_work WHERE booking_id=$1 AND kind='customer_restoration'",
+        [bookingId],
+      )
+    ).rows[0].count;
+    expect(restoreWork).toBe(1);
+
+    // 2. Recovery mismatch: reuse key1 with different expectedRevision
+    const mismatched = await restoreOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 99,
+      operationKey: key1,
+    });
+    expect(mismatched).toMatchObject({
+      success: false,
+      error: { code: "RECOVERY_MISMATCH" },
+    });
+
+    // 3. Concurrent identical requests
+    const created2 = await createOwnerBooking(
+      ids.context,
+      input(ids, { startAt: "2026-11-02T11:00:00.000Z" }),
+    );
+    if (!created2.success) throw new Error("Creation 2 failed.");
+    const b2 = created2.data.bookingId;
+    await cancelOwnerBooking(ids.context, {
+      bookingId: b2,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+
+    const key2 = randomBytes(32).toString("base64url");
+    const [c1, c2] = await Promise.all([
+      restoreOwnerBooking(ids.context, {
+        bookingId: b2,
+        expectedRevision: 1,
+        operationKey: key2,
+      }),
+      restoreOwnerBooking(ids.context, {
+        bookingId: b2,
+        expectedRevision: 1,
+        operationKey: key2,
+      }),
+    ]);
+    expect(c1.success && c2.success).toBe(true);
+    if (c1.success && c2.success) {
+      expect(c1.data.operation.id).toBe(c2.data.operation.id);
+    }
+    const b2Changes = (
+      await database.pool.query(
+        "SELECT count(*)::int AS count FROM booking_changes WHERE booking_id=$1 AND kind='restore'",
+        [b2],
+      )
+    ).rows[0].count;
+    expect(b2Changes).toBe(1);
+
+    const b2Work = (
+      await database.pool.query(
+        "SELECT count(*)::int AS count FROM notification_work WHERE booking_id=$1 AND kind='customer_restoration'",
+        [b2],
+      )
+    ).rows[0].count;
+    expect(b2Work).toBe(1);
+
+    // 4. Distinct-key stale loser
+    const created3 = await createOwnerBooking(
+      ids.context,
+      input(ids, { startAt: "2026-11-02T12:00:00.000Z" }),
+    );
+    if (!created3.success) throw new Error("Creation 3 failed.");
+    const b3 = created3.data.bookingId;
+    await cancelOwnerBooking(ids.context, {
+      bookingId: b3,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+
+    const [d1, d2] = await Promise.all([
+      restoreOwnerBooking(ids.context, {
+        bookingId: b3,
+        expectedRevision: 1,
+        operationKey: randomBytes(32).toString("base64url"),
+      }),
+      restoreOwnerBooking(ids.context, {
+        bookingId: b3,
+        expectedRevision: 1,
+        operationKey: randomBytes(32).toString("base64url"),
+      }),
+    ]);
+    expect([d1.success, d2.success].filter(Boolean)).toHaveLength(1);
+    const winner = d1.success ? d1 : d2;
+    const loser = d1.success ? d2 : d1;
+    expect(winner).toMatchObject({ success: true });
+    if (!winner.success) throw new Error("Restoration winner failed.");
+    expect(winner.data.operation).toMatchObject({
+      kind: "restore",
+      revision: 2,
+    });
+    expect(loser).toMatchObject({
+      success: false,
+      error: { code: "STALE_BOOKING" },
+    });
+
+    const b3Work = (
+      await database.pool.query(
+        "SELECT count(*)::int AS count FROM notification_work WHERE booking_id=$1 AND kind='customer_restoration'",
+        [b3],
+      )
+    ).rows[0].count;
+    expect(b3Work).toBe(1);
+  });
+
+  it("rolls back occupancy insertion and retains cancelled state when restoration transaction fails", async () => {
+    const ids = await fixture();
+    const created = await createOwnerBooking(ids.context, input(ids));
+    if (!created.success) throw new Error("Creation fixture failed.");
+    const bookingId = created.data.bookingId;
+
+    const { cancelOwnerBooking, restoreOwnerBooking } =
+      await import("../mutations");
+
+    const cancelled = await cancelOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(cancelled.success).toBe(true);
+
+    const suffix = randomUUID().replaceAll("-", "");
+    const fn = `phase12_reject_${suffix}`;
+    const trigger = `phase12_reject_${suffix}`;
+    await database.pool.query(
+      `CREATE FUNCTION ${fn}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'phase12 injected restore failure'; END; $$`,
+    );
+    await database.pool.query(
+      `CREATE TRIGGER ${trigger} BEFORE INSERT ON booking_changes FOR EACH ROW WHEN (NEW.booking_id='${bookingId}') EXECUTE FUNCTION ${fn}()`,
+    );
+
+    try {
+      const result = await restoreOwnerBooking(ids.context, {
+        bookingId,
+        expectedRevision: 1,
+        operationKey: randomBytes(32).toString("base64url"),
+      });
+      expect(result).toMatchObject({
+        success: false,
+        error: { code: "UNAVAILABLE" },
+      });
+
+      const state = (
+        await database.pool.query(
+          "SELECT status, revision, occupancy_id FROM bookings WHERE id=$1",
+          [bookingId],
+        )
+      ).rows[0];
+      expect(state).toEqual({
+        status: "cancelled",
+        revision: 1,
+        occupancy_id: null,
+      });
+
+      const occupancyCount = (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM occupied_intervals WHERE shop_id=$1",
+          [ids.shopId],
+        )
+      ).rows[0].count;
+      expect(occupancyCount).toBe(0);
+
+      const changeCount = (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM booking_changes WHERE booking_id=$1 AND kind='restore'",
+          [bookingId],
+        )
+      ).rows[0].count;
+      expect(changeCount).toBe(0);
+
+      const workCount = (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM notification_work WHERE booking_id=$1 AND kind='customer_restoration'",
+          [bookingId],
+        )
+      ).rows[0].count;
+      expect(workCount).toBe(0);
+    } finally {
+      await database.pool.query(
+        `DROP TRIGGER IF EXISTS ${trigger} ON booking_changes`,
+      );
+      await database.pool.query(`DROP FUNCTION IF EXISTS ${fn}()`);
+    }
+
+    // Work persistence failure rollback
+    const fnWork = `phase12_reject_work_${suffix}`;
+    const triggerWork = `phase12_reject_work_${suffix}`;
+    await database.pool.query(
+      `CREATE FUNCTION ${fnWork}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'phase12 injected work failure'; END; $$`,
+    );
+    await database.pool.query(
+      `CREATE TRIGGER ${triggerWork} BEFORE INSERT ON notification_work FOR EACH ROW WHEN (NEW.booking_id='${bookingId}') EXECUTE FUNCTION ${fnWork}()`,
+    );
+
+    try {
+      const result = await restoreOwnerBooking(ids.context, {
+        bookingId,
+        expectedRevision: 1,
+        operationKey: randomBytes(32).toString("base64url"),
+      });
+      expect(result).toMatchObject({
+        success: false,
+        error: { code: "UNAVAILABLE" },
+      });
+
+      const state = (
+        await database.pool.query(
+          "SELECT status, revision, occupancy_id FROM bookings WHERE id=$1",
+          [bookingId],
+        )
+      ).rows[0];
+      expect(state).toEqual({
+        status: "cancelled",
+        revision: 1,
+        occupancy_id: null,
+      });
+
+      const occupancyCount = (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM occupied_intervals WHERE shop_id=$1",
+          [ids.shopId],
+        )
+      ).rows[0].count;
+      expect(occupancyCount).toBe(0);
+
+      const changeCount = (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM booking_changes WHERE booking_id=$1 AND kind='restore'",
+          [bookingId],
+        )
+      ).rows[0].count;
+      expect(changeCount).toBe(0);
+
+      const workCount = (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM notification_work WHERE booking_id=$1 AND kind='customer_restoration'",
+          [bookingId],
+        )
+      ).rows[0].count;
+      expect(workCount).toBe(0);
+    } finally {
+      await database.pool.query(
+        `DROP TRIGGER IF EXISTS ${triggerWork} ON notification_work`,
+      );
+      await database.pool.query(`DROP FUNCTION IF EXISTS ${fnWork}()`);
+    }
+  });
+
+  it("serializes restoration against competing creation and configuration edits in both winner orderings", async () => {
+    const { cancelOwnerBooking, restoreOwnerBooking } =
+      await import("../mutations");
+
+    async function setupCancelled() {
+      const ids = await fixture();
+      const created = await createOwnerBooking(ids.context, input(ids));
+      if (!created.success) throw new Error("Creation fixture failed.");
+      const cancelled = await cancelOwnerBooking(ids.context, {
+        bookingId: created.data.bookingId,
+        expectedRevision: 0,
+        operationKey: randomBytes(32).toString("base64url"),
+      });
+      if (!cancelled.success) throw new Error("Cancellation fixture failed.");
+      return { ids, bookingId: created.data.bookingId };
+    }
+
+    // 1. Restore versus public creation (both orders)
+    {
+      const { ids, bookingId } = await setupCancelled();
+      const doRestore = () =>
+        restoreOwnerBooking(ids.context, {
+          bookingId,
+          expectedRevision: 1,
+          operationKey: randomBytes(32).toString("base64url"),
+        });
+      const doPublicCreate = () =>
+        createPublicBooking({ shopId: ids.shopId }, input(ids));
+
+      const [resRestoreA, resCreateA] = await queueShopOperations(
+        ids.shopId,
+        doRestore,
+        doPublicCreate,
+        ["owner_move", "public_booking"],
+      );
+      expect(resRestoreA).toMatchObject({ success: true });
+      expect(resCreateA).toMatchObject({
+        success: false,
+        error: { code: "UNAVAILABLE_INTERVAL" },
+      });
+
+      const { ids: idsB, bookingId: bB } = await setupCancelled();
+      const doRestoreB = () =>
+        restoreOwnerBooking(idsB.context, {
+          bookingId: bB,
+          expectedRevision: 1,
+          operationKey: randomBytes(32).toString("base64url"),
+        });
+      const doPublicCreateB = () =>
+        createPublicBooking({ shopId: idsB.shopId }, input(idsB));
+
+      const [resCreateB, resRestoreB] = await queueShopOperations(
+        idsB.shopId,
+        doPublicCreateB,
+        doRestoreB,
+        ["public_booking", "owner_move"],
+      );
+      expect(resCreateB).toMatchObject({ success: true });
+      expect(resRestoreB).toMatchObject({
+        success: false,
+        error: { code: "UNAVAILABLE_INTERVAL" },
+      });
+    }
+
+    // 2. Restore versus owner creation (both orders)
+    {
+      const { ids, bookingId } = await setupCancelled();
+      const doRestore = () =>
+        restoreOwnerBooking(ids.context, {
+          bookingId,
+          expectedRevision: 1,
+          operationKey: randomBytes(32).toString("base64url"),
+        });
+      const doOwnerCreate = () =>
+        createOwnerBooking(ids.context, {
+          serviceId: ids.serviceId,
+          barberId: ids.barberId,
+          startAt: "2026-11-02T10:00:00.000Z",
+          reviewedOffer: {
+            name: "Cut",
+            priceUsd: "25.00",
+            durationMinutes: "30",
+          },
+          contact: { name: "Comp Guest", whatsappOptIn: false },
+          recoveryKey: randomBytes(32).toString("base64url"),
+        });
+
+      const [resRestoreA, resCreateA] = await queueShopOperations(
+        ids.shopId,
+        doRestore,
+        doOwnerCreate,
+        ["owner_move", "owner_create"],
+      );
+      expect(resRestoreA).toMatchObject({ success: true });
+      expect(resCreateA).toMatchObject({
+        success: false,
+        error: { code: "UNAVAILABLE_INTERVAL" },
+      });
+
+      const { ids: idsB, bookingId: bB } = await setupCancelled();
+      const doRestoreB = () =>
+        restoreOwnerBooking(idsB.context, {
+          bookingId: bB,
+          expectedRevision: 1,
+          operationKey: randomBytes(32).toString("base64url"),
+        });
+      const doOwnerCreateB = () =>
+        createOwnerBooking(idsB.context, {
+          serviceId: idsB.serviceId,
+          barberId: idsB.barberId,
+          startAt: "2026-11-02T10:00:00.000Z",
+          reviewedOffer: {
+            name: "Cut",
+            priceUsd: "25.00",
+            durationMinutes: "30",
+          },
+          contact: { name: "Comp Guest", whatsappOptIn: false },
+          recoveryKey: randomBytes(32).toString("base64url"),
+        });
+
+      const [resCreateB, resRestoreB] = await queueShopOperations(
+        idsB.shopId,
+        doOwnerCreateB,
+        doRestoreB,
+        ["owner_create", "owner_move"],
+      );
+      expect(resCreateB).toMatchObject({ success: true });
+      expect(resRestoreB).toMatchObject({
+        success: false,
+        error: { code: "UNAVAILABLE_INTERVAL" },
+      });
+    }
+
+    // 3. Restore versus hours edit (both orders)
+    {
+      const restricted = Array.from({ length: 7 }, (_, index) => ({
+        working: index === 0 ? [{ start: 720, end: 1020 }] : [],
+        breaks: [],
+      }));
+
+      const { ids, bookingId } = await setupCancelled();
+      const doRestore = () =>
+        restoreOwnerBooking(ids.context, {
+          bookingId,
+          expectedRevision: 1,
+          operationKey: randomBytes(32).toString("base64url"),
+        });
+      const doHours = () =>
+        saveShopSchedule(ids.context, { week: restricted, revision: 1 });
+
+      const [resRestoreA, resHoursA] = await queueShopOperations(
+        ids.shopId,
+        doRestore,
+        doHours,
+        ["owner_move", "shop_edit"],
+      );
+      expect(resRestoreA).toMatchObject({ success: true });
+      expect(resHoursA).toMatchObject({
+        success: false,
+        error: { code: "BOOKING_CONFLICT" },
+      });
+
+      const { ids: idsB, bookingId: bB } = await setupCancelled();
+      const doRestoreB = () =>
+        restoreOwnerBooking(idsB.context, {
+          bookingId: bB,
+          expectedRevision: 1,
+          operationKey: randomBytes(32).toString("base64url"),
+        });
+      const doHoursB = () =>
+        saveShopSchedule(idsB.context, { week: restricted, revision: 1 });
+
+      const [resHoursB, resRestoreB] = await queueShopOperations(
+        idsB.shopId,
+        doHoursB,
+        doRestoreB,
+        ["shop_edit", "owner_move"],
+      );
+      expect(resHoursB).toMatchObject({ success: true });
+      expect(resRestoreB).toMatchObject({
+        success: false,
+        error: { code: "UNAVAILABLE_INTERVAL" },
+      });
+    }
+
+    // 4. Restore versus assignment removal (both orders)
+    {
+      const { ids, bookingId } = await setupCancelled();
+      const doRestore = () =>
+        restoreOwnerBooking(ids.context, {
+          bookingId,
+          expectedRevision: 1,
+          operationKey: randomBytes(32).toString("base64url"),
+        });
+      const doUnassign = () =>
+        saveService(ids.context, {
+          id: ids.serviceId,
+          name: "Cut",
+          priceUsd: "25",
+          durationMinutes: "30",
+          offered: true,
+          barberIds: [],
+        });
+
+      const [resRestoreA, resUnassignA] = await queueShopOperations(
+        ids.shopId,
+        doRestore,
+        doUnassign,
+        ["owner_move", "shop_edit"],
+      );
+      expect(resRestoreA).toMatchObject({ success: true });
+      expect(resUnassignA).toMatchObject({
+        success: false,
+        error: { code: "BOOKING_CONFLICT" },
+      });
+
+      const { ids: idsB, bookingId: bB } = await setupCancelled();
+      const doRestoreB = () =>
+        restoreOwnerBooking(idsB.context, {
+          bookingId: bB,
+          expectedRevision: 1,
+          operationKey: randomBytes(32).toString("base64url"),
+        });
+      const doUnassignB = () =>
+        saveService(idsB.context, {
+          id: idsB.serviceId,
+          name: "Cut",
+          priceUsd: "25",
+          durationMinutes: "30",
+          offered: true,
+          barberIds: [],
+        });
+
+      const [resUnassignB, resRestoreB] = await queueShopOperations(
+        idsB.shopId,
+        doUnassignB,
+        doRestoreB,
+        ["shop_edit", "owner_move"],
+      );
+      expect(resUnassignB).toMatchObject({ success: true });
+      expect(resRestoreB).toMatchObject({
+        success: false,
+        error: { code: "UNAVAILABLE_INTERVAL" },
+      });
+    }
+
+    // 5. Restore versus barber archival (both orders)
+    {
+      const { ids, bookingId } = await setupCancelled();
+      const doRestore = () =>
+        restoreOwnerBooking(ids.context, {
+          bookingId,
+          expectedRevision: 1,
+          operationKey: randomBytes(32).toString("base64url"),
+        });
+      const doArchive = () => archiveBarber(ids.context, ids.barberId);
+
+      const [resRestoreA, resArchiveA] = await queueShopOperations(
+        ids.shopId,
+        doRestore,
+        doArchive,
+        ["owner_move", "shop_edit"],
+      );
+      expect(resRestoreA).toMatchObject({ success: true });
+      expect(resArchiveA).toMatchObject({
+        success: false,
+        error: { code: "BOOKING_CONFLICT" },
+      });
+
+      const { ids: idsB, bookingId: bB } = await setupCancelled();
+      const doRestoreB = () =>
+        restoreOwnerBooking(idsB.context, {
+          bookingId: bB,
+          expectedRevision: 1,
+          operationKey: randomBytes(32).toString("base64url"),
+        });
+      const doArchiveB = () => archiveBarber(idsB.context, idsB.barberId);
+
+      const [resArchiveB, resRestoreB] = await queueShopOperations(
+        idsB.shopId,
+        doArchiveB,
+        doRestoreB,
+        ["shop_edit", "owner_move"],
+      );
+      expect(resArchiveB).toMatchObject({ success: true });
+      expect(resRestoreB).toMatchObject({
+        success: false,
+        error: { code: "UNAVAILABLE_INTERVAL" },
+      });
+    }
+  });
+
+  it("restore->cancel->restore produces distinct revisions and replay does not reactivate a cancelled booking", async () => {
+    const ids = await fixture();
+    const created = await createOwnerBooking(ids.context, input(ids));
+    if (!created.success) throw new Error("Creation fixture failed.");
+    const bookingId = created.data.bookingId;
+
+    const { cancelOwnerBooking, restoreOwnerBooking } =
+      await import("../mutations");
+
+    const cancel1 = await cancelOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(cancel1.success).toBe(true);
+
+    const keyRestore1 = randomBytes(32).toString("base64url");
+    const restore1 = await restoreOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 1,
+      operationKey: keyRestore1,
+    });
+    expect(restore1.success).toBe(true);
+    if (!restore1.success) throw new Error("First restore failed.");
+    expect(restore1.data.operation.revision).toBe(2);
+
+    const cancel2 = await cancelOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 2,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(cancel2.success).toBe(true);
+    if (!cancel2.success) throw new Error("Second cancel failed.");
+
+    const dbAfterCancel2 = (
+      await database.pool.query(
+        "SELECT status, revision, occupancy_id FROM bookings WHERE id=$1",
+        [bookingId],
+      )
+    ).rows[0];
+    expect(dbAfterCancel2).toEqual({
+      status: "cancelled",
+      revision: 3,
+      occupancy_id: null,
+    });
+
+    const replayedFirstRestore = await restoreOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 1,
+      operationKey: keyRestore1,
+    });
+    expect(replayedFirstRestore.success).toBe(true);
+    if (!replayedFirstRestore.success) throw new Error("Replay failed.");
+    expect(replayedFirstRestore.data.operation.id).toBe(
+      restore1.data.operation.id,
+    );
+    expect(replayedFirstRestore.data.operation.revision).toBe(2);
+
+    const dbAfterReplay = (
+      await database.pool.query(
+        "SELECT status, revision, occupancy_id FROM bookings WHERE id=$1",
+        [bookingId],
+      )
+    ).rows[0];
+    expect(dbAfterReplay).toEqual({
+      status: "cancelled",
+      revision: 3,
+      occupancy_id: null,
+    });
+
+    const keyRestore2 = randomBytes(32).toString("base64url");
+    const restore2 = await restoreOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 3,
+      operationKey: keyRestore2,
+    });
+    expect(restore2.success).toBe(true);
+    if (!restore2.success) throw new Error("Second restore failed.");
+    expect(restore2.data.operation.revision).toBe(4);
+
+    const events = (
+      await database.pool.query(
+        "SELECT id, kind, applied_revision FROM booking_changes WHERE booking_id=$1 ORDER BY applied_revision ASC",
+        [bookingId],
+      )
+    ).rows;
+    expect(events).toEqual([
+      expect.objectContaining({ kind: "cancel", applied_revision: 1 }),
+      expect.objectContaining({ kind: "restore", applied_revision: 2 }),
+      expect.objectContaining({ kind: "cancel", applied_revision: 3 }),
+      expect.objectContaining({ kind: "restore", applied_revision: 4 }),
+    ]);
+
+    const restorationWorks = (
+      await database.pool.query(
+        "SELECT kind, booking_revision FROM notification_work WHERE booking_id=$1 AND kind='customer_restoration' ORDER BY booking_revision ASC",
+        [bookingId],
+      )
+    ).rows;
+    expect(restorationWorks).toEqual([
+      { kind: "customer_restoration", booking_revision: 2 },
+      { kind: "customer_restoration", booking_revision: 4 },
+    ]);
+
+    const finalBooking = (
+      await database.pool.query(
+        "SELECT status, revision, occupancy_id FROM bookings WHERE id=$1",
+        [bookingId],
+      )
+    ).rows[0];
+    expect(finalBooking.status).toBe("confirmed");
+    expect(finalBooking.revision).toBe(4);
+    expect(finalBooking.occupancy_id).toBeTruthy();
+  });
+
+  it("owner restoration rejects mismatched saved duration and retained interval unchanged", async () => {
+    const ids = await fixture();
+    const created = await createOwnerBooking(ids.context, input(ids));
+    if (!created.success) throw new Error("Creation fixture failed.");
+    const bookingId = created.data.bookingId;
+
+    const { cancelOwnerBooking, restoreOwnerBooking } =
+      await import("../mutations");
+
+    const cancelled = await cancelOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(cancelled.success).toBe(true);
+
+    // Retained start is 10:00:00Z, saved duration is 30m, but update end_at to 11:00:00Z (60m)
+    await database.pool.query(
+      "UPDATE bookings SET end_at = '2026-11-02T11:00:00.000Z' WHERE id = $1",
+      [bookingId],
+    );
+
+    const restored = await restoreOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 1,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+
+    expect(restored).toMatchObject({
+      success: false,
+      error: { code: "UNAVAILABLE_INTERVAL" },
+    });
+
+    const dbBooking = (
+      await database.pool.query(
+        "SELECT status, revision, occupancy_id, start_at, end_at, service_duration_minutes FROM bookings WHERE id = $1",
+        [bookingId],
+      )
+    ).rows[0];
+    expect(dbBooking.status).toBe("cancelled");
+    expect(dbBooking.revision).toBe(1);
+    expect(dbBooking.occupancy_id).toBeNull();
+    expect(dbBooking.end_at).toEqual(new Date("2026-11-02T11:00:00.000Z"));
+    expect(dbBooking.service_duration_minutes).toBe(30);
+
+    const occupancies = (
+      await database.pool.query(
+        "SELECT count(*)::int AS count FROM occupied_intervals WHERE shop_id = $1",
+        [ids.shopId],
+      )
+    ).rows[0].count;
+    expect(occupancies).toBe(0);
+
+    const changes = (
+      await database.pool.query(
+        "SELECT count(*)::int AS count FROM booking_changes WHERE booking_id = $1 AND kind = 'restore'",
+        [bookingId],
+      )
+    ).rows[0].count;
+    expect(changes).toBe(0);
+  });
+
+  it("owner restoration recovers from a post-commit read failure on retry with the same key", async () => {
+    const ids = await fixture();
+    const created = await createOwnerBooking(ids.context, input(ids));
+    if (!created.success) throw new Error("Creation fixture failed.");
+    const bookingId = created.data.bookingId;
+
+    const { cancelOwnerBooking, restoreOwnerBooking } =
+      await import("../mutations");
+    const queries = await import("../queries");
+
+    const cancelled = await cancelOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(cancelled.success).toBe(true);
+
+    const operationKey = randomBytes(32).toString("base64url");
+    const spy = vi.spyOn(queries, "getOwnAppointment").mockResolvedValueOnce({
+      success: false,
+      error: { code: "UNAVAILABLE", message: "Simulated read failure" },
+    });
+
+    try {
+      const first = await restoreOwnerBooking(ids.context, {
+        bookingId,
+        expectedRevision: 1,
+        operationKey,
+      });
+      expect(first).toMatchObject({
+        success: false,
+        error: { code: "UNAVAILABLE" },
+      });
+
+      const committed = (
+        await database.pool.query(
+          "SELECT status, revision, occupancy_id FROM bookings WHERE id=$1",
+          [bookingId],
+        )
+      ).rows[0];
+      expect(committed.status).toBe("confirmed");
+      expect(committed.revision).toBe(2);
+      expect(committed.occupancy_id).toBeTruthy();
+
+      const retry = await restoreOwnerBooking(ids.context, {
+        bookingId,
+        expectedRevision: 1,
+        operationKey,
+      });
+      expect(retry.success).toBe(true);
+      if (!retry.success) throw new Error("Retry failed");
+      expect(retry.data.operation).toMatchObject({
+        kind: "restore",
+        revision: 2,
+      });
+      expect(retry.data.appointment).toMatchObject({
+        id: bookingId,
+        status: "confirmed",
+        revision: 2,
+      });
+
+      const changes = (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM booking_changes WHERE booking_id=$1 AND kind='restore'",
+          [bookingId],
+        )
+      ).rows[0].count;
+      expect(changes).toBe(1);
+
+      const work = (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM notification_work WHERE booking_id=$1 AND kind='customer_restoration'",
+          [bookingId],
+        )
+      ).rows[0].count;
+      expect(work).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });

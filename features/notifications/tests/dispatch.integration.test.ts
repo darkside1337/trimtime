@@ -40,6 +40,7 @@ describe("initial notification dispatch", () => {
   let createOwnerBooking: typeof import("@/features/bookings/mutations").createOwnerBooking;
   let moveOwnerBooking: typeof import("@/features/bookings/mutations").moveOwnerBooking;
   let cancelOwnerBooking: typeof import("@/features/bookings/mutations").cancelOwnerBooking;
+  let restoreOwnerBooking: typeof import("@/features/bookings/mutations").restoreOwnerBooking;
   let cancelCustomerBooking: typeof import("@/features/bookings/mutations").cancelCustomerBooking;
   let replaceCustomerBooking: typeof import("@/features/bookings/mutations").replaceCustomerBooking;
   let getManagedBooking: typeof import("@/features/bookings/queries").getManagedBooking;
@@ -91,7 +92,12 @@ describe("initial notification dispatch", () => {
       trackCustomerChangeRateKey(rateKeys, context, input);
       return mutations.replaceCustomerBooking(context, input);
     };
-    ({ createOwnerBooking, moveOwnerBooking, cancelOwnerBooking } = mutations);
+    ({
+      createOwnerBooking,
+      moveOwnerBooking,
+      cancelOwnerBooking,
+      restoreOwnerBooking,
+    } = mutations);
     ({ getManagedBooking } = await import("@/features/bookings/queries"));
     ({ dispatchInitialBookingNotifications: dispatch } =
       await import("../dispatch"));
@@ -217,6 +223,38 @@ describe("initial notification dispatch", () => {
     });
     if (!result.success)
       throw new Error(`Owner booking fixture failed: ${result.error.code}`);
+    return result.data;
+  }
+
+  async function ownerCancellation(
+    ids: Awaited<ReturnType<typeof fixture>>,
+    created: { bookingId: string },
+    expectedRevision = 0,
+  ) {
+    const result = await cancelOwnerBooking(ids.context, {
+      bookingId: created.bookingId,
+      expectedRevision,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    if (!result.success)
+      throw new Error(
+        `Owner cancellation fixture failed: ${result.error.code}`,
+      );
+    return result.data;
+  }
+
+  async function ownerRestoration(
+    ids: Awaited<ReturnType<typeof fixture>>,
+    created: { bookingId: string },
+    expectedRevision = 1,
+  ) {
+    const result = await restoreOwnerBooking(ids.context, {
+      bookingId: created.bookingId,
+      expectedRevision,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    if (!result.success)
+      throw new Error(`Restoration fixture failed: ${result.error.code}`);
     return result.data;
   }
 
@@ -435,6 +473,78 @@ describe("initial notification dispatch", () => {
     ).toBe(0);
   });
 
+  it("dispatches an eligible restoration to the customer only with the unchanged capability link", async () => {
+    const ids = await fixture();
+    const created = await booking(ids, "restored@example.test");
+    await ownerCancellation(ids, created);
+    const restored = await ownerRestoration(ids, created);
+    expect(restored.operation).toMatchObject({ kind: "restore", revision: 2 });
+
+    const messages: { to: string; subject: string; text: string }[] = [];
+    await dispatchTracked(created.bookingId, {
+      send: async ({ message, onInvoked }) => {
+        messages.push(message);
+        await onInvoked();
+        return captured;
+      },
+    });
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      to: "restored@example.test",
+      subject: "Booking restored — Juniper Barber",
+    });
+    expect(messages[0].text).toContain(
+      "The shop has restored your booking. These saved details are retained:",
+    );
+    expect(messages[0].text).toContain(
+      "Service: Cut — $25.00 USD (30 minutes)",
+    );
+    expect(messages[0].text).toContain("Start: Nov 2, 2026, 10:00 AM UTC");
+    expect(messages[0].text).toContain("Contact:");
+    expect(messages[0].text).toContain(
+      "Fictional TrimTime demo. This message is captured locally in Mailpit; inbox delivery is not enabled.",
+    );
+    expect(messages[0].text).toContain(
+      `Manage your booking: ${created.manageUrl}`,
+    );
+    expect(messages[0].text).not.toContain(ids.owner.email);
+
+    expect(
+      (await rows(ids)).map(({ kind, channel, status }) => ({
+        kind,
+        channel,
+        status,
+      })),
+    ).toEqual(
+      expect.arrayContaining([
+        {
+          kind: "customer_restoration",
+          channel: "email",
+          status: "captured",
+        },
+        {
+          kind: "customer_cancellation",
+          channel: "email",
+          status: "suppressed",
+        },
+      ]),
+    );
+    expect(
+      (await rows(ids)).filter((row) => row.kind !== "customer_restoration"),
+    ).toSatisfy((items: { status: string }[]) =>
+      items.every((item) => item.status === "suppressed"),
+    );
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM notification_work WHERE booking_id=$1 AND kind IN ('owner_alert','owner_cancellation','owner_move') AND booking_revision>0",
+          [created.bookingId],
+        )
+      ).rows[0].count,
+    ).toBe(0);
+  });
+
   it("dispatches the current cancellation update and suppresses obsolete creation work", async () => {
     const ids = await fixture();
     const created = await booking(ids, "cancel-update@example.test");
@@ -495,6 +605,458 @@ describe("initial notification dispatch", () => {
       { kind: "customer_move", status: "suppressed" },
       { kind: "owner_alert", status: "suppressed" },
     ]);
+  });
+
+  it("suppresses old cancellation work and later obsolete restoration work before dispatch", async () => {
+    const ids = await fixture();
+    const restoredBooking = await booking(
+      ids,
+      "restored-obsolete@example.test",
+    );
+    await ownerCancellation(ids, restoredBooking);
+    await ownerRestoration(ids, restoredBooking);
+
+    const cancelledAgain = await createPublicBooking(
+      { shopId: ids.shopId },
+      notificationBookingInput(
+        ids.serviceId,
+        ids.barberId,
+        "restored-then-cancelled@example.test",
+        { startAt: "2026-11-02T11:00:00.000Z" },
+      ),
+    );
+    if (!cancelledAgain.success)
+      throw new Error("Second booking fixture failed.");
+    const cancelledBooking = cancelledAgain.data;
+    await ownerCancellation(ids, cancelledBooking);
+    await ownerRestoration(ids, cancelledBooking);
+    await ownerCancellation(ids, cancelledBooking, 2);
+
+    const messages: { to: string; subject: string }[] = [];
+    const send = async ({
+      message,
+      onInvoked,
+    }: {
+      message: { to: string; subject: string };
+      onInvoked: () => Promise<void>;
+    }) => {
+      messages.push({ to: message.to, subject: message.subject });
+      await onInvoked();
+      return captured;
+    };
+    await dispatchTracked(restoredBooking.bookingId, { send });
+    await dispatchTracked(cancelledBooking.bookingId, { send });
+
+    expect(messages).toEqual([
+      {
+        to: "restored-obsolete@example.test",
+        subject: "Booking restored — Juniper Barber",
+      },
+      {
+        to: "restored-then-cancelled@example.test",
+        subject: "Booking cancelled — Juniper Barber",
+      },
+    ]);
+
+    const work = async (bookingId: string) =>
+      (
+        await database.pool.query(
+          `SELECT kind, booking_revision AS revision, status, reason
+           FROM notification_work WHERE booking_id=$1
+           ORDER BY booking_revision, kind`,
+          [bookingId],
+        )
+      ).rows;
+    expect(await work(restoredBooking.bookingId)).toEqual([
+      {
+        kind: "customer_confirmation",
+        revision: 0,
+        status: "suppressed",
+        reason: "superseded",
+      },
+      {
+        kind: "owner_alert",
+        revision: 0,
+        status: "suppressed",
+        reason: "superseded",
+      },
+      {
+        kind: "customer_cancellation",
+        revision: 1,
+        status: "suppressed",
+        reason: "superseded",
+      },
+      {
+        kind: "customer_restoration",
+        revision: 2,
+        status: "captured",
+        reason: null,
+      },
+    ]);
+    expect(await work(cancelledBooking.bookingId)).toEqual([
+      {
+        kind: "customer_confirmation",
+        revision: 0,
+        status: "suppressed",
+        reason: "superseded",
+      },
+      {
+        kind: "owner_alert",
+        revision: 0,
+        status: "suppressed",
+        reason: "superseded",
+      },
+      {
+        kind: "customer_cancellation",
+        revision: 1,
+        status: "suppressed",
+        reason: "superseded",
+      },
+      {
+        kind: "customer_restoration",
+        revision: 2,
+        status: "suppressed",
+        reason: "superseded",
+      },
+      {
+        kind: "customer_cancellation",
+        revision: 3,
+        status: "captured",
+        reason: null,
+      },
+    ]);
+  });
+
+  it("keeps restoration delivery outcomes truthful for missing email, unavailable configuration, WhatsApp consent, revoked capability, and exhausted budget", async () => {
+    const missing = await fixture();
+    const missingCreated = await createOwnerBooking(missing.context, {
+      serviceId: missing.serviceId,
+      barberId: missing.barberId,
+      startAt: "2026-11-02T10:07:00.000Z",
+      reviewedOffer: { name: "Cut", priceUsd: "25.00", durationMinutes: "30" },
+      contact: { name: "No Email Guest", whatsappOptIn: false },
+      recoveryKey: randomBytes(32).toString("base64url"),
+    });
+    if (!missingCreated.success)
+      throw new Error("Missing-email fixture failed.");
+    await ownerCancellation(missing, missingCreated.data);
+    await ownerRestoration(missing, missingCreated.data);
+    let missingCalls = 0;
+    await dispatchTracked(missingCreated.data.bookingId, {
+      send: async () => {
+        missingCalls++;
+        return captured;
+      },
+    });
+    expect(missingCalls).toBe(0);
+    expect(
+      (await rows(missing)).find((row) => row.kind === "customer_restoration"),
+    ).toMatchObject({
+      status: "skipped",
+      reason: "recipient_missing",
+      recipient: null,
+      attempt: null,
+    });
+
+    const unavailable = await fixture();
+    const unavailableCreated = await booking(
+      unavailable,
+      "unavailable-config@example.test",
+    );
+    await ownerCancellation(unavailable, unavailableCreated);
+    process.env.EMAIL_MODE = "disabled";
+    await ownerRestoration(unavailable, unavailableCreated);
+    process.env.EMAIL_MODE = "mailpit";
+    let unavailableCalls = 0;
+    await dispatchTracked(unavailableCreated.bookingId, {
+      send: async () => {
+        unavailableCalls++;
+        return captured;
+      },
+    });
+    expect(unavailableCalls).toBe(0);
+    expect(
+      (await rows(unavailable)).find(
+        (row) => row.kind === "customer_restoration",
+      ),
+    ).toMatchObject({
+      status: "unavailable",
+      reason: "disabled",
+      attempt: null,
+    });
+
+    const consented = await fixture();
+    const consentedCreated = await createPublicBooking(
+      { shopId: consented.shopId },
+      notificationBookingInput(
+        consented.serviceId,
+        consented.barberId,
+        "whatsapp-restore@example.test",
+        {
+          contact: {
+            name: "Ada Lovelace",
+            email: "whatsapp-restore@example.test",
+            phone: "+15550101010",
+            whatsappOptIn: true,
+          },
+        },
+      ),
+    );
+    if (!consentedCreated.success) throw new Error("WhatsApp fixture failed.");
+    await ownerCancellation(consented, consentedCreated.data);
+    await ownerRestoration(consented, consentedCreated.data);
+    const consentedCalls: string[] = [];
+    await dispatchTracked(consentedCreated.data.bookingId, {
+      send: async ({ message, onInvoked }) => {
+        consentedCalls.push(message.to);
+        await onInvoked();
+        return captured;
+      },
+    });
+    expect(consentedCalls).toEqual(["whatsapp-restore@example.test"]);
+    const consentedWork = await database.pool.query(
+      "SELECT kind,channel,status,reason FROM notification_work WHERE booking_id=$1 AND booking_revision=2 ORDER BY kind,channel",
+      [consentedCreated.data.bookingId],
+    );
+    expect(consentedWork.rows).toEqual([
+      {
+        kind: "customer_restoration",
+        channel: "email",
+        status: "captured",
+        reason: null,
+      },
+      {
+        kind: "customer_restoration",
+        channel: "whatsapp",
+        status: "unavailable",
+        reason: "channel_unavailable",
+      },
+    ]);
+
+    const revoked = await fixture();
+    const revokedCreated = await booking(
+      revoked,
+      "revoked-restore@example.test",
+    );
+    await ownerCancellation(revoked, revokedCreated);
+    await ownerRestoration(revoked, revokedCreated);
+    await database.pool.query(
+      "UPDATE bookings SET capability_revoked_at=now() WHERE id=$1",
+      [revokedCreated.bookingId],
+    );
+    let revokedCalls = 0;
+    await dispatchTracked(revokedCreated.bookingId, {
+      send: async () => {
+        revokedCalls++;
+        return captured;
+      },
+    });
+    expect(revokedCalls).toBe(0);
+    expect(
+      (await rows(revoked)).find((row) => row.kind === "customer_restoration"),
+    ).toMatchObject({
+      status: "suppressed",
+      reason: "work_no_longer_eligible",
+      attempt: null,
+    });
+
+    const budget = await fixture();
+    const budgetCreated = await booking(budget, "budget-restore@example.test");
+    await ownerCancellation(budget, budgetCreated);
+    await ownerRestoration(budget, budgetCreated);
+    await setBudget("2026-11-03", 100);
+    let budgetCalls = 0;
+    await dispatchTracked(budgetCreated.bookingId, {
+      send: async () => {
+        budgetCalls++;
+        return captured;
+      },
+    });
+    expect(budgetCalls).toBe(0);
+    expect(
+      (await rows(budget)).find((row) => row.kind === "customer_restoration"),
+    ).toMatchObject({
+      status: "skipped",
+      reason: "daily_budget_exhausted",
+      attempt: null,
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status,revision FROM bookings WHERE id=$1",
+          [budgetCreated.bookingId],
+        )
+      ).rows[0],
+    ).toEqual({ status: "confirmed", revision: 2 });
+  });
+
+  it("keeps the restoration committed after an unknown transport outcome without replaying the attempt", async () => {
+    const ids = await fixture();
+    const created = await booking(ids, "unknown-restore@example.test");
+    await ownerCancellation(ids, created);
+    await ownerRestoration(ids, created);
+    await setBudget("2026-11-03", 0);
+    let calls = 0;
+    await dispatchTracked(created.bookingId, {
+      send: async ({ onInvoked }) => {
+        calls++;
+        await onInvoked();
+        throw new Error("transport interrupted");
+      },
+    });
+    expect(calls).toBe(1);
+    expect(
+      (await rows(ids)).find((row) => row.kind === "customer_restoration"),
+    ).toMatchObject({
+      status: "unknown",
+      reason: "transport_interrupted",
+      attempt: { outcome: "unknown" },
+    });
+    const attemptCount = async () =>
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM notification_attempts a JOIN notification_work w ON w.id=a.work_id WHERE w.booking_id=$1 AND w.kind='customer_restoration'",
+          [created.bookingId],
+        )
+      ).rows[0].count;
+    expect(await attemptCount()).toBe(1);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT allocation_count FROM outbound_budget WHERE day=$1",
+          ["2026-11-03"],
+        )
+      ).rows[0].allocation_count,
+    ).toBe(1);
+
+    await dispatchTracked(created.bookingId, {
+      now: () => new Date("2026-11-04T12:00:00Z"),
+      send: async ({ onInvoked }) => {
+        calls++;
+        await onInvoked();
+        return captured;
+      },
+    });
+    expect(calls).toBe(1);
+    expect(await attemptCount()).toBe(1);
+    expect(
+      (await rows(ids)).find((row) => row.kind === "customer_restoration"),
+    ).toMatchObject({ status: "unknown", reason: "transport_interrupted" });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status,revision FROM bookings WHERE id=$1",
+          [created.bookingId],
+        )
+      ).rows[0],
+    ).toEqual({ status: "confirmed", revision: 2 });
+  });
+
+  it("keeps a committed restoration when customer delivery fails and dispatch failure does not undo it", async () => {
+    const ids = await fixture();
+    const created = await booking(ids, "failed-restore@example.test");
+    await ownerCancellation(ids, created);
+    await ownerRestoration(ids, created);
+    let calls = 0;
+    await dispatchTracked(created.bookingId, {
+      send: async ({ onInvoked }) => {
+        calls++;
+        await onInvoked();
+        return {
+          status: "failed",
+          reason: "permanent_rejection",
+          captureId: null,
+          invoked: true,
+        };
+      },
+    });
+    expect(calls).toBe(1);
+    expect(
+      (await rows(ids)).find((row) => row.kind === "customer_restoration"),
+    ).toMatchObject({
+      status: "failed",
+      reason: "permanent_rejection",
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status,revision FROM bookings WHERE id=$1",
+          [created.bookingId],
+        )
+      ).rows[0],
+    ).toEqual({ status: "confirmed", revision: 2 });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM notification_work WHERE booking_id=$1 AND kind IN ('owner_alert','owner_cancellation','owner_move') AND booking_revision>0",
+          [created.bookingId],
+        )
+      ).rows[0].count,
+    ).toBe(0);
+  });
+
+  it("rejects restoration work with mismatched event, revision, or recipient linkage", async () => {
+    const expectDenied = async (bookingId: string) => {
+      let calls = 0;
+      await dispatchTracked(bookingId, {
+        send: async ({ onInvoked }) => {
+          calls++;
+          await onInvoked();
+          return captured;
+        },
+      });
+      expect(calls).toBe(0);
+      expect(
+        (
+          await database.pool.query(
+            "SELECT kind,status,reason FROM notification_work WHERE booking_id=$1 AND kind='customer_restoration'",
+            [bookingId],
+          )
+        ).rows,
+      ).toEqual([
+        {
+          kind: "customer_restoration",
+          status: "suppressed",
+          reason: "work_no_longer_eligible",
+        },
+      ]);
+    };
+
+    const wrongEvent = await fixture();
+    const wrongEventBooking = await booking(wrongEvent, "ada@example.test");
+    const cancellation = await ownerCancellation(wrongEvent, wrongEventBooking);
+    await ownerRestoration(wrongEvent, wrongEventBooking);
+    await database.pool.query(
+      "UPDATE notification_work SET change_id=$2 WHERE booking_id=$1 AND kind='customer_restoration'",
+      [wrongEventBooking.bookingId, cancellation.operation.id],
+    );
+    await expectDenied(wrongEventBooking.bookingId);
+
+    const wrongRevision = await fixture();
+    const wrongRevisionBooking = await booking(
+      wrongRevision,
+      "ada@example.test",
+    );
+    await ownerCancellation(wrongRevision, wrongRevisionBooking);
+    await ownerRestoration(wrongRevision, wrongRevisionBooking);
+    await database.pool.query(
+      "UPDATE notification_work SET booking_revision=3 WHERE booking_id=$1 AND kind='customer_restoration'",
+      [wrongRevisionBooking.bookingId],
+    );
+    await expectDenied(wrongRevisionBooking.bookingId);
+
+    const wrongRecipient = await fixture();
+    const wrongRecipientBooking = await booking(
+      wrongRecipient,
+      "ada@example.test",
+    );
+    await ownerCancellation(wrongRecipient, wrongRecipientBooking);
+    await ownerRestoration(wrongRecipient, wrongRecipientBooking);
+    await database.pool.query(
+      "UPDATE notification_work SET recipient=$2 WHERE booking_id=$1 AND kind='customer_restoration'",
+      [wrongRecipientBooking.bookingId, wrongRecipient.owner.email],
+    );
+    await expectDenied(wrongRecipientBooking.bookingId);
   });
 
   it("dispatches customer and owner cancellation messages at the cancelled revision", async () => {

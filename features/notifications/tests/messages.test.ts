@@ -5,6 +5,7 @@ import {
   renderOwnerAlert,
   renderOwnerCancellationAlert,
   renderOwnerMoveAlert,
+  renderCustomerRestoration,
 } from "../messages";
 
 const booking = {
@@ -260,6 +261,40 @@ describe("booking messages", () => {
     );
     expect(message.text).not.toContain("manage/");
     expect(message.text).not.toContain("secret-token");
+  });
+
+  it("renders a restoration update with owner attribution, retained details, capability link, and disclosures", () => {
+    const message = renderCustomerRestoration({
+      booking,
+      recipient: booking.customerEmail,
+      manageUrl: "https://northside.trimtime.test/manage/secret-token",
+    });
+
+    expect(message.subject).toBe("Booking restored — Northside Barber");
+    expect(message.text).toContain(
+      "Fictional TrimTime demo. This message is captured locally in Mailpit; inbox delivery is not enabled.",
+    );
+    expect(message.text).toContain(
+      "The shop has restored your booking. These saved details are retained:",
+    );
+    expect(message.text).toContain("Service: Cut — $25.00 USD (30 minutes)");
+    expect(message.text).toContain("Barber: Sam Barber");
+    expect(message.text).toContain(
+      "Start: Jan 15, 2026, 9:00 AM America/New_York (UTC-05:00)",
+    );
+    expect(message.text).toContain(
+      "End: Jan 15, 2026, 9:30 AM America/New_York (UTC-05:00)",
+    );
+    expect(message.text).toContain("Shop: Northside Barber");
+    expect(message.text).toContain("Address: 1 Sample Road");
+    expect(message.text).toContain("Contact: Call 555-0100");
+    expect(message.text).toContain(
+      "Manage your booking: https://northside.trimtime.test/manage/secret-token",
+    );
+    expect(message.text).toContain(
+      "Online changes are not available within 12 hours",
+    );
+    expect(message.text).not.toContain("Previously:");
   });
 
   it("keeps names as body text and rejects invalid recipients and header newlines", () => {

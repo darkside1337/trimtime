@@ -3,6 +3,7 @@ import {
   cancelOwnerBookingSchema,
   createOwnerBookingSchema,
   moveOwnerBookingSchema,
+  restoreOwnerBookingSchema,
 } from "../schemas";
 
 describe("manual appointment input", () => {
@@ -165,5 +166,176 @@ describe("manual appointment input", () => {
         startAt: "2026-11-02T10:07:00.000001Z",
       }).success,
     ).toBe(false);
+  });
+
+  it("owner lifecycle restoration schema accepts valid input and preserves contract shape", () => {
+    const valid = {
+      bookingId: "123e4567-e89b-42d3-a456-426614174000",
+      expectedRevision: 1,
+      operationKey: "A_b-1" + "c".repeat(38),
+    };
+    const parsed = restoreOwnerBookingSchema.safeParse(valid);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data).toEqual(valid);
+    }
+    expect(
+      restoreOwnerBookingSchema.safeParse({ ...valid, expectedRevision: 0 })
+        .success,
+    ).toBe(true);
+  });
+
+  it.each([
+    [
+      "missing bookingId",
+      { expectedRevision: 1, operationKey: "a".repeat(43) },
+    ],
+    [
+      "non-uuid bookingId",
+      {
+        bookingId: "not-a-uuid",
+        expectedRevision: 1,
+        operationKey: "a".repeat(43),
+      },
+    ],
+    [
+      "empty bookingId",
+      { bookingId: "", expectedRevision: 1, operationKey: "a".repeat(43) },
+    ],
+    [
+      "missing expectedRevision",
+      {
+        bookingId: "123e4567-e89b-42d3-a456-426614174000",
+        operationKey: "a".repeat(43),
+      },
+    ],
+    [
+      "negative expectedRevision",
+      {
+        bookingId: "123e4567-e89b-42d3-a456-426614174000",
+        expectedRevision: -1,
+        operationKey: "a".repeat(43),
+      },
+    ],
+    [
+      "fractional expectedRevision",
+      {
+        bookingId: "123e4567-e89b-42d3-a456-426614174000",
+        expectedRevision: 0.5,
+        operationKey: "a".repeat(43),
+      },
+    ],
+    [
+      "string expectedRevision",
+      {
+        bookingId: "123e4567-e89b-42d3-a456-426614174000",
+        expectedRevision: "1" as unknown as number,
+        operationKey: "a".repeat(43),
+      },
+    ],
+    [
+      "missing operationKey",
+      {
+        bookingId: "123e4567-e89b-42d3-a456-426614174000",
+        expectedRevision: 1,
+      },
+    ],
+    [
+      "operationKey too short (42 chars)",
+      {
+        bookingId: "123e4567-e89b-42d3-a456-426614174000",
+        expectedRevision: 1,
+        operationKey: "a".repeat(42),
+      },
+    ],
+    [
+      "operationKey too long (44 chars)",
+      {
+        bookingId: "123e4567-e89b-42d3-a456-426614174000",
+        expectedRevision: 1,
+        operationKey: "a".repeat(44),
+      },
+    ],
+    [
+      "operationKey with invalid punctuation",
+      {
+        bookingId: "123e4567-e89b-42d3-a456-426614174000",
+        expectedRevision: 1,
+        operationKey: "!".repeat(43),
+      },
+    ],
+    [
+      "operationKey with whitespace",
+      {
+        bookingId: "123e4567-e89b-42d3-a456-426614174000",
+        expectedRevision: 1,
+        operationKey: " " + "a".repeat(42),
+      },
+    ],
+  ])("owner lifecycle restoration schema rejects %s", (_label, invalid) => {
+    expect(restoreOwnerBookingSchema.safeParse(invalid).success).toBe(false);
+  });
+
+  it.each([
+    ["shopId", { shopId: "foreign-shop" }],
+    ["actorId", { actorId: "foreign-owner" }],
+    ["actorType", { actorType: "owner" }],
+    ["serviceId", { serviceId: "service-b" }],
+    ["barberId", { barberId: "barber-b" }],
+    ["startAt", { startAt: "2026-11-02T11:00:00.000Z" }],
+    ["endAt", { endAt: "2026-11-02T11:30:00.000Z" }],
+    [
+      "reviewedOffer",
+      {
+        reviewedOffer: {
+          name: "Cut",
+          priceUsd: "25.00",
+          durationMinutes: "30",
+        },
+      },
+    ],
+    ["contact", { contact: { name: "Walk-in Guest", whatsappOptIn: false } }],
+    ["recoveryKey", { recoveryKey: "a".repeat(43) }],
+    ["arbitrary extraField", { extraField: "forbidden" }],
+  ])(
+    "owner lifecycle restoration schema strictly rejects injected/extra field: %s",
+    (_field, extra) => {
+      const valid = {
+        bookingId: "123e4567-e89b-42d3-a456-426614174000",
+        expectedRevision: 1,
+        operationKey: "a".repeat(43),
+      };
+      expect(
+        restoreOwnerBookingSchema.safeParse({ ...valid, ...extra }).success,
+      ).toBe(false);
+    },
+  );
+
+  it("restoration schema validation matches pre-existing owner lifecycle mutation validation contract (cancelOwnerBookingSchema)", () => {
+    const valid = {
+      bookingId: "123e4567-e89b-42d3-a456-426614174000",
+      expectedRevision: 1,
+      operationKey: "a".repeat(43),
+    };
+    expect(restoreOwnerBookingSchema.safeParse(valid).success).toBe(
+      cancelOwnerBookingSchema.safeParse(valid).success,
+    );
+    for (const extra of [
+      { bookingId: "not-a-uuid" },
+      { expectedRevision: -1 },
+      { expectedRevision: 0.5 },
+      { operationKey: "short" },
+      { shopId: "foreign-shop" },
+      { actorId: "foreign-owner" },
+      { serviceId: "service-b" },
+      { startAt: "2026-11-02T11:00:00.000Z" },
+    ]) {
+      expect(
+        restoreOwnerBookingSchema.safeParse({ ...valid, ...extra }).success,
+      ).toBe(false);
+      expect(
+        cancelOwnerBookingSchema.safeParse({ ...valid, ...extra }).success,
+      ).toBe(false);
+    }
   });
 });

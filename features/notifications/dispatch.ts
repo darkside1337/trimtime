@@ -13,6 +13,7 @@ import {
 import { notificationContentIdentity } from "./content-identity";
 import {
   renderCustomerConfirmation,
+  renderCustomerRestoration,
   renderCustomerUpdate,
   renderOwnerAlert,
   renderOwnerCancellationAlert,
@@ -162,7 +163,8 @@ async function authorize(input: {
     const isCustomerWork =
       kind === "customer_confirmation" ||
       kind === "customer_move" ||
-      kind === "customer_cancellation";
+      kind === "customer_cancellation" ||
+      kind === "customer_restoration";
     const expectedRecipient = isCustomerWork
       ? booking.customerEmail
       : booking.ownerEmail;
@@ -191,12 +193,18 @@ async function authorize(input: {
               ? booking.status === "cancelled" &&
                 booking.revision === workRevision &&
                 currentCancellation
-              : kind === "owner_cancellation"
-                ? booking.status === "cancelled" &&
+              : kind === "customer_restoration"
+                ? booking.status === "confirmed" &&
                   booking.revision === workRevision &&
-                  currentCancellation &&
-                  changeActor === "customer"
-                : false;
+                  changeKind === "restore" &&
+                  changeRevision === workRevision &&
+                  changeActor === "owner"
+                : kind === "owner_cancellation"
+                  ? booking.status === "cancelled" &&
+                    booking.revision === workRevision &&
+                    currentCancellation &&
+                    changeActor === "customer"
+                  : false;
     if (
       !eligibleState ||
       booking.capabilityRevokedAt ||
@@ -240,6 +248,12 @@ async function authorize(input: {
         const manageUrl = canonicalManageUrl(booking.subdomain, token);
         if (kind === "customer_confirmation") {
           message = renderCustomerConfirmation({
+            booking,
+            recipient,
+            manageUrl,
+          });
+        } else if (kind === "customer_restoration") {
+          message = renderCustomerRestoration({
             booking,
             recipient,
             manageUrl,
@@ -390,7 +404,7 @@ export async function dispatchInitialBookingNotifications(
   };
   const items = await db.execute(sql`
     SELECT id FROM notification_work WHERE booking_id=${bookingId} AND channel='email'
-    ORDER BY CASE WHEN kind IN ('customer_confirmation', 'customer_move', 'customer_cancellation') THEN 0 ELSE 1 END
+    ORDER BY CASE WHEN kind IN ('customer_confirmation', 'customer_move', 'customer_cancellation', 'customer_restoration') THEN 0 ELSE 1 END
   `);
   for (const row of items.rows as { id: string }[]) {
     try {

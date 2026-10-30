@@ -18,6 +18,7 @@ export type NotificationActivityRow = {
     | "owner_alert"
     | "customer_move"
     | "customer_cancellation"
+    | "customer_restoration"
     | "owner_cancellation"
     | "owner_move";
   channel: "email" | "whatsapp";
@@ -41,7 +42,7 @@ export type NotificationActivityView = { rows: NotificationActivityRow[] };
 export type BookingChangeActivityRow = {
   id: string;
   bookingId: string;
-  kind: "move" | "cancel";
+  kind: "move" | "cancel" | "restore";
   actorType: "owner" | "customer";
   revision: number;
   committedAt: string;

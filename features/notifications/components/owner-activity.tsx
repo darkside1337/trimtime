@@ -85,6 +85,7 @@ function title(row: Row) {
   if (row.kind === "owner_alert") return "Owner alert";
   if (row.kind === "owner_cancellation") return "Owner cancellation alert";
   if (row.kind === "owner_move") return "Owner reschedule alert";
+  if (row.kind === "customer_restoration") return "Restoration update";
   return row.kind === "customer_move"
     ? "Reschedule update"
     : "Cancellation update";
@@ -131,7 +132,11 @@ export function OwnerActivity({
       (category === "All messages" ||
         title(event) === category ||
         (category === "Customer update" &&
-          ["customer_move", "customer_cancellation"].includes(event.kind))) &&
+          [
+            "customer_move",
+            "customer_cancellation",
+            "customer_restoration",
+          ].includes(event.kind))) &&
       (channel === "All" ||
         event.channel.toLowerCase() === channel.toLowerCase()) &&
       `${title(event)} ${event.recipient ?? ""} ${event.bookingId} ${event.id} ${event.status} ${event.reason ?? ""}`
@@ -144,7 +149,11 @@ export function OwnerActivity({
         value === "All messages" ||
         title(event) === value ||
         (value === "Customer update" &&
-          ["customer_move", "customer_cancellation"].includes(event.kind)),
+          [
+            "customer_move",
+            "customer_cancellation",
+            "customer_restoration",
+          ].includes(event.kind)),
     ).length;
 
   return (
@@ -279,7 +288,9 @@ export function OwnerActivity({
                         <h3>
                           {event.kind === "move"
                             ? "Appointment rescheduled"
-                            : "Appointment cancelled"}
+                            : event.kind === "restore"
+                              ? "Appointment restored"
+                              : "Appointment cancelled"}
                         </h3>
                         <p>
                           Booking #{event.bookingId} · revision {event.revision}{" "}

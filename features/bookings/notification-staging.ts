@@ -44,7 +44,7 @@ export async function stageCustomerChangeNotifications(
     bookingId: string;
     revision: number;
     changeId: string;
-    kind: "customer_move" | "customer_cancellation";
+    kind: "customer_move" | "customer_cancellation" | "customer_restoration";
     contentIdentity: string;
     customerEmail: string | null;
     customerPhone: string | null;
@@ -92,7 +92,7 @@ export async function stageCustomerChangeNotifications(
       ownerEmail = row.email ?? null;
     }
   }
-  if (ownerEmail !== undefined) {
+  if (ownerEmail !== undefined && params.kind !== "customer_restoration") {
     const owner = channelState(params.emailConfig, ownerEmail);
     work.push({
       id: randomUUID(),

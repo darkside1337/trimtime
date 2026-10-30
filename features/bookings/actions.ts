@@ -2,7 +2,7 @@
 
 import { headers } from "next/headers";
 import { after } from "next/server";
-import { revalidatePath } from "next/cache";
+import { refresh, revalidatePath } from "next/cache";
 import type { ActionResult } from "@/lib/action-result";
 import { resolvePublicRequest } from "@/server/public-request";
 import { classifyHost, hasOwnerOrigin, hasRequestOrigin } from "@/server/hosts";
@@ -24,6 +24,7 @@ import {
   createPublicBooking,
   moveOwnerBooking,
   replaceCustomerBooking,
+  restoreOwnerBooking,
 } from "./mutations";
 import { cancelCustomerBooking } from "./customer-mutations";
 import {
@@ -285,6 +286,59 @@ export async function cancelOwnerBookingAction(
     after(() =>
       dispatchInitialBookingNotifications(bookingId).catch(() => {
         console.error("Booking cancellation notification dispatch failed.", {
+          bookingId,
+        });
+      }),
+    );
+  }
+  return result;
+}
+
+export async function refreshOwnerAppointmentAction(): Promise<
+  ActionResult<null>
+> {
+  const requestHeaders = await headers();
+  if (
+    classifyHost(requestHeaders) !== "owner" ||
+    !hasOwnerOrigin(requestHeaders)
+  )
+    return {
+      success: false,
+      error: { code: "UNAVAILABLE", message: "Appointment is unavailable." },
+    };
+  if (!(await readOwnerContext(requestHeaders)))
+    return {
+      success: false,
+      error: { code: "UNAUTHENTICATED", message: "Sign in to continue." },
+    };
+  refresh();
+  return { success: true, data: null };
+}
+
+export async function restoreOwnerBookingAction(
+  input: unknown,
+): Promise<ActionResult<OwnerChangeReceipt>> {
+  const requestHeaders = await headers();
+  if (
+    classifyHost(requestHeaders) !== "owner" ||
+    !hasOwnerOrigin(requestHeaders)
+  )
+    return {
+      success: false,
+      error: { code: "UNAVAILABLE", message: "Appointment is unavailable." },
+    };
+  const result = await restoreOwnerBooking(
+    await readOwnerContext(requestHeaders),
+    input,
+  );
+  if (result.success) {
+    const { bookingId } = result.data;
+    revalidatePath("/owner");
+    revalidatePath(`/owner/appointments/${bookingId}`);
+    revalidatePath("/owner/activity");
+    after(() =>
+      dispatchInitialBookingNotifications(bookingId).catch(() => {
+        console.error("Booking restoration notification dispatch failed.", {
           bookingId,
         });
       }),

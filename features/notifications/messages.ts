@@ -151,6 +151,32 @@ export function renderCustomerUpdate(input: {
   );
 }
 
+export function renderCustomerRestoration(input: {
+  booking: BookingMessageSnapshot;
+  recipient: string;
+  manageUrl: string;
+}): OutboundMessage {
+  const { booking } = input;
+  return createMessage(
+    input.recipient,
+    `Booking restored — ${safeHeader(booking.shop.name)}`,
+    [
+      `Hello ${booking.customerName},`,
+      "",
+      demoNotice,
+      "",
+      "The shop has restored your booking. These saved details are retained:",
+      ...bookingDetails(booking),
+      "",
+      `Shop: ${booking.shop.name}`,
+      `Address: ${booking.shop.address}`,
+      `Contact: ${booking.shop.publicContact}`,
+      `Manage your booking: ${input.manageUrl}`,
+      "Online changes are not available within 12 hours of your start. Contact the shop for help.",
+    ].join("\n"),
+  );
+}
+
 export function renderOwnerAlert(input: {
   booking: BookingMessageSnapshot;
   recipient: string;

@@ -32,6 +32,7 @@ describe("notification work", () => {
   let getOwnBookingActivity: typeof import("../queries").getOwnBookingActivity;
   let cancelOwnerBooking: typeof import("@/features/bookings/mutations").cancelOwnerBooking;
   let moveOwnerBooking: typeof import("@/features/bookings/mutations").moveOwnerBooking;
+  let restoreOwnerBooking: typeof import("@/features/bookings/mutations").restoreOwnerBooking;
   let cancelCustomerBooking: typeof import("@/features/bookings/mutations").cancelCustomerBooking;
   let getManagedBooking: typeof import("@/features/bookings/queries").getManagedBooking;
   let getOwnAppointment: typeof import("@/features/bookings/queries").getOwnAppointment;
@@ -76,7 +77,12 @@ describe("notification work", () => {
       trackCustomerChangeRateKey(rateKeys, context, input);
       return mutations.cancelCustomerBooking(context, input);
     };
-    ({ createOwnerBooking, cancelOwnerBooking, moveOwnerBooking } = mutations);
+    ({
+      createOwnerBooking,
+      cancelOwnerBooking,
+      moveOwnerBooking,
+      restoreOwnerBooking,
+    } = mutations);
     ({ getOwnBookingActivity, getOwnNotificationActivity } =
       await import("../queries"));
     ({ getManagedBooking, getOwnAppointment } =
@@ -436,6 +442,83 @@ describe("notification work", () => {
     expect(owner).toMatchObject({
       success: true,
       data: { notifications: { email: { status: "not_attempted" } } },
+    });
+  });
+
+  it("projects the restoration event and current work into owner Activity and both summaries", async () => {
+    const ids = await fixture();
+    const created = await createPublicBooking(
+      { shopId: ids.shopId },
+      notificationBookingInput(
+        ids.serviceId,
+        ids.barberId,
+        "restored-activity@example.test",
+      ),
+    );
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+    const cancelled = await cancelOwnerBooking(ids.context, {
+      bookingId: created.data.bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(cancelled.success).toBe(true);
+    const restored = await restoreOwnerBooking(ids.context, {
+      bookingId: created.data.bookingId,
+      expectedRevision: 1,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(restored.success).toBe(true);
+
+    const changes = await getOwnBookingActivity(ids.context);
+    expect(changes.success).toBe(true);
+    if (!changes.success) return;
+    expect(changes.data.rows[0]).toMatchObject({
+      bookingId: created.data.bookingId,
+      kind: "restore",
+      actorType: "owner",
+      revision: 2,
+      before: { status: "cancelled", startAt: "2026-11-02T10:00:00.000Z" },
+      after: { status: "confirmed", startAt: "2026-11-02T10:00:00.000Z" },
+    });
+
+    const notifications = await getOwnNotificationActivity(ids.context);
+    expect(notifications.success).toBe(true);
+    if (!notifications.success) return;
+    expect(
+      notifications.data.rows.find(
+        (row) => row.kind === "customer_restoration",
+      ),
+    ).toMatchObject({
+      status: "not_attempted",
+      recipient: "restored-activity@example.test",
+      attempt: null,
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM notification_work WHERE booking_id=$1 AND kind IN ('owner_alert','owner_cancellation','owner_move') AND booking_revision>0",
+          [created.data.bookingId],
+        )
+      ).rows[0].count,
+    ).toBe(0);
+
+    const token = created.data.manageUrl.split("/manage/")[1];
+    const managed = await getManagedBooking({ shopId: ids.shopId }, token);
+    const owner = await getOwnAppointment(ids.context, created.data.bookingId);
+    expect(managed).toMatchObject({
+      success: true,
+      data: {
+        status: "confirmed",
+        notifications: { email: { status: "not_attempted" } },
+      },
+    });
+    expect(owner).toMatchObject({
+      success: true,
+      data: {
+        status: "confirmed",
+        notifications: { email: { status: "not_attempted" } },
+      },
     });
   });
 

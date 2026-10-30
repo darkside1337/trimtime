@@ -32,7 +32,7 @@ export type OwnerAppointmentDraft = {
   recoveryKey: string;
   submittedPayload: string | null;
   appointmentId?: string;
-  operationMode?: "move" | "cancel";
+  operationMode?: "move" | "cancel" | "restore";
   recoveryPending?: boolean;
 };
 

@@ -6,7 +6,12 @@ import Link from "next/link";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { OwnerDiscardDialog } from "@/components/owner-discard-dialog";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { cancelOwnerBookingAction, moveOwnerBookingAction } from "../actions";
+import {
+  cancelOwnerBookingAction,
+  moveOwnerBookingAction,
+  refreshOwnerAppointmentAction,
+  restoreOwnerBookingAction,
+} from "../actions";
 import { fixedBookingPrice } from "../money";
 import { resolveOwnerStartChoices } from "../time";
 import type {
@@ -20,6 +25,7 @@ import {
 import { useAppointmentDismissal } from "../hooks/use-appointment-dismissal";
 import { AppointmentCancelDialogContent } from "./appointment-cancel-dialog";
 import { AppointmentMoveDialogContent } from "./appointment-move-dialog";
+import { AppointmentRestoreDialogContent } from "./appointment-restore-dialog";
 import { createRecoveryKey } from "./recovery-key";
 
 export function AppointmentCalendarBackLink({ href }: { href: string }) {
@@ -41,7 +47,7 @@ export function AppointmentCalendarBackLink({ href }: { href: string }) {
   );
 }
 
-type Mode = "move" | "cancel" | null;
+type Mode = "move" | "cancel" | "restore" | null;
 type Values = OwnerAppointmentDraftValues;
 type AppointmentOperationsProps = {
   appointment: OwnerAppointmentView;
@@ -94,6 +100,10 @@ function AppointmentOperationsForm({
     draft?.appointmentId === appointment.id && draft.operationMode === "cancel"
       ? draft
       : null;
+  const savedRestoreDraft =
+    draft?.appointmentId === appointment.id && draft.operationMode === "restore"
+      ? draft
+      : null;
   const [mode, setMode] = useState<Mode>(
     savedDraft?.recoveryPending
       ? "move"
@@ -106,6 +116,9 @@ function AppointmentOperationsForm({
   );
   const [cancelUncertain, setCancelUncertain] = useState(
     savedCancelDraft?.recoveryPending === true,
+  );
+  const [restoreUncertain, setRestoreUncertain] = useState(
+    savedRestoreDraft?.recoveryPending === true,
   );
   const [reloadConfirmation, setReloadConfirmation] = useState(false);
   const initial = useMemo<Values>(() => {
@@ -136,9 +149,12 @@ function AppointmentOperationsForm({
   const recoveryKey =
     (mode === "cancel"
       ? savedCancelDraft?.recoveryKey
-      : savedDraft?.recoveryKey) ?? createRecoveryKey();
+      : mode === "restore"
+        ? savedRestoreDraft?.recoveryKey
+        : savedDraft?.recoveryKey) ?? createRecoveryKey();
   const submittedPayload = savedDraft?.submittedPayload ?? null;
   const cancelPayload = savedCancelDraft?.submittedPayload ?? null;
+  const restorePayload = savedRestoreDraft?.submittedPayload ?? null;
   const service = choices.services.find((item) => item.id === values.serviceId);
   const barbers = choices.barbers.filter(
     (item) => !service || service.barberIds.includes(item.id),
@@ -154,7 +170,10 @@ function AppointmentOperationsForm({
   const canChange =
     appointment.status === "confirmed" &&
     Date.parse(appointment.endAt) > Date.parse(now);
-  const recoveryPending = uncertain || cancelUncertain;
+  const canRestore =
+    appointment.status === "cancelled" &&
+    Date.parse(appointment.startAt) > Date.parse(now);
+  const recoveryPending = uncertain || cancelUncertain || restoreUncertain;
 
   function update(patch: Partial<Values>) {
     if (uncertain) return;
@@ -338,24 +357,129 @@ function AppointmentOperationsForm({
     }
   }
 
-  if (!canChange && !recoveryPending) return null;
+  async function restore() {
+    if (busy) return;
+    const payload = {
+      bookingId: appointment.id,
+      expectedRevision: appointment.revision,
+      operationKey: recoveryKey,
+    };
+    const serialized = JSON.stringify(payload);
+    setDraft({
+      values,
+      baseline,
+      recoveryKey,
+      submittedPayload: serialized,
+      appointmentId: appointment.id,
+      operationMode: "restore",
+    });
+    setBusy(true);
+    setError("");
+    try {
+      const result = await restoreOwnerBookingAction(payload);
+      if (!result.success) {
+        setDraft({
+          values,
+          baseline,
+          recoveryKey,
+          submittedPayload: serialized,
+          appointmentId: appointment.id,
+          operationMode: "restore",
+          recoveryPending: false,
+        });
+        setRestoreUncertain(false);
+        setError(result.error.message);
+        return;
+      }
+      clearDraft();
+      setUncertain(false);
+      setCancelUncertain(false);
+      setRestoreUncertain(false);
+      setMode(null);
+      router.refresh();
+    } catch {
+      setDraft({
+        values,
+        baseline,
+        recoveryKey,
+        submittedPayload: serialized,
+        appointmentId: appointment.id,
+        operationMode: "restore",
+        recoveryPending: true,
+      });
+      setRestoreUncertain(true);
+      setError(
+        "The response was interrupted. Retry the same operation to recover its result.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function retryRestore() {
+    if (!restorePayload || busy) return;
+    setBusy(true);
+    try {
+      const result = await restoreOwnerBookingAction(
+        JSON.parse(restorePayload),
+      );
+      if (!result.success) {
+        setDraft({
+          values,
+          baseline,
+          recoveryKey,
+          submittedPayload: restorePayload,
+          appointmentId: appointment.id,
+          operationMode: "restore",
+          recoveryPending: false,
+        });
+        setRestoreUncertain(false);
+        setError(result.error.message);
+        return;
+      }
+      clearDraft();
+      setUncertain(false);
+      setCancelUncertain(false);
+      setRestoreUncertain(false);
+      setMode(null);
+      router.refresh();
+    } catch {
+      if (draft) setDraft({ ...draft, recoveryPending: true });
+      setError("Recovery is still unavailable. Retry the same operation.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!canChange && !canRestore && !recoveryPending) return null;
 
   return (
     <>
-      {canChange && !recoveryPending && (
+      {!recoveryPending && (canChange || canRestore) && (
         <div className="flex flex-wrap gap-2" aria-label="Appointment actions">
-          <Button variant="outline" onClick={() => setMode("move")}>
-            Move appointment
-          </Button>
-          <Button variant="destructive" onClick={() => setMode("cancel")}>
-            Cancel appointment
-          </Button>
+          {canChange && (
+            <>
+              <Button variant="outline" onClick={() => setMode("move")}>
+                Move appointment
+              </Button>
+              <Button variant="destructive" onClick={() => setMode("cancel")}>
+                Cancel appointment
+              </Button>
+            </>
+          )}
+          {canRestore && (
+            <Button variant="outline" onClick={() => setMode("restore")}>
+              Restore appointment
+            </Button>
+          )}
         </div>
       )}
       {recoveryPending && mode === null && (
         <Button
           variant="outline"
-          onClick={() => setMode(uncertain ? "move" : "cancel")}
+          onClick={() =>
+            setMode(uncertain ? "move" : cancelUncertain ? "cancel" : "restore")
+          }
         >
           Recover pending operation
         </Button>
@@ -364,8 +488,13 @@ function AppointmentOperationsForm({
         open={mode !== null}
         onOpenChange={(open) => {
           if (!open && !busy) {
+            const refreshAfterInterruption = restoreUncertain;
             setMode(null);
             setError("");
+            // Fetch the authoritative revision after an interrupted outcome so
+            // recovery stays reachable when fresh restore controls disappear.
+            if (refreshAfterInterruption)
+              refreshOwnerAppointmentAction().catch(() => {});
           }
         }}
       >
@@ -401,7 +530,7 @@ function AppointmentOperationsForm({
                 router.refresh();
               }}
             />
-          ) : (
+          ) : mode === "cancel" ? (
             <AppointmentCancelDialogContent
               error={error}
               busy={busy}
@@ -409,6 +538,16 @@ function AppointmentOperationsForm({
               onRetry={retryCancel}
               onKeep={() => setMode(null)}
               onConfirm={cancel}
+            />
+          ) : (
+            <AppointmentRestoreDialogContent
+              appointment={appointment}
+              busy={busy}
+              error={error}
+              uncertain={restoreUncertain}
+              onRetry={retryRestore}
+              onKeep={() => setMode(null)}
+              onConfirm={restore}
             />
           )}
         </DialogContent>

@@ -7,6 +7,7 @@ type WorkKind =
   | "customer_confirmation"
   | "customer_move"
   | "customer_cancellation"
+  | "customer_restoration"
   | "owner_alert";
 
 describe("booking notification reads", () => {
@@ -78,7 +79,7 @@ describe("booking notification reads", () => {
   async function addChange(
     bookingId: string,
     revision: number,
-    kind: "move" | "cancel" = "move",
+    kind: "move" | "cancel" | "restore" = "move",
   ) {
     const changeId = randomUUID();
     await database.pool.query(
@@ -249,6 +250,34 @@ describe("booking notification reads", () => {
     await expectEmail(bookingId, token, {
       status: "failed",
       reason: "message_rejected",
+      updatedAt: "2026-11-02T08:01:00.000Z",
+    });
+  });
+
+  it("uses current-revision restoration work for both owner and manage summaries", async () => {
+    const { bookingId, token } = await createBooking(2);
+    const restoration = await addChange(bookingId, 2, "restore");
+    const cancellation = await addChange(bookingId, 1, "cancel");
+    await addWork({
+      bookingId,
+      revision: 2,
+      kind: "customer_restoration",
+      changeId: restoration,
+      status: "captured",
+      createdAt: new Date("2026-11-02T08:01:00Z"),
+    });
+    await addWork({
+      bookingId,
+      revision: 1,
+      kind: "customer_cancellation",
+      changeId: cancellation,
+      status: "captured",
+      createdAt: new Date("2026-11-02T08:02:00Z"),
+    });
+
+    await expectEmail(bookingId, token, {
+      status: "captured",
+      reason: null,
       updatedAt: "2026-11-02T08:01:00.000Z",
     });
   });

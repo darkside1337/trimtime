@@ -95,7 +95,7 @@ export async function getOwnBookingActivity(
         return {
           id: String(item.id),
           bookingId: String(item.bookingId),
-          kind: item.kind as "move" | "cancel",
+          kind: item.kind as "move" | "cancel" | "restore",
           actorType: item.actorType as "owner" | "customer",
           revision: Number(item.revision),
           committedAt: new Date(item.committedAt as Date).toISOString(),

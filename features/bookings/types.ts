@@ -224,11 +224,17 @@ export type OwnerBookingReceipt = {
   };
 };
 
+export type RestoreOwnerBookingInput = {
+  bookingId: string;
+  expectedRevision: number;
+  operationKey: string;
+};
+
 export type OwnerChangeReceipt = {
   bookingId: string;
   operation: {
     id: string;
-    kind: "move" | "cancel";
+    kind: "move" | "cancel" | "restore";
     revision: number;
     committedAt: string;
     snapshot: Record<string, unknown>;
