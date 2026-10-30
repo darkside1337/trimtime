@@ -15,8 +15,8 @@ export default defineConfig({
       "features/**/tests/*.integration.test.ts",
       "server/tests/*.integration.test.ts",
     ],
-    fileParallelism: false,
-    maxWorkers: 2,
+    fileParallelism: true,
+    maxWorkers: 3,
     passWithNoTests: false,
   },
 });

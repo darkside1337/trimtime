@@ -772,7 +772,7 @@ describe("public booking operations", () => {
     const fn = `reject_cancel_work_${suffix}`;
     const trigger = `reject_cancel_work_trigger_${suffix}`;
     await database.pool.query(
-      `CREATE FUNCTION ${fn}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.kind = 'customer_cancellation' THEN RAISE EXCEPTION 'forced work failure'; END IF; RETURN NEW; END $$`,
+      `CREATE FUNCTION ${fn}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.booking_id = '${created.data.bookingId}'::uuid AND NEW.kind = 'customer_cancellation' THEN RAISE EXCEPTION 'forced work failure'; END IF; RETURN NEW; END $$`,
     );
     await database.pool.query(
       `CREATE TRIGGER ${trigger} BEFORE INSERT ON notification_work FOR EACH ROW EXECUTE FUNCTION ${fn}()`,
