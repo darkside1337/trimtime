@@ -435,7 +435,7 @@ test("calendar and both appointment dialogs fit the approved responsive widths",
     });
     await expect(
       detailsDialog.getByRole("link", { name: "Back to calendar" }),
-    ).toBeInViewport();
+    ).toHaveCount(0);
     await captureDialogViewport(page, `details-dialog-bottom`);
     await page
       .getByRole("button", { name: "Close appointment details" })

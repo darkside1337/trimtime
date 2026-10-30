@@ -17,16 +17,14 @@ import { useAppointmentDismissal } from "../hooks/use-appointment-dismissal";
 
 export function AppointmentDialog({
   appointment,
-  calendarHref,
   now,
   moveChoices,
 }: {
   appointment: OwnerAppointmentView;
-  calendarHref: string;
   now: string;
   moveChoices: OwnerAppointmentMoveChoices;
 }) {
-  const { requestClose, requestNavigation } = useAppointmentDismissal(true);
+  const { requestClose } = useAppointmentDismissal(true);
   return (
     <Dialog
       open
@@ -63,21 +61,6 @@ export function AppointmentDialog({
             />
           }
         />
-        <div className="flex justify-end">
-          <Link
-            className={buttonVariants({ variant: "outline" })}
-            data-slot="button"
-            data-size="default"
-            data-variant="outline"
-            href={calendarHref}
-            onClick={(event) => {
-              event.preventDefault();
-              requestNavigation(calendarHref);
-            }}
-          >
-            Back to calendar
-          </Link>
-        </div>
       </DialogContent>
     </Dialog>
   );
