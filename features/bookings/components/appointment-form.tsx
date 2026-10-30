@@ -236,9 +236,24 @@ function AppointmentFormContent({
         </div>
       )}
       <header className="mb-6 max-w-xl">
-        <h1 className="font-heading text-3xl font-medium tracking-tight">
-          New appointment
-        </h1>
+        <div className="flex items-center justify-between gap-4">
+          <h1
+            className={`min-w-0 font-heading text-3xl font-medium tracking-tight ${dialog ? "max-[380px]:text-xl" : ""}`}
+          >
+            New appointment
+          </h1>
+          {dialog && (
+            <Button
+              variant="outline"
+              size="icon"
+              className="shrink-0"
+              aria-label="Close new appointment"
+              onClick={requestClose}
+            >
+              ×
+            </Button>
+          )}
+        </div>
         <p className="mt-2 text-sm text-muted-foreground">
           Manual entry for a walk-in or phone booking. Supports exact
           whole-minute starts for ongoing or future slots. Duration and USD
@@ -558,7 +573,13 @@ function AppointmentFormContent({
             </p>
           </div>
         </aside>
-        <div className="sticky bottom-0 z-10 col-span-full flex justify-between gap-3 border-t border-border bg-background p-4 max-[640px]:-mx-4 max-[640px]:shadow-[0_-8px_24px_rgb(0_0_0_/_0.08)] min-[641px]:rounded-b-2xl">
+        <div
+          className={
+            dialog
+              ? "col-span-full flex justify-between gap-3 border-t border-border pt-4"
+              : "sticky bottom-0 z-10 col-span-full flex justify-between gap-3 border-t border-border bg-background p-4 max-[640px]:-mx-4 max-[640px]:shadow-[0_-8px_24px_rgb(0_0_0_/_0.08)] min-[641px]:rounded-b-2xl"
+          }
+        >
           <Button
             type="button"
             variant="outline"

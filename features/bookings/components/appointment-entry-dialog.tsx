@@ -1,6 +1,5 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -41,16 +40,6 @@ export function AppointmentEntryDialog({
         <DialogDescription className="sr-only">
           Create an exact-minute manual appointment.
         </DialogDescription>
-        <div className="flex justify-end gap-2 px-5 pt-5">
-          <Button
-            variant="outline"
-            size="icon"
-            aria-label="Close new appointment"
-            onClick={requestClose}
-          >
-            ×
-          </Button>
-        </div>
         <AppointmentForm
           choices={choices}
           initialDate={initialDate}
