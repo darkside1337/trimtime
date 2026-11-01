@@ -1,18 +1,21 @@
 "use client";
 
-import { useEffect, useRef, useState, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 import type {
   CustomerReplacementChoices,
   CustomerReplacementReceipt,
-  CustomerReplacementSlotsView,
   ManagedBookingView,
   ReplaceCustomerBookingInput,
 } from "../../types";
 import {
   getCustomerReplacementChoicesAction,
-  getCustomerReplacementSlotsAction,
   replaceCustomerBookingAction,
 } from "../../actions";
 import { createRecoveryKey } from "../recovery-key";
@@ -23,6 +26,10 @@ import {
   type AuthoritativeServerClock,
 } from "./cutoff-warning";
 import { ReplacementReview } from "./replacement-review";
+import { ReplacementStepBarbers } from "./replacement-step-barbers";
+import { ReplacementStepServices } from "./replacement-step-services";
+import { ReplacementStepSlots } from "./replacement-step-slots";
+import { useReplacementSlots } from "./use-replacement-slots";
 export { checkCutoffWithin12Hours, type AuthoritativeServerClock };
 
 export function BookingPreview({
@@ -51,10 +58,6 @@ export function BookingPreview({
   const [date, setDate] = useState(original.dateTime);
   const [startAt, setStartAt] = useState("");
 
-  const [slots, setSlots] = useState<CustomerReplacementSlotsView["slots"]>([]);
-  const [loadingSlots, setLoadingSlots] = useState(false);
-  const [slotsError, setSlotsError] = useState<string | null>(null);
-
   const [screen, setScreen] = useState<"edit" | "review">("edit");
   const reviewHeadingRef = useRef<HTMLHeadingElement>(null);
 
@@ -67,29 +70,37 @@ export function BookingPreview({
 
   const operationKey = useRef(createRecoveryKey());
   const submittedPayload = useRef<ReplaceCustomerBookingInput | null>(null);
-  const slotRequestId = useRef(0);
 
   const [serverClock, setServerClock] =
     useState<AuthoritativeServerClock | null>(null);
+  const updateAuthoritativeTime = useCallback(
+    (serverNowIso?: string, networkDelayMs: number = 0) => {
+      if (!serverNowIso) return;
+      const serverTimeMs = new Date(serverNowIso).getTime();
+      if (Number.isNaN(serverTimeMs)) return;
 
-  function updateAuthoritativeTime(
-    serverNowIso?: string,
-    networkDelayMs: number = 0,
-  ) {
-    if (!serverNowIso) return;
-    const serverTimeMs = new Date(serverNowIso).getTime();
-    if (!Number.isNaN(serverTimeMs)) {
       setServerClock({
         serverTimeMs,
         recordedAtMonotonicMs: performance.now(),
         networkDelayMs,
       });
-    }
-  }
+    },
+    [],
+  );
 
-  function handleStartSelection(slotIso: string) {
-    setStartAt(slotIso);
-  }
+  const {
+    slots,
+    loading: loadingSlots,
+    error: slotsError,
+    invalidate: invalidateSlots,
+  } = useReplacementSlots({
+    token,
+    choices,
+    serviceId,
+    barberId,
+    date,
+    onServerNow: updateAuthoritativeTime,
+  });
 
   function handleProceedToReview() {
     setScreen("review");
@@ -119,7 +130,6 @@ export function BookingPreview({
           const roundTripMs = Math.max(0, reqEndMonotonic - reqStartMonotonic);
           setChoices(res.data);
           updateAuthoritativeTime(res.data.serverNow, roundTripMs);
-          setLoadingSlots(true);
           setServiceId((prev) => {
             const currentSvc =
               res.data.services.find((s) => s.id === prev) ??
@@ -145,49 +155,13 @@ export function BookingPreview({
     return () => {
       active = false;
     };
-  }, [token, reloadChoicesCount, booking.barber.name]);
+  }, [token, reloadChoicesCount, booking.barber.name, updateAuthoritativeTime]);
 
   useEffect(() => {
     if (!loadingChoices) {
       (screen === "review" ? reviewHeadingRef : headingRef).current?.focus();
     }
   }, [screen, headingRef, loadingChoices]);
-
-  // Fetch slots whenever choices, service, barber, or date changes
-  useEffect(() => {
-    const reqId = ++slotRequestId.current;
-    if (!choices || !serviceId || !barberId || !date) {
-      return;
-    }
-    const reqStartMonotonic = performance.now();
-
-    getCustomerReplacementSlotsAction({
-      token,
-      expectedRevision: choices.revision,
-      serviceId,
-      barberId,
-      date,
-    })
-      .then((res) => {
-        if (slotRequestId.current !== reqId) return;
-        setLoadingSlots(false);
-        if (res.success) {
-          const reqEndMonotonic = performance.now();
-          const roundTripMs = Math.max(0, reqEndMonotonic - reqStartMonotonic);
-          setSlots(res.data.slots);
-          updateAuthoritativeTime(res.data.serverNow, roundTripMs);
-        } else {
-          setSlots([]);
-          setSlotsError(res.error.message);
-        }
-      })
-      .catch(() => {
-        if (slotRequestId.current !== reqId) return;
-        setLoadingSlots(false);
-        setSlots([]);
-        setSlotsError("Could not load times. Please try again.");
-      });
-  }, [token, choices, serviceId, barberId, date]);
 
   const selectedService = choices?.services.find((s) => s.id === serviceId) ??
     choices?.retainedService ?? {
@@ -242,6 +216,7 @@ export function BookingPreview({
           setError(result.error.message);
         } else if (result.error.code === "STALE_OFFER") {
           setError("Service details have changed. Please review again.");
+          invalidateSlots(Boolean(date && serviceId && barberId));
           setReloadChoicesCount((c) => c + 1);
           setScreen("edit");
         } else if (result.error.code === "UNAVAILABLE_INTERVAL") {
@@ -251,6 +226,7 @@ export function BookingPreview({
           setStartAt("");
           setScreen("edit");
           // Trigger slot refresh
+          invalidateSlots(Boolean(date && serviceId && barberId));
           setChoices({ ...choices });
         } else {
           setError(result.error.message);
@@ -357,166 +333,50 @@ export function BookingPreview({
 
       <div className="mt-6 grid gap-8 lg:grid-cols-[minmax(0,1fr)_280px]">
         <div className="grid min-w-0 gap-7">
-          <fieldset className="grid gap-3 border-0 p-0">
-            <legend className="mb-1 text-sm font-semibold">
-              1. Choose your service
-            </legend>
-            {choices?.services.map((svc) => (
-              <label
-                className={cn(
-                  "flex min-h-[72px] cursor-pointer items-center gap-4 border border-[#e6e6e2] px-4 py-3 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[#21734f]",
-                  serviceId === svc.id && "border-[#21734f] bg-[#f7f7f5]",
-                )}
-                key={svc.id}
-              >
-                <input
-                  checked={serviceId === svc.id}
-                  name="replacement-service"
-                  onChange={() => {
-                    slotRequestId.current += 1;
-                    const nextBarberId = svc.barberIds.includes(barberId)
-                      ? barberId
-                      : (svc.barberIds[0] ?? "");
-                    setServiceId(svc.id);
-                    setBarberId(nextBarberId);
-                    setStartAt("");
-                    setSlots([]);
-                    setSlotsError(null);
-                    setLoadingSlots(Boolean(date && nextBarberId));
-                  }}
-                  type="radio"
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="block font-semibold">{svc.name}</span>
-                  <span className="text-xs text-[#72726e]">
-                    {svc.durationMinutes} minutes
-                    {svc.id === choices.retainedService.id
-                      ? " · Your current service"
-                      : ""}
-                  </span>
-                </span>
-                <span className="text-right text-sm text-[#72726e]">
-                  ${Number(svc.priceUsd).toFixed(2)}
-                </span>
-              </label>
-            ))}
-          </fieldset>
-
-          <fieldset className="grid gap-3 border-0 p-0">
-            <legend className="mb-1 text-sm font-semibold">
-              2. Choose your barber
-            </legend>
-            {availableBarbers.length === 0 ? (
-              <p className="text-xs text-[#72726e]">
-                No barbers available for this service.
-              </p>
-            ) : (
-              availableBarbers.map((b) => (
-                <label
-                  className={cn(
-                    "flex min-h-[64px] cursor-pointer items-center gap-4 border border-[#e6e6e2] px-4 py-3 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[#21734f]",
-                    barberId === b.id && "border-[#21734f] bg-[#f7f7f5]",
-                  )}
-                  key={b.id}
-                >
-                  <input
-                    checked={barberId === b.id}
-                    name="replacement-barber"
-                    onChange={() => {
-                      slotRequestId.current += 1;
-                      setBarberId(b.id);
-                      setStartAt("");
-                      setSlots([]);
-                      setSlotsError(null);
-                      setLoadingSlots(Boolean(date && serviceId));
-                    }}
-                    type="radio"
-                  />
-                  <span>{b.name}</span>
-                </label>
-              ))
-            )}
-          </fieldset>
-
-          <label
-            className="grid max-w-lg gap-2 text-sm font-semibold"
-            htmlFor="replacement-date"
-          >
-            Choose a date
-            <input
-              className="min-h-11 rounded-[2px] border border-[#e6e6e2] px-3 font-normal"
-              id="replacement-date"
-              onChange={(event) => {
-                const newDate = event.target.value;
-                slotRequestId.current += 1;
-                setDate(newDate);
+          {choices ? (
+            <ReplacementStepServices
+              choices={choices}
+              serviceId={serviceId}
+              onServiceChange={(nextServiceId) => {
+                invalidateSlots(Boolean(date));
+                const nextService = choices.services.find(
+                  (service) => service.id === nextServiceId,
+                );
+                const nextBarberId = nextService?.barberIds.includes(barberId)
+                  ? barberId
+                  : (nextService?.barberIds[0] ?? "");
+                setServiceId(nextServiceId);
+                setBarberId(nextBarberId);
                 setStartAt("");
-                setSlots([]);
-                setSlotsError(null);
-                setLoadingSlots(Boolean(newDate && serviceId && barberId));
               }}
-              type="date"
-              value={date}
             />
-          </label>
+          ) : null}
 
-          <fieldset className="grid gap-3 border-0 p-0">
-            <legend className="mb-1 text-sm font-semibold">
-              4. Choose a start time
-            </legend>
-            {loadingSlots ? (
-              <p className="text-xs text-[#72726e]">Loading times…</p>
-            ) : slotsError ? (
-              <p className="text-xs text-[#9f2d20]">{slotsError}</p>
-            ) : !date ? (
-              <p className="text-xs text-[#72726e]">
-                Choose a date to view available times.
-              </p>
-            ) : !barberId || availableBarbers.length === 0 ? (
-              <p className="text-xs text-[#72726e]">
-                No barbers available for this service.
-              </p>
-            ) : slots.length === 0 ? (
-              <p className="text-xs text-[#72726e]">
-                No available times on this date.
-              </p>
-            ) : (
-              <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-                {slots.map((slot) => {
-                  const isAmbiguous =
-                    slots.filter((s) => s.localStart === slot.localStart)
-                      .length > 1;
-                  const label = isAmbiguous
-                    ? `${slot.localStart} · UTC${slot.offset}`
-                    : slot.localStart;
+          <ReplacementStepBarbers
+            barbers={availableBarbers}
+            barberId={barberId}
+            onBarberChange={(nextBarberId) => {
+              invalidateSlots(Boolean(date && serviceId));
+              setBarberId(nextBarberId);
+              setStartAt("");
+            }}
+          />
 
-                  return (
-                    <label
-                      className={cn(
-                        "grid min-h-11 cursor-pointer place-items-center border border-[#e6e6e2] px-2 text-center text-xs",
-                        "has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[#21734f]",
-                        startAt === slot.start &&
-                          "border-[#21734f] bg-[#21734f] text-white",
-                      )}
-                      key={slot.start}
-                    >
-                      <input
-                        checked={startAt === slot.start}
-                        className="sr-only"
-                        name="replacement-start"
-                        onChange={() => {
-                          handleStartSelection(slot.start);
-                        }}
-                        type="radio"
-                        value={slot.start}
-                      />
-                      {label}
-                    </label>
-                  );
-                })}
-              </div>
-            )}
-          </fieldset>
+          <ReplacementStepSlots
+            date={date}
+            slots={slots}
+            loading={loadingSlots}
+            error={slotsError}
+            barberId={barberId}
+            hasAvailableBarbers={availableBarbers.length > 0}
+            startAt={startAt}
+            onDateChange={(nextDate) => {
+              invalidateSlots(Boolean(nextDate && serviceId && barberId));
+              setDate(nextDate);
+              setStartAt("");
+            }}
+            onStartAtChange={setStartAt}
+          />
 
           <Button
             disabled={
