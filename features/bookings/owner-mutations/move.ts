@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { Temporal } from "temporal-polyfill";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { barberServices, barbers, services } from "@/db/schema/catalog";
+import { barberServices, barbers } from "@/db/schema/catalog";
 import { bookings } from "@/db/schema/bookings";
 import { bookingChanges } from "@/db/schema/booking-changes";
 import { resolveEmailConfig } from "@/features/notifications/config";
@@ -14,7 +14,7 @@ import type { ActionResult } from "@/lib/action-result";
 import { fitsScheduleInterval } from "@/features/availability/slots";
 import { resolveScheduleForDate } from "@/features/availability/schedule-resolution";
 import { moveOwnerBookingSchema } from "../schemas";
-import { fixedBookingPrice } from "../money";
+import { resolveChangeOffer } from "../change-primitives";
 import { hashSecret } from "../capabilities";
 import { findOccupyingInterval } from "../creation-primitives";
 import {
@@ -108,54 +108,24 @@ export async function moveOwnerBooking(
           "INVALID_STATE",
           "This appointment can no longer be moved.",
         );
-      const currentSavedService = parsed.data.serviceId === booking.serviceId;
-      const [replacementService] = currentSavedService
-        ? []
-        : await tx
-            .select()
-            .from(services)
-            .where(
-              and(
-                eq(services.shopId, shop.id),
-                eq(services.id, parsed.data.serviceId),
-              ),
-            )
-            .limit(1);
-      if (
-        (!currentSavedService &&
-          (!replacementService ||
-            !replacementService.offered ||
-            replacementService.archived)) ||
-        (currentSavedService &&
-          (parsed.data.reviewedOffer.name !== booking.serviceName ||
-            parsed.data.reviewedOffer.priceUsd !==
-              fixedBookingPrice(booking.servicePriceUsd) ||
-            parsed.data.reviewedOffer.durationMinutes !==
-              String(booking.serviceDurationMinutes))) ||
-        (!currentSavedService &&
-          (parsed.data.reviewedOffer.name !== replacementService.name ||
-            parsed.data.reviewedOffer.priceUsd !==
-              fixedBookingPrice(String(replacementService.priceUsd)) ||
-            parsed.data.reviewedOffer.durationMinutes !==
-              String(replacementService.durationMinutes)))
-      )
+      const offer = await resolveChangeOffer(tx, {
+        shopId: shop.id,
+        requestedServiceId: parsed.data.serviceId,
+        savedService: {
+          id: booking.serviceId,
+          name: booking.serviceName,
+          priceUsd: booking.servicePriceUsd,
+          durationMinutes: booking.serviceDurationMinutes,
+        },
+        reviewedOffer: parsed.data.reviewedOffer,
+        retainedServiceMustBeNonarchived: false,
+      });
+      if (!offer.ok)
         return fail(
           "STALE_OFFER",
           "Review the current service before changing the appointment.",
         );
-      const service = currentSavedService
-        ? {
-            id: booking.serviceId,
-            name: booking.serviceName,
-            priceUsd: booking.servicePriceUsd,
-            durationMinutes: booking.serviceDurationMinutes,
-          }
-        : {
-            id: replacementService.id,
-            name: replacementService.name,
-            priceUsd: fixedBookingPrice(String(replacementService.priceUsd)),
-            durationMinutes: Number(replacementService.durationMinutes),
-          };
+      const service = offer.service;
       const start = new Date(startInstant.epochMilliseconds);
       const endInstant = startInstant.add({
         minutes: service.durationMinutes,

@@ -1311,6 +1311,44 @@ describe("customer replacement integration", () => {
     }
   });
 
+  it("customer retained service requires nonarchived catalog row while owner can retain saved offer", async () => {
+    const ids = await fixture();
+    const booking = await createBooking(ids);
+    await database.pool.query(
+      "UPDATE services SET archived = true WHERE id = $1",
+      [ids.serviceId],
+    );
+
+    const customerResult = await replaceCustomerBooking(
+      { shopId: ids.shopId },
+      replacementInput(booking.token, ids, {
+        startAt: "2026-11-02T11:00:00.000Z",
+      }),
+    );
+    expect(customerResult).toMatchObject({
+      success: false,
+      error: { code: "STALE_OFFER" },
+    });
+
+    const ownerResult = await moveOwnerBooking(ids.context, {
+      bookingId: booking.bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+      serviceId: ids.serviceId,
+      barberId: ids.barberId,
+      startAt: "2026-11-02T11:00:00.000Z",
+      reviewedOffer: {
+        name: "Cut",
+        priceUsd: "25.00",
+        durationMinutes: "30",
+      },
+    });
+    expect(ownerResult).toMatchObject({
+      success: true,
+      data: { operation: { revision: 1 } },
+    });
+  });
+
   it("Slice 3 Case 4: Occupied destination rejects; original details/occupancy remain unchanged", async () => {
     const ids = await fixture();
     // Booking 1: 10:00 - 10:30
