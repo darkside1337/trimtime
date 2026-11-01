@@ -1,26 +1,13 @@
 import "server-only";
-import {
-  and,
-  asc,
-  desc,
-  eq,
-  gt,
-  gte,
-  inArray,
-  lt,
-  ne,
-  or,
-  sql,
-} from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, lt, or, sql } from "drizzle-orm";
 import { Temporal } from "temporal-polyfill";
 import { db } from "@/db";
 import { bookings } from "@/db/schema/bookings";
 import { notificationWork } from "@/db/schema/notification-work";
 import { shops } from "@/db/schema/shops";
 import { barbers, barberServices, services } from "@/db/schema/catalog";
-import { occupiedIntervals } from "@/db/schema/occupancy";
-import { calculateSlots } from "@/features/availability/slots";
-import { resolveScheduleForDate } from "@/features/availability/schedule-resolution";
+import { getRetainedBookingOfferings } from "./booking-offerings";
+import { queryValidatedSlots } from "@/features/availability/queries";
 import type { ActionResult } from "@/lib/action-result";
 import { hashSecret } from "./capabilities";
 import type {
@@ -42,16 +29,6 @@ const unavailable = {
   success: false,
   error: { code: "UNAVAILABLE", message: "This booking link is unavailable." },
 } as const;
-
-function dateBounds(date: string, timeZone: string) {
-  const day = Temporal.PlainDate.from(date);
-  const start = day.toZonedDateTime({ timeZone }).toInstant();
-  const end = day.add({ days: 1 }).toZonedDateTime({ timeZone }).toInstant();
-  return [
-    new Date(start.epochMilliseconds),
-    new Date(end.epochMilliseconds),
-  ] as const;
-}
 
 function latestEmailNotification() {
   const applicableRevision = sql<number>`COALESCE(
@@ -627,61 +604,15 @@ export async function getOwnAppointmentMoveChoices(
       .where(and(eq(bookings.id, appointmentId), eq(bookings.shopId, shop.id)))
       .limit(1);
     if (!booking) return ownerError("NOT_FOUND", "Appointment not found.");
-    const barberRows = await db
-      .select({ id: barbers.id, name: barbers.name })
-      .from(barbers)
-      .where(and(eq(barbers.shopId, shop.id), eq(barbers.archived, false)));
-    const serviceRows = await db
-      .select({
-        id: services.id,
-        name: services.name,
-        priceUsd: services.priceUsd,
-        durationMinutes: services.durationMinutes,
-        offered: services.offered,
-        barberId: barberServices.barberId,
-      })
-      .from(services)
-      .innerJoin(
-        barberServices,
-        and(
-          eq(barberServices.shopId, services.shopId),
-          eq(barberServices.serviceId, services.id),
-        ),
-      )
-      .where(
-        and(
-          eq(services.shopId, shop.id),
-          eq(services.archived, false),
-          or(eq(services.offered, true), eq(services.id, booking.serviceId)),
-        ),
-      )
-      .orderBy(asc(services.name), asc(services.id));
-    const grouped = new Map<
-      string,
-      OwnerAppointmentMoveChoices["services"][number]
-    >();
-    for (const row of serviceRows) {
-      if (!barberRows.some((barber) => barber.id === row.barberId)) continue;
-      const isSavedService = row.id === booking.serviceId;
-      const item = grouped.get(row.id) ?? {
-        id: row.id,
-        name: isSavedService ? booking.serviceName : row.name,
-        priceUsd: isSavedService ? booking.servicePriceUsd : row.priceUsd,
-        durationMinutes: isSavedService
-          ? booking.serviceDurationMinutes
-          : Number(row.durationMinutes),
-        barberIds: [],
-        hidden: !row.offered,
-      };
-      item.barberIds.push(row.barberId);
-      grouped.set(row.id, item);
-    }
+    const offerings = await getRetainedBookingOfferings(db, {
+      shopId: shop.id,
+      retained: booking,
+    });
     return {
       success: true,
       data: {
         timeZone: shop.timeZone,
-        barbers: barberRows,
-        services: [...grouped.values()],
+        ...offerings,
       },
     };
   } catch {
@@ -753,59 +684,15 @@ export async function getCustomerReplacementChoices(
       };
     }
 
-    const barberRows = await db
-      .select({ id: barbers.id, name: barbers.name })
-      .from(barbers)
-      .where(
-        and(eq(barbers.shopId, booking.shopId), eq(barbers.archived, false)),
-      );
-
-    const serviceRows = await db
-      .select({
-        id: services.id,
-        name: services.name,
-        priceUsd: services.priceUsd,
-        durationMinutes: services.durationMinutes,
-        offered: services.offered,
-        barberId: barberServices.barberId,
-      })
-      .from(services)
-      .innerJoin(
-        barberServices,
-        and(
-          eq(barberServices.shopId, services.shopId),
-          eq(barberServices.serviceId, services.id),
-        ),
-      )
-      .where(
-        and(
-          eq(services.shopId, booking.shopId),
-          eq(services.archived, false),
-          or(eq(services.offered, true), eq(services.id, booking.serviceId)),
-        ),
-      )
-      .orderBy(asc(services.name), asc(services.id));
-
-    const grouped = new Map<
-      string,
-      CustomerReplacementChoices["services"][number]
-    >();
-    for (const row of serviceRows) {
-      if (!barberRows.some((barber) => barber.id === row.barberId)) continue;
-      const isSavedService = row.id === booking.serviceId;
-      const item = grouped.get(row.id) ?? {
-        id: row.id,
-        name: isSavedService ? booking.serviceName : row.name,
-        priceUsd: isSavedService ? booking.servicePriceUsd : row.priceUsd,
-        durationMinutes: isSavedService
-          ? booking.serviceDurationMinutes
-          : Number(row.durationMinutes),
-        barberIds: [],
-        hidden: !row.offered,
-      };
-      item.barberIds.push(row.barberId);
-      grouped.set(row.id, item);
-    }
+    const offerings = await getRetainedBookingOfferings(db, {
+      shopId: booking.shopId,
+      retained: {
+        serviceId: booking.serviceId,
+        serviceName: booking.serviceName,
+        servicePriceUsd: booking.servicePriceUsd,
+        serviceDurationMinutes: booking.serviceDurationMinutes,
+      },
+    });
 
     return {
       success: true,
@@ -820,8 +707,7 @@ export async function getCustomerReplacementChoices(
           priceUsd: booking.servicePriceUsd,
           durationMinutes: booking.serviceDurationMinutes,
         },
-        barbers: barberRows,
-        services: [...grouped.values()],
+        ...offerings,
       },
     };
   } catch {
@@ -1016,47 +902,15 @@ export async function getCustomerReplacementSlots(
         };
       }
 
-      const { shopDay, barberDay } = await resolveScheduleForDate(tx, {
+      const slots = await queryValidatedSlots(tx, {
         shopId: booking.shopId,
+        timeZone: booking.timeZone,
         barberId,
         date,
+        durationMinutes,
+        now,
+        excludeOccupancyId: booking.occupancyId,
       });
-
-      const [dateStart, dateEnd] = dateBounds(date, booking.timeZone);
-
-      const occupiedRows = await tx
-        .select({
-          startAt: occupiedIntervals.startAt,
-          endAt: occupiedIntervals.endAt,
-        })
-        .from(occupiedIntervals)
-        .where(
-          and(
-            eq(occupiedIntervals.shopId, booking.shopId),
-            eq(occupiedIntervals.barberId, barberId),
-            sql`${occupiedIntervals.startAt} < ${dateEnd}`,
-            sql`${occupiedIntervals.endAt} > ${dateStart}`,
-            ...(booking.occupancyId
-              ? [ne(occupiedIntervals.id, booking.occupancyId)]
-              : []),
-          ),
-        );
-
-      const slots =
-        durationMinutes > (dateEnd.getTime() - dateStart.getTime()) / 60_000
-          ? []
-          : calculateSlots({
-              date,
-              timeZone: booking.timeZone,
-              now: now.toISOString(),
-              durationMinutes,
-              shopDay,
-              barberDay,
-              occupied: occupiedRows.map(({ startAt, endAt }) => ({
-                start: startAt.toISOString(),
-                end: endAt.toISOString(),
-              })),
-            });
 
       return {
         success: true,

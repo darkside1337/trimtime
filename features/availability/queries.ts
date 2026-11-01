@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import { Temporal } from "temporal-polyfill";
 import { db } from "@/db";
 import { barberServices, barbers, services } from "@/db/schema/catalog";
@@ -484,16 +484,14 @@ export async function getOwnAvailabilityOverview(
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
-async function queryAvailabilitySlots(
+async function getEligibleServiceDuration(
   tx: Transaction,
   params: {
     shopId: string;
-    timeZone: string;
     serviceId: string;
     barberId: string;
-    date: string;
   },
-): Promise<ReturnType<typeof calculateSlots> | null> {
+): Promise<number | null> {
   const [service] = await tx
     .select({ id: services.id, durationMinutes: services.durationMinutes })
     .from(services)
@@ -526,6 +524,22 @@ async function queryAvailabilitySlots(
     )
     .limit(1);
   if (!service || !barber) return null;
+  return Number(service.durationMinutes);
+}
+
+// The caller validates eligibility and derives any excluded occupancy in this transaction.
+export async function queryValidatedSlots(
+  tx: Transaction,
+  params: {
+    shopId: string;
+    timeZone: string;
+    barberId: string;
+    date: string;
+    durationMinutes: number;
+    now: Date | "after-load";
+    excludeOccupancyId: string | null;
+  },
+): Promise<ReturnType<typeof calculateSlots>> {
   const { shopDay, barberDay } = await resolveScheduleForDate(tx, {
     shopId: params.shopId,
     barberId: params.barberId,
@@ -544,17 +558,20 @@ async function queryAvailabilitySlots(
         eq(occupiedIntervals.barberId, params.barberId),
         sql`${occupiedIntervals.startAt} < ${dateEnd}`,
         sql`${occupiedIntervals.endAt} > ${dateStart}`,
+        ...(params.excludeOccupancyId
+          ? [ne(occupiedIntervals.id, params.excludeOccupancyId)]
+          : []),
       ),
     );
-  const now = new Date().toISOString();
-  const durationMinutes = Number(service.durationMinutes);
-  return durationMinutes > (dateEnd.getTime() - dateStart.getTime()) / 60_000
+  const now = params.now === "after-load" ? new Date() : params.now;
+  return params.durationMinutes >
+    (dateEnd.getTime() - dateStart.getTime()) / 60_000
     ? []
     : calculateSlots({
         date: params.date,
         timeZone: params.timeZone,
-        now,
-        durationMinutes,
+        now: now.toISOString(),
+        durationMinutes: params.durationMinutes,
         shopDay,
         barberDay,
         occupied: occupiedRows.map(({ startAt, endAt }) => ({
@@ -610,14 +627,12 @@ export async function previewOwnSlots(
             message: "Set up your shop before previewing availability.",
           },
         };
-      const slots = await queryAvailabilitySlots(tx, {
+      const durationMinutes = await getEligibleServiceDuration(tx, {
         shopId: shop.id,
-        timeZone: shop.timeZone,
         serviceId: parsed.data.serviceId,
         barberId: parsed.data.barberId,
-        date: parsed.data.date,
       });
-      if (!slots)
+      if (durationMinutes === null)
         return {
           success: false as const,
           error: {
@@ -625,6 +640,15 @@ export async function previewOwnSlots(
             message: "Choose an offered service and an active eligible barber.",
           },
         };
+      const slots = await queryValidatedSlots(tx, {
+        shopId: shop.id,
+        timeZone: shop.timeZone,
+        barberId: parsed.data.barberId,
+        date: parsed.data.date,
+        durationMinutes,
+        now: "after-load",
+        excludeOccupancyId: null,
+      });
       return {
         success: true as const,
         data: {
@@ -661,14 +685,21 @@ export async function previewPublishedShopSlots(
       .where(and(eq(shops.id, shopId), eq(shops.published, true)))
       .limit(1);
     if (!shop) return null;
-    const slots = await queryAvailabilitySlots(tx, {
+    const durationMinutes = await getEligibleServiceDuration(tx, {
       shopId: shop.id,
-      timeZone: shop.timeZone,
       serviceId: parsed.data.serviceId,
       barberId: parsed.data.barberId,
-      date: parsed.data.date,
     });
-    if (!slots) return null;
+    if (durationMinutes === null) return null;
+    const slots = await queryValidatedSlots(tx, {
+      shopId: shop.id,
+      timeZone: shop.timeZone,
+      barberId: parsed.data.barberId,
+      date: parsed.data.date,
+      durationMinutes,
+      now: "after-load",
+      excludeOccupancyId: null,
+    });
     return {
       timeZone: shop.timeZone,
       date: parsed.data.date,
