@@ -64,6 +64,12 @@ to run every test on all three projects; this also allows an untagged test to
 be selected on a device project. Mailpit modes retain the full device matrix
 and run serially.
 
+Screenshots produced by the shared `captureState` helper and the Phase 08
+calendar helpers are disabled by default. Set `TRIMTIME_E2E_SCREENSHOTS=1` to
+enable those captures, including Phase 08 files under
+`docs/reports/phase08-screenshots/`. Playwright's failure screenshots remain
+enabled.
+
 Production builds and starts require explicit `MARKETING_ORIGIN` and
 `APP_ORIGIN` values. Each must be a bare HTTPS origin; one trailing slash is
 normalized away. Credentials, paths, queries, and fragments are rejected,

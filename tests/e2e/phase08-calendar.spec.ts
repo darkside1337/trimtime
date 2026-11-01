@@ -60,6 +60,7 @@ async function capturePhase08State(
 ) {
   const info = test.info();
   await captureState(page, `${state}-${info.project.name}`, info);
+  if (process.env.TRIMTIME_E2E_SCREENSHOTS !== "1") return;
   const directory = resolve("docs/reports/phase08-screenshots");
   await mkdir(directory, { recursive: true });
   await page.screenshot({
@@ -73,6 +74,7 @@ async function captureDialogViewport(
   page: import("@playwright/test").Page,
   state: string,
 ) {
+  if (process.env.TRIMTIME_E2E_SCREENSHOTS !== "1") return;
   const directory = resolve("docs/reports/phase08-screenshots");
   await mkdir(directory, { recursive: true });
   const info = test.info();

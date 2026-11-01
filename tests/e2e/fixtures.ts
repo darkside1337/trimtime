@@ -38,10 +38,11 @@ export async function captureState(page: Page, state: string, info: TestInfo) {
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth),
   ).toBeLessThanOrEqual(await page.evaluate(() => innerWidth));
-  await page.screenshot({
-    path: info.outputPath(`${state}.png`),
-    fullPage: true,
-  });
+  if (process.env.TRIMTIME_E2E_SCREENSHOTS === "1")
+    await page.screenshot({
+      path: info.outputPath(`${state}.png`),
+      fullPage: true,
+    });
 }
 
 export async function openOwnerNavigation(page: Page) {
