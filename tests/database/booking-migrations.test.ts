@@ -107,6 +107,21 @@ describe("public booking migration", () => {
         ).rows[0].n,
       ).toBe(1);
 
+      await client.query(
+        await readFile(
+          "db/migrations/0014_shop_creation_rate_limit.sql",
+          "utf8",
+        ),
+      );
+      await client.query(
+        "INSERT INTO public_rate_keys VALUES ('create_shop','shop-hash')",
+      );
+      await expect(
+        client.query(
+          "INSERT INTO public_rate_keys VALUES ('create_ip','still-invalid')",
+        ),
+      ).rejects.toMatchObject({ code: "23514" });
+
       await expect(
         client.query(
           `INSERT INTO bookings (

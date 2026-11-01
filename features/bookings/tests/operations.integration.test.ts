@@ -418,6 +418,10 @@ describe("public booking operations", () => {
 
   it("rolls back public reservation intent and zone lock when work persistence fails", async () => {
     const ids = await fixture();
+    const emailHash = createHash("sha256")
+      .update(`${ids.shopId}:ada@example.test`)
+      .digest("hex");
+    const shopHash = createHash("sha256").update(ids.shopId).digest("hex");
     const suffix = randomUUID().replaceAll("-", "");
     const fn = `public_creation_reject_${suffix}`;
     const trigger = `public_creation_reject_${suffix}`;
@@ -440,14 +444,18 @@ describe("public booking operations", () => {
         (SELECT count(*)::int FROM bookings WHERE shop_id=$1) AS bookings,
         (SELECT count(*)::int FROM occupied_intervals WHERE shop_id=$1) AS occupancy,
         (SELECT count(*)::int FROM notification_work w JOIN bookings b ON b.id=w.booking_id WHERE b.shop_id=$1) AS work,
-        (SELECT time_zone_locked_at FROM shops WHERE id=$1) AS locked`,
-        [ids.shopId],
+        (SELECT time_zone_locked_at FROM shops WHERE id=$1) AS locked,
+        (SELECT count(*)::int FROM public_rate_events WHERE scope='create_email_shop' AND key_hash=$2) AS email_rate_events,
+        (SELECT count(*)::int FROM public_rate_events WHERE scope='create_shop' AND key_hash=$3) AS shop_rate_events`,
+        [ids.shopId, emailHash, shopHash],
       );
       expect(state.rows[0]).toEqual({
         bookings: 0,
         occupancy: 0,
         work: 0,
         locked: null,
+        email_rate_events: 0,
+        shop_rate_events: 0,
       });
     } finally {
       await database.pool.query(
@@ -484,12 +492,14 @@ describe("public booking operations", () => {
         (SELECT count(*)::int FROM bookings WHERE shop_id=$1) AS bookings,
         (SELECT count(*)::int FROM occupied_intervals WHERE shop_id=$1) AS occupancy,
         (SELECT count(*)::int FROM notification_work w JOIN bookings b ON b.id=w.booking_id WHERE b.shop_id=$1) AS work,
-        (SELECT count(*)::int FROM public_rate_events e WHERE e.scope='create_email_shop' AND e.key_hash=$2) AS rate_events`,
+        (SELECT count(*)::int FROM public_rate_events e WHERE e.scope='create_email_shop' AND e.key_hash=$2) AS rate_events,
+        (SELECT count(*)::int FROM public_rate_events e WHERE e.scope='create_shop' AND e.key_hash=$3) AS shop_rate_events`,
       [
         ids.shopId,
         createHash("sha256")
           .update(`${ids.shopId}:ada@example.test`)
           .digest("hex"),
+        createHash("sha256").update(ids.shopId).digest("hex"),
       ],
     );
     expect(counts.rows[0]).toMatchObject({
@@ -497,7 +507,129 @@ describe("public booking operations", () => {
       occupancy: 1,
       work: 2,
       rate_events: 1,
+      shop_rate_events: 1,
     });
+  });
+
+  it("counts concurrent fresh attempts per shop, while replay and exact-window boundary are excluded", async () => {
+    const ids = await fixture();
+    const shopHash = createHash("sha256").update(ids.shopId).digest("hex");
+    await database.pool.query(
+      `INSERT INTO public_rate_keys (scope,key_hash) VALUES ('create_shop',$1)`,
+      [shopHash],
+    );
+    await database.pool.query(
+      `INSERT INTO public_rate_events (id,scope,key_hash,created_at)
+       SELECT gen_random_uuid(),'create_shop',$1,$2 FROM generate_series(1,10)`,
+      [shopHash, new Date(Date.now() - 15 * 60_000)],
+    );
+    const boundaryAttempt = input(ids, {
+      serviceId: "stale-service",
+      contact: {
+        name: "Ada",
+        email: "boundary@example.test",
+        whatsappOptIn: false,
+      },
+    });
+    await expect(
+      createPublicBooking({ shopId: ids.shopId }, boundaryAttempt),
+    ).resolves.toMatchObject({
+      success: false,
+      error: { code: "STALE_OFFER" },
+    });
+
+    const secondShop = await fixture();
+    const attempts = await Promise.all(
+      Array.from({ length: 11 }, (_, index) =>
+        createPublicBooking(
+          { shopId: ids.shopId },
+          input(ids, {
+            serviceId: "stale-service",
+            contact: {
+              name: "Guest",
+              email: `fresh-${index}@example.test`,
+              whatsappOptIn: false,
+            },
+          }),
+        ),
+      ),
+    );
+    expect(
+      attempts.filter(
+        (result) => !result.success && result.error.code === "RATE_LIMITED",
+      ),
+    ).toHaveLength(2);
+    const attemptAccounting = await database.pool.query(
+      `SELECT
+        (SELECT count(*)::int FROM public_rate_events WHERE scope='create_shop' AND key_hash=$1) AS shop_events,
+        (SELECT count(*)::int FROM public_rate_events WHERE scope='create_email_shop' AND key_hash = ANY($2::text[])) AS email_events`,
+      [
+        shopHash,
+        Array.from({ length: 11 }, (_, index) =>
+          createHash("sha256")
+            .update(`${ids.shopId}:fresh-${index}@example.test`)
+            .digest("hex"),
+        ),
+      ],
+    );
+    expect(attemptAccounting.rows[0]).toEqual({
+      shop_events: 22,
+      email_events: 11,
+    });
+    await expect(
+      createPublicBooking(
+        { shopId: secondShop.shopId },
+        input(secondShop, {
+          serviceId: "stale-service",
+          contact: {
+            name: "Guest",
+            email: "other-shop@example.test",
+            whatsappOptIn: false,
+          },
+        }),
+      ),
+    ).resolves.toMatchObject({
+      success: false,
+      error: { code: "STALE_OFFER" },
+    });
+  });
+
+  it("records both quota events when either quota denies a fresh attempt", async () => {
+    const ids = await fixture();
+    const payload = input(ids, {
+      serviceId: "stale-service",
+      contact: {
+        name: "Ada",
+        email: "over-limit@example.test",
+        whatsappOptIn: false,
+      },
+    });
+    const results = await Promise.all(
+      Array.from({ length: 4 }, () =>
+        createPublicBooking({ shopId: ids.shopId }, payload),
+      ),
+    );
+    expect(
+      results.filter(
+        (result) => !result.success && result.error.code === "RATE_LIMITED",
+      ),
+    ).toHaveLength(1);
+    const hashes = [
+      createHash("sha256")
+        .update(`${ids.shopId}:over-limit@example.test`)
+        .digest("hex"),
+      createHash("sha256").update(ids.shopId).digest("hex"),
+    ];
+    const counts = await database.pool.query(
+      `SELECT scope,count(*)::int AS count FROM public_rate_events
+       WHERE (scope='create_email_shop' AND key_hash=$1)
+          OR (scope='create_shop' AND key_hash=$2) GROUP BY scope ORDER BY scope`,
+      hashes,
+    );
+    expect(counts.rows).toEqual([
+      { scope: "create_email_shop", count: 4 },
+      { scope: "create_shop", count: 4 },
+    ]);
   });
 
   it("public creation rejects a revoked replay without creating another booking", async () => {

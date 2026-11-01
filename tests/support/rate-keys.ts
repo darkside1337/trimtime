@@ -58,6 +58,7 @@ export function trackCreateEmailRateKey(
     "create_email_shop",
     `${context.shopId}:${email.trim().toLowerCase()}`,
   );
+  tracker.add("create_shop", context.shopId);
 }
 
 /** Tracks the customer_change_link key recorded by cancel/replace mutations. */

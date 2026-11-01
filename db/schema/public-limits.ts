@@ -20,7 +20,7 @@ export const publicRateKeys = pgTable(
     primaryKey({ columns: [table.scope, table.keyHash] }),
     check(
       "public_rate_keys_scope_check",
-      sql`${table.scope} IN ('create_email_shop', 'customer_change_link')`,
+      sql`${table.scope} IN ('create_email_shop', 'create_shop', 'customer_change_link')`,
     ),
   ],
 );

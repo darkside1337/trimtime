@@ -52,6 +52,7 @@ export async function recordRateEvent(
   rawKey: string,
   now: Date,
   limit: number,
+  windowMs = 60 * 60_000,
 ) {
   const keyHash = hashSecret(rawKey);
   await tx
@@ -65,7 +66,7 @@ export async function recordRateEvent(
     .insert(publicRateEvents)
     .values({ id: randomUUID(), scope, keyHash, createdAt: now });
   const result = await tx.execute(
-    sql`SELECT count(*)::int AS count FROM public_rate_events WHERE scope = ${scope} AND key_hash = ${keyHash} AND created_at > ${new Date(now.getTime() - 60 * 60_000)}`,
+    sql`SELECT count(*)::int AS count FROM public_rate_events WHERE scope = ${scope} AND key_hash = ${keyHash} AND created_at > ${new Date(now.getTime() - windowMs)}`,
   );
   return Number(result.rows[0]?.count ?? 0) <= limit;
 }
@@ -178,7 +179,6 @@ export async function createPublicBooking(
       "VALIDATION_ERROR",
       "Check the booking details and try again.",
     );
-  const now = new Date();
   const digest = payloadDigest(parsed.data);
   const emailConfig = resolveEmailConfig(process.env);
   try {
@@ -203,6 +203,10 @@ export async function createPublicBooking(
           "SHOP_PAUSED",
           "This shop is not accepting bookings right now.",
         );
+
+      // Sample time after acquiring the shop lock so serialized attempts use
+      // the same order for both the rolling quota and booking availability.
+      const now = new Date();
 
       const recovered = await findCreationReplay(tx, {
         shopId: shop.id,
@@ -242,7 +246,15 @@ export async function createPublicBooking(
         now,
         3,
       );
-      if (!emailAllowed)
+      const shopAllowed = await recordRateEvent(
+        tx,
+        "create_shop",
+        shop.id,
+        now,
+        10,
+        15 * 60_000,
+      );
+      if (!emailAllowed || !shopAllowed)
         return failure(
           "RATE_LIMITED",
           "Too many booking attempts. Please wait before trying again.",

@@ -99,6 +99,13 @@
       "when": 1793404800000,
       "tag": "0013_attendance",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1793491200000,
+      "tag": "0014_shop_creation_rate_limit",
+      "breakpoints": true
     }
   ]
 }
