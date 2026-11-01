@@ -5,22 +5,12 @@ import { db } from "@/db";
 import { notificationAttempts } from "@/db/schema/notification-attempts";
 import { notificationWork } from "@/db/schema/notification-work";
 import { resolveEmailConfig } from "./config";
+import type { BookingMessageSnapshot, OutboundMessage } from "./messages";
 import {
-  canonicalManageUrl,
-  decryptCapability,
-  hashSecret,
-} from "@/features/bookings/capabilities";
-import { notificationContentIdentity } from "./content-identity";
-import {
-  renderCustomerConfirmation,
-  renderCustomerRestoration,
-  renderCustomerUpdate,
-  renderOwnerAlert,
-  renderOwnerCancellationAlert,
-  renderOwnerMoveAlert,
-  type BookingMessageSnapshot,
-  type OutboundMessage,
-} from "./messages";
+  evaluateNotificationEligibility,
+  type NotificationKind,
+} from "./eligibility";
+import { buildNotificationMessage } from "./rendering";
 import { sendMailpitMessage, type MailpitTransportResult } from "./mailpit";
 
 type DispatchDependencies = {
@@ -46,21 +36,6 @@ type CurrentBooking = BookingMessageSnapshot & {
   subdomain: string;
   ownerEmail: string | null;
 };
-
-function contentIdentity(booking: CurrentBooking) {
-  return notificationContentIdentity({
-    id: booking.id,
-    startAt: booking.startAt,
-    endAt: booking.endAt,
-    serviceName: booking.serviceName,
-    servicePriceUsd: booking.servicePriceUsd,
-    serviceDurationMinutes: booking.serviceDurationMinutes,
-    barberName: booking.barberName,
-    customerName: booking.customerName,
-    customerEmail: booking.customerEmail,
-    customerPhone: booking.customerPhone,
-  });
-}
 
 async function suppress(
   tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
@@ -150,150 +125,54 @@ async function authorize(input: {
       },
     };
     const config = resolveEmailConfig(process.env);
-    if (config.mode !== "mailpit") {
-      await suppress(tx, input.workId, "unavailable", config.reason, now);
-      return null;
-    }
-    const kind = String(rawWork.kind);
-    const recipient = rawWork.recipient as string | null;
-    if (!recipient) {
-      await suppress(tx, input.workId, "skipped", "recipient_missing", now);
-      return null;
-    }
-    const isCustomerWork =
-      kind === "customer_confirmation" ||
-      kind === "customer_move" ||
-      kind === "customer_cancellation" ||
-      kind === "customer_restoration";
-    const expectedRecipient = isCustomerWork
-      ? booking.customerEmail
-      : booking.ownerEmail;
+    const emailAvailable = config.mode === "mailpit";
+    const emailOrigin = emailAvailable ? config.origin : "";
+    const emailUnavailableReason = emailAvailable ? "" : config.reason;
+    const kind = String(rawWork.kind) as NotificationKind;
     const workRevision = Number(rawWork.bookingRevision);
     const changeKind = rawWork.changeKind as string | null;
     const changeActor = rawWork.changeActor as string | null;
     const changeRevision =
       rawWork.changeRevision === null ? null : Number(rawWork.changeRevision);
-    const currentCancellation =
-      changeKind === "cancel" && changeRevision === workRevision;
-    const currentMove =
-      changeKind === "move" && changeRevision === workRevision;
-    const eligibleState =
-      kind === "customer_confirmation" || kind === "owner_alert"
-        ? booking.status === "confirmed" && booking.revision === 0
-        : kind === "customer_move"
-          ? booking.status === "confirmed" &&
-            booking.revision === workRevision &&
-            currentMove
-          : kind === "owner_move"
-            ? booking.status === "confirmed" &&
-              booking.revision === workRevision &&
-              currentMove &&
-              changeActor === "customer"
-            : kind === "customer_cancellation"
-              ? booking.status === "cancelled" &&
-                booking.revision === workRevision &&
-                currentCancellation
-              : kind === "customer_restoration"
-                ? booking.status === "confirmed" &&
-                  booking.revision === workRevision &&
-                  changeKind === "restore" &&
-                  changeRevision === workRevision &&
-                  changeActor === "owner"
-                : kind === "owner_cancellation"
-                  ? booking.status === "cancelled" &&
-                    booking.revision === workRevision &&
-                    currentCancellation &&
-                    changeActor === "customer"
-                  : false;
-    if (
-      !eligibleState ||
-      booking.capabilityRevokedAt ||
-      new Date(booking.endAt).getTime() + 7 * 24 * 60 * 60_000 <=
-        now.getTime() ||
-      recipient !== expectedRecipient ||
-      rawWork.contentIdentity !== contentIdentity(booking)
-    ) {
+    const eligibility = evaluateNotificationEligibility({
+      kind,
+      booking,
+      bookingId: booking.id,
+      workRevision,
+      changeKind,
+      changeActor,
+      changeRevision,
+      recipient: rawWork.recipient as string | null,
+      ownerEmail: booking.ownerEmail,
+      expectedContentIdentity: String(rawWork.contentIdentity),
+      now,
+      emailAvailable,
+      emailUnavailableReason,
+    });
+    if (!eligibility.eligible) {
       await suppress(
         tx,
         input.workId,
-        "suppressed",
-        "work_no_longer_eligible",
+        eligibility.status,
+        eligibility.reason,
         now,
       );
       return null;
     }
 
-    let message: OutboundMessage;
-    try {
-      if (isCustomerWork) {
-        let token: string;
-        try {
-          token = decryptCapability(
-            booking.capabilityCiphertext,
-            booking.capabilityKeyId,
-            `${booking.shopId}:${booking.id}`,
-          );
-          if (hashSecret(token) !== booking.capabilityHash)
-            throw new Error("Capability mismatch.");
-        } catch {
-          await suppress(
-            tx,
-            input.workId,
-            "skipped",
-            "capability_unavailable",
-            now,
-          );
-          return null;
-        }
-        const manageUrl = canonicalManageUrl(booking.subdomain, token);
-        if (kind === "customer_confirmation") {
-          message = renderCustomerConfirmation({
-            booking,
-            recipient,
-            manageUrl,
-          });
-        } else if (kind === "customer_restoration") {
-          message = renderCustomerRestoration({
-            booking,
-            recipient,
-            manageUrl,
-          });
-        } else {
-          const before = rawWork.beforeSnapshot as {
-            startAt: string;
-            endAt: string;
-          } | null;
-          if (!before) throw new Error("Change snapshot is unavailable.");
-          message = renderCustomerUpdate({
-            booking,
-            recipient,
-            manageUrl,
-            kind: kind === "customer_move" ? "move" : "cancel",
-            actor: changeActor === "customer" ? "customer" : "owner",
-            before,
-          });
-        }
-      } else if (kind === "owner_move") {
-        message = renderOwnerMoveAlert({
-          booking,
-          recipient,
-          activityUrl: `${process.env.APP_ORIGIN}/activity`,
-        });
-      } else if (kind === "owner_cancellation") {
-        message = renderOwnerCancellationAlert({
-          booking,
-          recipient,
-          activityUrl: `${process.env.APP_ORIGIN}/activity`,
-        });
-      } else {
-        message = renderOwnerAlert({
-          booking,
-          recipient,
-          activityUrl: `${process.env.APP_ORIGIN}/activity`,
-        });
-      }
-    } catch {
-      await suppress(tx, input.workId, "skipped", "message_render_failed", now);
+    const rendering = buildNotificationMessage({
+      kind,
+      booking,
+      recipient: eligibility.recipient,
+      beforeSnapshot: rawWork.beforeSnapshot as {
+        startAt: string;
+        endAt: string;
+      } | null,
+      changeActor,
+      activityUrl: `${process.env.APP_ORIGIN}/activity`,
+    });
+    if (!rendering.ok) {
+      await suppress(tx, input.workId, rendering.status, rendering.reason, now);
       return null;
     }
     const authorizedAt = input.dependencies.now();
@@ -345,7 +224,13 @@ async function authorize(input: {
       .where(
         sql`${notificationWork.id}=${input.workId} AND ${notificationWork.status}='not_attempted'`,
       );
-    return { message, origin: config.origin, attemptId, claimId, authorizedAt };
+    return {
+      message: rendering.message,
+      origin: emailOrigin,
+      attemptId,
+      claimId,
+      authorizedAt,
+    };
   });
 }
 
