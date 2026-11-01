@@ -443,7 +443,9 @@ Break labels and dated reasons retain read-only sample fields with explicit no-s
 
 **Phase 13 reference context:** Appointment details; Owner dashboard; Activity for past/unmarked status, attendance actions and booking events.
 
-**Coverage and evidence limits:** Confirm owner no-show/correction and rejected/early-write feedback; customer no-show view-only is not an owner correction reference. End equality remains open. Do not infer analytics, new audit categories, or customer notifications.
+**Selected Phase 13 interaction:** Existing appointment details show the saved attendance state or “Past, unmarked.” For an eligible ended confirmed booking, the owner selects Completed or No-show and uses **Save attendance**; corrections use the same selector. Existing dirty-dismissal and pending-submission protections apply. Booking Activity presents recorded attendance transitions and upcoming confirmed bookings; ongoing appointments remain on Calendar. At scheduled-end equality, save is rejected; the owner may save only strictly after end.
+
+**Coverage and evidence limits:** Owner no-show/correction and rejected/early-write feedback were implementation targets, not proven by this reference. Customer no-show view-only is not an owner correction reference. Do not infer analytics, new audit categories, or customer notifications. Final suite and executor visual/keyboard walkthrough remain pending; physical-device and dedicated screen-reader checks remain user/provider evidence.
 
 **Phase 14 reference context:** Activity for per-channel attempt and outcome evidence.
 

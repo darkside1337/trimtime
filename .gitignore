@@ -48,7 +48,8 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 /trimtime-design
-/docs/.plans
+/docs/.plans/*
+!/docs/.plans/phase-13.md
 /docs/reports/
 /docs/refactors/
 
