@@ -16,7 +16,7 @@ const nextConfig: NextConfig = {
       ".",
       "\\.",
     );
-    const ownerHost = new URL(appOrigin).hostname;
+    const ownerHostname = new URL(appOrigin).hostname.replaceAll(".", "\\.");
     return {
       beforeFiles: [
         {
@@ -32,7 +32,12 @@ const nextConfig: NextConfig = {
         {
           source:
             "/:path((?!owner/|owner$|api/|api$|design-system/|design-system$|_next/|_next$|brand/|brand$|favicon\\.ico$|icon\\.png$|apple-icon\\.png$).*)",
-          has: [{ type: "host", value: ownerHost }],
+          has: [
+            {
+              type: "host",
+              value: ownerHostname,
+            },
+          ],
           destination: "/owner/:path*",
         },
       ],

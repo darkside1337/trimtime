@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-import { unstable_doesMiddlewareMatch } from "next/experimental/testing/server";
+import {
+  unstable_doesMiddlewareMatch,
+  unstable_getResponseFromNextConfig,
+  getRewrittenUrl,
+  isRewrite,
+} from "next/experimental/testing/server";
 import { classifyHost } from "@/server/hosts";
 import nextConfig from "../../next.config";
 import { config, proxy } from "../../proxy";
@@ -242,4 +247,48 @@ describe("host routing", () => {
       ).toBe(true);
     },
   );
+
+  it("rewrites only exact owner host authorities and excludes reserved paths", async () => {
+    const rewrittenUrl = async (host: string, path: string) => {
+      const response = await unstable_getResponseFromNextConfig({
+        url: `http://${host}${path}`,
+        nextConfig,
+      });
+      return isRewrite(response) ? getRewrittenUrl(response) : null;
+    };
+
+    const valid = await rewrittenUrl(
+      "app.localhost:3100",
+      "/sign-in?error=callback",
+    );
+    expect(valid).not.toBeNull();
+    expect(new URL(valid!).pathname).toBe("/owner/sign-in");
+    expect(new URL(valid!).searchParams.get("error")).toBe("callback");
+
+    for (const host of [
+      "applocalhost:3100",
+      "appxlocalhost:3100",
+      "xapp.localhost:3100",
+      "app.localhost.evil:3100",
+      "app.localhostx:3100",
+    ]) {
+      expect(await rewrittenUrl(host, "/sign-in")).toBeNull();
+    }
+
+    for (const path of [
+      "/owner",
+      "/owner/settings",
+      "/api",
+      "/api/auth/get-session",
+      "/design-system",
+      "/design-system/tokens",
+      "/_next/static/chunk.js",
+      "/brand/logo.svg",
+      "/favicon.ico",
+      "/icon.png",
+      "/apple-icon.png",
+    ]) {
+      expect(await rewrittenUrl("app.localhost:3100", path)).toBeNull();
+    }
+  });
 });
