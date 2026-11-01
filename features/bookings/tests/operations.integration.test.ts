@@ -4671,7 +4671,8 @@ describe("public booking operations", () => {
         input(ids),
       );
       expect(booking.success).toBe(true);
-      if (!booking.success) throw new Error("Booking fixture failed.");
+      if (!booking.success)
+        throw new Error(`Booking fixture failed: ${JSON.stringify(booking)}`);
       const replacement = { working: [{ start: 660, end: 1020 }], breaks: [] };
       const replacementWeek = Array.from({ length: 7 }, (_, index) => ({
         working: index === 0 ? replacement.working : [],
@@ -6371,5 +6372,1003 @@ describe("public booking operations", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it("attendance marks an ended confirmed booking completed and records one event", async () => {
+    const ids = await fixture();
+    const created = await createPublicBooking(
+      { shopId: ids.shopId },
+      input(ids),
+    );
+    if (!created.success) throw new Error("Booking fixture failed.");
+    const bookingId = created.data.bookingId;
+    vi.setSystemTime(new Date("2026-11-02T10:30:00.001Z"));
+    const { setOwnerAttendance } = await import("../mutations");
+    const result = await setOwnerAttendance(ids.context, {
+      bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+      status: "completed",
+    });
+    expect(result).toMatchObject({
+      success: true,
+      data: {
+        bookingId,
+        operation: { kind: "attendance", revision: 1 },
+        appointment: {
+          id: bookingId,
+          status: "completed",
+          revision: 1,
+          startAt: "2026-11-02T10:00:00.000Z",
+          endAt: "2026-11-02T10:30:00.000Z",
+          service: { name: "Cut", priceUsd: "25.00", durationMinutes: 30 },
+          customer: { name: "Ada Lovelace" },
+        },
+      },
+    });
+    const persisted = await database.pool.query(
+      `SELECT b.status, b.revision,
+        (SELECT count(*)::int FROM booking_changes c
+          WHERE c.booking_id = b.id AND c.kind = 'attendance' AND c.applied_revision = 1) AS attendance_events,
+        (SELECT count(*)::int FROM booking_changes c WHERE c.booking_id = b.id) AS changes,
+        (SELECT count(*)::int FROM notification_work w WHERE w.booking_id = b.id) AS work
+       FROM bookings b WHERE b.id = $1`,
+      [bookingId],
+    );
+    expect(persisted.rows[0]).toMatchObject({
+      status: "completed",
+      revision: 1,
+      attendance_events: 1,
+      changes: 1,
+    });
+    expect(persisted.rows[0].work).toBe(2);
+  });
+
+  it("attendance marks no_show and corrects between completed and no_show", async () => {
+    const ids = await fixture();
+    const created = await createPublicBooking(
+      { shopId: ids.shopId },
+      input(ids),
+    );
+    if (!created.success) throw new Error("Booking fixture failed.");
+    const bookingId = created.data.bookingId;
+    const { setOwnerAttendance } = await import("../mutations");
+    const submit = (status: "completed" | "no_show", revision: number) =>
+      setOwnerAttendance(ids.context, {
+        bookingId,
+        expectedRevision: revision,
+        operationKey: randomBytes(32).toString("base64url"),
+        status,
+      });
+
+    vi.setSystemTime(new Date("2026-11-02T10:30:00.001Z"));
+    const toNoShow = await submit("no_show", 0);
+    expect(toNoShow).toMatchObject({
+      success: true,
+      data: { operation: { kind: "attendance", revision: 1 } },
+    });
+    await expect(
+      getOwnAppointment(ids.context, bookingId),
+    ).resolves.toMatchObject({ success: true, data: { status: "no_show" } });
+
+    const toCompleted = await submit("completed", 1);
+    expect(toCompleted).toMatchObject({
+      success: true,
+      data: { operation: { kind: "attendance", revision: 2 } },
+    });
+    await expect(
+      getOwnAppointment(ids.context, bookingId),
+    ).resolves.toMatchObject({ success: true, data: { status: "completed" } });
+
+    const backToNoShow = await submit("no_show", 2);
+    expect(backToNoShow).toMatchObject({
+      success: true,
+      data: { operation: { kind: "attendance", revision: 3 } },
+    });
+    await expect(
+      getOwnAppointment(ids.context, bookingId),
+    ).resolves.toMatchObject({ success: true, data: { status: "no_show" } });
+
+    const events = (
+      await database.pool.query(
+        "SELECT kind, applied_revision, before_snapshot->>'status' AS before, after_snapshot->>'status' AS after FROM booking_changes WHERE booking_id=$1 ORDER BY applied_revision ASC",
+        [bookingId],
+      )
+    ).rows;
+    expect(events).toEqual([
+      {
+        kind: "attendance",
+        applied_revision: 1,
+        before: "confirmed",
+        after: "no_show",
+      },
+      {
+        kind: "attendance",
+        applied_revision: 2,
+        before: "no_show",
+        after: "completed",
+      },
+      {
+        kind: "attendance",
+        applied_revision: 3,
+        before: "completed",
+        after: "no_show",
+      },
+    ]);
+  });
+
+  it.each(["2026-11-02T10:29:59.999Z", "2026-11-02T10:30:00.000Z"] as const)(
+    "attendance rejects a classification at %s as TOO_EARLY without side effects",
+    async (now) => {
+      const ids = await fixture();
+      const created = await createPublicBooking(
+        { shopId: ids.shopId },
+        input(ids),
+      );
+      if (!created.success) throw new Error("Booking fixture failed.");
+      const bookingId = created.data.bookingId;
+      vi.setSystemTime(new Date(now));
+      const before = await database.pool.query(
+        `SELECT b.status, b.revision,
+          (SELECT count(*)::int FROM booking_changes c WHERE c.booking_id=b.id) AS changes,
+          (SELECT count(*)::int FROM notification_work w WHERE w.booking_id=b.id) AS work,
+          (SELECT count(*)::int FROM occupied_intervals i WHERE i.id=b.occupancy_id) AS occupancy
+         FROM bookings b WHERE b.id=$1`,
+        [bookingId],
+      );
+      const { setOwnerAttendance } = await import("../mutations");
+      const result = await setOwnerAttendance(ids.context, {
+        bookingId,
+        expectedRevision: 0,
+        operationKey: randomBytes(32).toString("base64url"),
+        status: "completed",
+      });
+      expect(result).toMatchObject({
+        success: false,
+        error: { code: "TOO_EARLY" },
+      });
+      const after = await database.pool.query(
+        `SELECT b.status, b.revision,
+          (SELECT count(*)::int FROM booking_changes c WHERE c.booking_id=b.id) AS changes,
+          (SELECT count(*)::int FROM notification_work w WHERE w.booking_id=b.id) AS work,
+          (SELECT count(*)::int FROM occupied_intervals i WHERE i.id=b.occupancy_id) AS occupancy
+         FROM bookings b WHERE b.id=$1`,
+        [bookingId],
+      );
+      expect(after.rows[0]).toEqual(before.rows[0]);
+    },
+  );
+
+  it("attendance rejects a cancelled booking and never restores confirmed state", async () => {
+    const ids = await fixture();
+    const created = await createPublicBooking(
+      { shopId: ids.shopId },
+      input(ids),
+    );
+    if (!created.success) throw new Error("Booking fixture failed.");
+    const bookingId = created.data.bookingId;
+    const { cancelOwnerBooking, setOwnerAttendance } =
+      await import("../mutations");
+
+    const cancelled = await cancelOwnerBooking(ids.context, {
+      bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(cancelled.success).toBe(true);
+    vi.setSystemTime(new Date("2026-11-02T10:30:00.001Z"));
+    const cancelledMark = await setOwnerAttendance(ids.context, {
+      bookingId,
+      expectedRevision: 1,
+      operationKey: randomBytes(32).toString("base64url"),
+      status: "completed",
+    });
+    expect(cancelledMark).toMatchObject({
+      success: false,
+      error: { code: "INVALID_STATE" },
+    });
+    await expect(
+      getOwnAppointment(ids.context, bookingId),
+    ).resolves.toMatchObject({ success: true, data: { status: "cancelled" } });
+
+    const restored = await setOwnerAttendance(ids.context, {
+      bookingId,
+      expectedRevision: 1,
+      operationKey: randomBytes(32).toString("base64url"),
+      status: "confirmed" as never,
+    });
+    expect(restored).toMatchObject({
+      success: false,
+      error: { code: "VALIDATION_ERROR" },
+    });
+    const state = await database.pool.query(
+      "SELECT status, revision FROM bookings WHERE id=$1",
+      [bookingId],
+    );
+    expect(state.rows[0]).toEqual({ status: "cancelled", revision: 1 });
+  });
+
+  it("attendance rejects missing session, shopless, foreign, and absent callers without disclosure", async () => {
+    const own = await fixture();
+    const foreign = await fixture();
+    const created = await createPublicBooking(
+      { shopId: own.shopId },
+      input(own),
+    );
+    if (!created.success) throw new Error("Booking fixture failed.");
+    const bookingId = created.data.bookingId;
+    vi.setSystemTime(new Date("2026-11-02T10:30:00.001Z"));
+    const { setOwnerAttendance } = await import("../mutations");
+    const request = {
+      bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+      status: "completed" as const,
+    };
+
+    expect(await setOwnerAttendance(null, request)).toMatchObject({
+      success: false,
+      error: { code: "UNAUTHENTICATED" },
+    });
+    expect(
+      await setOwnerAttendance({ userId: randomUUID() }, request),
+    ).toMatchObject({ success: false, error: { code: "SHOP_REQUIRED" } });
+    const foreignResult = await setOwnerAttendance(foreign.context, request);
+    expect(foreignResult).toMatchObject({
+      success: false,
+      error: { code: "NOT_FOUND" },
+    });
+    expect(JSON.stringify(foreignResult)).not.toContain(own.shopId);
+    expect(
+      await setOwnerAttendance(own.context, {
+        ...request,
+        bookingId: randomUUID(),
+      }),
+    ).toMatchObject({ success: false, error: { code: "NOT_FOUND" } });
+
+    await expect(
+      getOwnAppointment(own.context, bookingId),
+    ).resolves.toMatchObject({ success: true, data: { status: "confirmed" } });
+    const state = await database.pool.query(
+      "SELECT revision, (SELECT count(*)::int FROM booking_changes WHERE booking_id=$1) AS changes FROM bookings WHERE id=$1",
+      [bookingId],
+    );
+    expect(state.rows[0]).toEqual({ revision: 0, changes: 0 });
+  });
+
+  it("attendance rejects a stale revision and returns NO_CHANGE for a same-state submission", async () => {
+    const ids = await fixture();
+    const created = await createPublicBooking(
+      { shopId: ids.shopId },
+      input(ids),
+    );
+    if (!created.success) throw new Error("Booking fixture failed.");
+    const bookingId = created.data.bookingId;
+    const { setOwnerAttendance } = await import("../mutations");
+    vi.setSystemTime(new Date("2026-11-02T10:30:00.001Z"));
+
+    const first = await setOwnerAttendance(ids.context, {
+      bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+      status: "completed",
+    });
+    expect(first.success).toBe(true);
+
+    const stale = await setOwnerAttendance(ids.context, {
+      bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+      status: "no_show",
+    });
+    expect(stale).toMatchObject({
+      success: false,
+      error: { code: "STALE_BOOKING" },
+    });
+
+    const before = await database.pool.query(
+      "SELECT revision, (SELECT count(*)::int FROM booking_changes WHERE booking_id=$1) AS changes FROM bookings WHERE id=$1",
+      [bookingId],
+    );
+    const noChange = await setOwnerAttendance(ids.context, {
+      bookingId,
+      expectedRevision: 1,
+      operationKey: randomBytes(32).toString("base64url"),
+      status: "completed",
+    });
+    expect(noChange).toMatchObject({
+      success: false,
+      error: { code: "NO_CHANGE" },
+    });
+    const after = await database.pool.query(
+      "SELECT revision, (SELECT count(*)::int FROM booking_changes WHERE booking_id=$1) AS changes FROM bookings WHERE id=$1",
+      [bookingId],
+    );
+    expect(after.rows[0]).toEqual(before.rows[0]);
+  });
+
+  it("attendance recovers an identical request and rejects changed content under the same key", async () => {
+    const ids = await fixture();
+    const created = await createPublicBooking(
+      { shopId: ids.shopId },
+      input(ids),
+    );
+    if (!created.success) throw new Error("Booking fixture failed.");
+    const bookingId = created.data.bookingId;
+    const otherBooking = await createPublicBooking(
+      { shopId: ids.shopId },
+      input(ids, { startAt: "2026-11-02T11:00:00.000Z" }),
+    );
+    if (!otherBooking.success) throw new Error("Second booking failed.");
+    const { setOwnerAttendance } = await import("../mutations");
+    vi.setSystemTime(new Date("2026-11-02T10:30:00.001Z"));
+
+    const key = randomBytes(32).toString("base64url");
+    const first = await setOwnerAttendance(ids.context, {
+      bookingId,
+      expectedRevision: 0,
+      operationKey: key,
+      status: "completed",
+    });
+    expect(first.success).toBe(true);
+    if (!first.success) throw new Error("First classification failed.");
+
+    const correction = await setOwnerAttendance(ids.context, {
+      bookingId,
+      expectedRevision: 1,
+      operationKey: randomBytes(32).toString("base64url"),
+      status: "no_show",
+    });
+    expect(correction.success).toBe(true);
+
+    const replay = await setOwnerAttendance(ids.context, {
+      bookingId,
+      expectedRevision: 0,
+      operationKey: key,
+      status: "completed",
+    });
+    expect(replay.success).toBe(true);
+    if (!replay.success) throw new Error("Replay failed.");
+    expect(replay.data.operation).toEqual(first.data.operation);
+    expect(replay.data.appointment).toMatchObject({
+      id: bookingId,
+      status: "no_show",
+      revision: 2,
+    });
+
+    const mismatchedStatus = await setOwnerAttendance(ids.context, {
+      bookingId,
+      expectedRevision: 0,
+      operationKey: key,
+      status: "no_show",
+    });
+    expect(mismatchedStatus).toMatchObject({
+      success: false,
+      error: { code: "RECOVERY_MISMATCH" },
+    });
+    const mismatchedRevision = await setOwnerAttendance(ids.context, {
+      bookingId,
+      expectedRevision: 1,
+      operationKey: key,
+      status: "completed",
+    });
+    expect(mismatchedRevision).toMatchObject({
+      success: false,
+      error: { code: "RECOVERY_MISMATCH" },
+    });
+
+    const mismatchedBooking = await setOwnerAttendance(ids.context, {
+      bookingId: otherBooking.data.bookingId,
+      expectedRevision: 0,
+      operationKey: key,
+      status: "completed",
+    });
+    expect(mismatchedBooking).toMatchObject({
+      success: false,
+      error: { code: "RECOVERY_MISMATCH" },
+    });
+
+    const events = await database.pool.query(
+      "SELECT count(*)::int AS count FROM booking_changes WHERE booking_id=$1",
+      [bookingId],
+    );
+    expect(events.rows[0].count).toBe(2);
+  });
+
+  it("attendance commits exactly one of two competing classifications on the same revision", async () => {
+    const ids = await fixture();
+    const created = await createPublicBooking(
+      { shopId: ids.shopId },
+      input(ids),
+    );
+    if (!created.success) throw new Error("Booking fixture failed.");
+    const bookingId = created.data.bookingId;
+    vi.setSystemTime(new Date("2026-11-02T10:30:00.001Z"));
+    const { setOwnerAttendance } = await import("../mutations");
+    const [first, second] = await Promise.all([
+      setOwnerAttendance(ids.context, {
+        bookingId,
+        expectedRevision: 0,
+        operationKey: randomBytes(32).toString("base64url"),
+        status: "completed",
+      }),
+      setOwnerAttendance(ids.context, {
+        bookingId,
+        expectedRevision: 0,
+        operationKey: randomBytes(32).toString("base64url"),
+        status: "no_show",
+      }),
+    ]);
+    expect([first.success, second.success].filter(Boolean)).toHaveLength(1);
+    expect([first, second].filter((result) => !result.success)).toMatchObject([
+      { success: false, error: { code: "STALE_BOOKING" } },
+    ]);
+    const persisted = await database.pool.query(
+      `SELECT b.revision,
+        (SELECT count(*)::int FROM booking_changes c WHERE c.booking_id=b.id AND c.kind='attendance') AS events
+       FROM bookings b WHERE b.id=$1`,
+      [bookingId],
+    );
+    expect(persisted.rows[0]).toEqual({ revision: 1, events: 1 });
+  });
+
+  it("attendance recovers one concurrent and repeated identical classification", async () => {
+    const ids = await fixture();
+    const created = await createPublicBooking(
+      { shopId: ids.shopId },
+      input(ids),
+    );
+    if (!created.success) throw new Error("Booking fixture failed.");
+    const bookingId = created.data.bookingId;
+    vi.setSystemTime(new Date("2026-11-02T10:30:00.001Z"));
+    const { setOwnerAttendance } = await import("../mutations");
+    const request = {
+      bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+      status: "completed" as const,
+    };
+    const [first, second] = await Promise.all([
+      setOwnerAttendance(ids.context, request),
+      setOwnerAttendance(ids.context, request),
+    ]);
+    expect(first.success).toBe(true);
+    expect(second.success).toBe(true);
+    if (!first.success || !second.success)
+      throw new Error("Classification failed.");
+    expect(second.data.operation).toEqual(first.data.operation);
+    const repeated = await setOwnerAttendance(ids.context, request);
+    expect(repeated.success).toBe(true);
+    if (!repeated.success) throw new Error("Replay failed.");
+    expect(repeated.data.operation).toEqual(first.data.operation);
+    const persisted = await database.pool.query(
+      `SELECT b.revision,
+        (SELECT count(*)::int FROM booking_changes c WHERE c.booking_id=b.id AND c.kind='attendance') AS events
+       FROM bookings b WHERE b.id=$1`,
+      [bookingId],
+    );
+    expect(persisted.rows[0]).toEqual({ revision: 1, events: 1 });
+  });
+
+  it("attendance samples time after acquiring the shop lock", async () => {
+    const ids = await fixture();
+    const created = await createPublicBooking(
+      { shopId: ids.shopId },
+      input(ids),
+    );
+    if (!created.success) throw new Error("Booking fixture failed.");
+    const bookingId = created.data.bookingId;
+    vi.setSystemTime(new Date("2026-11-02T10:00:00Z"));
+    const { setOwnerAttendance } = await import("../mutations");
+    const locker = await database.pool.connect();
+    await locker.query("BEGIN");
+    await locker.query("SELECT id FROM shops WHERE id=$1 FOR UPDATE", [
+      ids.shopId,
+    ]);
+    const request = setOwnerAttendance(ids.context, {
+      bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+      status: "completed",
+    });
+    try {
+      await waitForLockWaiters(database.pool, locker, 1, ["owner_move"], {
+        description: "attendance waiting on shop lock",
+      });
+      vi.setSystemTime(new Date("2026-11-02T10:30:00.001Z"));
+      await locker.query("COMMIT");
+      await expect(request).resolves.toMatchObject({
+        success: true,
+        data: { operation: { kind: "attendance", revision: 1 } },
+      });
+      await expect(
+        getOwnAppointment(ids.context, bookingId),
+      ).resolves.toMatchObject({
+        success: true,
+        data: { status: "completed", revision: 1 },
+      });
+    } finally {
+      await locker.query("ROLLBACK").catch(() => undefined);
+      locker.release();
+    }
+  });
+
+  it("attendance rolls back the classification when event persistence fails", async () => {
+    const ids = await fixture();
+    const created = await createPublicBooking(
+      { shopId: ids.shopId },
+      input(ids),
+    );
+    if (!created.success) throw new Error("Booking fixture failed.");
+    const bookingId = created.data.bookingId;
+    vi.setSystemTime(new Date("2026-11-02T10:30:00.001Z"));
+    const suffix = randomUUID().replaceAll("-", "");
+    const fn = `attendance_reject_${suffix}`;
+    const trigger = `attendance_reject_${suffix}`;
+    await database.pool.query(
+      `CREATE FUNCTION ${fn}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'attendance injected history failure'; END; $$`,
+    );
+    await database.pool.query(
+      `CREATE TRIGGER ${trigger} BEFORE INSERT ON booking_changes FOR EACH ROW WHEN (NEW.booking_id='${bookingId}') EXECUTE FUNCTION ${fn}()`,
+    );
+    try {
+      const { setOwnerAttendance } = await import("../mutations");
+      await expect(
+        setOwnerAttendance(ids.context, {
+          bookingId,
+          expectedRevision: 0,
+          operationKey: randomBytes(32).toString("base64url"),
+          status: "completed",
+        }),
+      ).resolves.toMatchObject({
+        success: false,
+        error: { code: "UNAVAILABLE" },
+      });
+      const state = await database.pool.query(
+        "SELECT status, revision, (SELECT count(*)::int FROM booking_changes WHERE booking_id=$1) AS changes FROM bookings WHERE id=$1",
+        [bookingId],
+      );
+      expect(state.rows[0]).toEqual({
+        status: "confirmed",
+        revision: 0,
+        changes: 0,
+      });
+    } finally {
+      await database.pool.query(`DROP TRIGGER ${trigger} ON booking_changes`);
+      await database.pool.query(`DROP FUNCTION ${fn}()`);
+    }
+  });
+
+  it("attendance leaves notification work, attempts, budget, capability, and occupancy unchanged through classification and correction", async () => {
+    const { setOwnerAttendance } = await import("../mutations");
+
+    const snapshot = async (bookingId: string) => {
+      const booking = (
+        await database.pool.query(
+          `SELECT id, occupancy_id, start_at, end_at, capability_hash,
+                  capability_ciphertext, capability_key_id, capability_revoked_at
+           FROM bookings WHERE id = $1`,
+          [bookingId],
+        )
+      ).rows[0];
+      const occupancy = (
+        await database.pool.query(
+          `SELECT id, shop_id, barber_id, start_at, end_at
+           FROM occupied_intervals WHERE id = $1 ORDER BY id`,
+          [booking.occupancy_id],
+        )
+      ).rows;
+      const work = (
+        await database.pool.query(
+          `SELECT id, booking_id, booking_revision, change_id, kind, channel,
+                  status, recipient, content_identity, reason, created_at,
+                  updated_at, claimed_at, claim_id
+           FROM notification_work WHERE booking_id = $1 ORDER BY id`,
+          [bookingId],
+        )
+      ).rows;
+      const attempts = (
+        await database.pool.query(
+          `SELECT a.id, a.work_id, a.budget_day, a.reserved_at, a.invoked_at,
+                  a.outcome, a.capture_id
+           FROM notification_attempts a
+           JOIN notification_work w ON w.id = a.work_id
+           WHERE w.booking_id = $1 ORDER BY a.id`,
+          [bookingId],
+        )
+      ).rows;
+      const budget = (
+        await database.pool.query(
+          `SELECT day, allocation_count FROM outbound_budget ORDER BY day`,
+        )
+      ).rows;
+      return { booking, occupancy, work, attempts, budget };
+    };
+
+    const expectUnchangedThroughClassificationAndCorrection = async (
+      ids: Awaited<ReturnType<typeof fixture>>,
+      bookingId: string,
+    ) => {
+      const before = await snapshot(bookingId);
+      const classify = await setOwnerAttendance(ids.context, {
+        bookingId,
+        expectedRevision: 0,
+        operationKey: randomBytes(32).toString("base64url"),
+        status: "completed",
+      });
+      expect(classify).toMatchObject({ success: true });
+      expect(await snapshot(bookingId)).toEqual(before);
+
+      const correct = await setOwnerAttendance(ids.context, {
+        bookingId,
+        expectedRevision: 1,
+        operationKey: randomBytes(32).toString("base64url"),
+        status: "no_show",
+      });
+      expect(correct).toMatchObject({ success: true });
+      expect(await snapshot(bookingId)).toEqual(before);
+    };
+
+    // Scenario 1: a valid future booking that retains its occupancy interval.
+    const ids = await fixture();
+    const created = await createPublicBooking(
+      { shopId: ids.shopId },
+      input(ids),
+    );
+    if (!created.success) throw new Error("Booking fixture failed.");
+    const bookingId = created.data.bookingId;
+    expect((await snapshot(bookingId)).occupancy).toHaveLength(1);
+    vi.setSystemTime(new Date("2026-11-02T10:30:00.001Z"));
+    await expectUnchangedThroughClassificationAndCorrection(ids, bookingId);
+
+    // Scenario 2: a valid future booking whose occupancy is removed through
+    // fixture-only setup before the clock advances past its end.
+    vi.setSystemTime(new Date("2026-11-02T08:00:00Z"));
+    const ids2 = await fixture();
+    const created2 = await createPublicBooking(
+      { shopId: ids2.shopId },
+      input(ids2),
+    );
+    if (!created2.success) throw new Error("Booking fixture failed.");
+    const bookingId2 = created2.data.bookingId;
+    const occupancyId2 = (
+      await database.pool.query(
+        "SELECT occupancy_id FROM bookings WHERE id = $1",
+        [bookingId2],
+      )
+    ).rows[0].occupancy_id as string;
+    await database.pool.query("DELETE FROM occupied_intervals WHERE id = $1", [
+      occupancyId2,
+    ]);
+    expect((await snapshot(bookingId2)).occupancy).toHaveLength(0);
+    vi.setSystemTime(new Date("2026-11-02T10:30:00.001Z"));
+    await expectUnchangedThroughClassificationAndCorrection(ids2, bookingId2);
+  });
+
+  it("attendance activity exposes each recorded actor, time, and classification transition", async () => {
+    const ids = await fixture();
+    const created = await createPublicBooking(
+      { shopId: ids.shopId },
+      input(ids),
+    );
+    if (!created.success) throw new Error("Booking fixture failed.");
+    const bookingId = created.data.bookingId;
+    vi.setSystemTime(new Date("2026-11-02T10:30:00.001Z"));
+    const { setOwnerAttendance } = await import("../mutations");
+    const { getOwnBookingActivity } =
+      await import("@/features/notifications/queries");
+
+    for (const [revision, status] of [
+      [0, "completed"],
+      [1, "no_show"],
+    ] as const) {
+      const saved = await setOwnerAttendance(ids.context, {
+        bookingId,
+        expectedRevision: revision,
+        operationKey: randomBytes(32).toString("base64url"),
+        status,
+      });
+      expect(saved.success).toBe(true);
+    }
+
+    const activity = await getOwnBookingActivity(ids.context);
+    expect(activity.success).toBe(true);
+    if (!activity.success) return;
+    expect(
+      activity.data.rows
+        .filter((row) => row.bookingId === bookingId)
+        .map((row) => ({
+          kind: row.kind,
+          actorType: row.actorType,
+          revision: row.revision,
+          beforeStatus: row.before.status,
+          afterStatus: row.after.status,
+          committedAt: row.committedAt,
+        }))
+        .sort((a, b) => a.revision - b.revision),
+    ).toEqual([
+      {
+        kind: "attendance",
+        actorType: "owner",
+        revision: 1,
+        beforeStatus: "confirmed",
+        afterStatus: "completed",
+        committedAt: "2026-11-02T10:30:00.001Z",
+      },
+      {
+        kind: "attendance",
+        actorType: "owner",
+        revision: 2,
+        beforeStatus: "completed",
+        afterStatus: "no_show",
+        committedAt: "2026-11-02T10:30:00.001Z",
+      },
+    ]);
+  });
+
+  it("rejected and no-op attendance requests do not add activity events", async () => {
+    const ids = await fixture();
+    const created = await createPublicBooking(
+      { shopId: ids.shopId },
+      input(ids),
+    );
+    if (!created.success) throw new Error("Booking fixture failed.");
+    const bookingId = created.data.bookingId;
+    vi.setSystemTime(new Date("2026-11-02T10:30:00.001Z"));
+    const { setOwnerAttendance } = await import("../mutations");
+    const request = {
+      bookingId,
+      operationKey: randomBytes(32).toString("base64url"),
+    };
+    await setOwnerAttendance(ids.context, {
+      ...request,
+      expectedRevision: 0,
+      status: "completed",
+    });
+    const stale = await setOwnerAttendance(ids.context, {
+      ...request,
+      operationKey: randomBytes(32).toString("base64url"),
+      expectedRevision: 0,
+      status: "no_show",
+    });
+    expect(stale).toMatchObject({
+      success: false,
+      error: { code: "STALE_BOOKING" },
+    });
+    const noOp = await setOwnerAttendance(ids.context, {
+      ...request,
+      operationKey: randomBytes(32).toString("base64url"),
+      expectedRevision: 1,
+      status: "completed",
+    });
+    expect(noOp).toMatchObject({
+      success: false,
+      error: { code: "NO_CHANGE" },
+    });
+
+    const { getOwnBookingActivity } =
+      await import("@/features/notifications/queries");
+    const activity = await getOwnBookingActivity(ids.context);
+    expect(activity.success).toBe(true);
+    if (!activity.success) return;
+    expect(
+      activity.data.rows.filter((row) => row.bookingId === bookingId),
+    ).toHaveLength(1);
+  });
+
+  it("attendance activity remains scoped to the authenticated owner's shop", async () => {
+    const ownerA = await fixture();
+    const ownerB = await fixture();
+    const created = await createPublicBooking(
+      { shopId: ownerB.shopId },
+      input(ownerB),
+    );
+    if (!created.success) throw new Error("Booking fixture failed.");
+    vi.setSystemTime(new Date("2026-11-02T10:30:00.001Z"));
+    const { setOwnerAttendance } = await import("../mutations");
+    const saved = await setOwnerAttendance(ownerB.context, {
+      bookingId: created.data.bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+      status: "completed",
+    });
+    expect(saved.success).toBe(true);
+
+    const { getOwnBookingActivity } =
+      await import("@/features/notifications/queries");
+    const [activityA, activityB] = await Promise.all([
+      getOwnBookingActivity(ownerA.context),
+      getOwnBookingActivity(ownerB.context),
+    ]);
+    expect(activityA).toMatchObject({ success: true, data: { rows: [] } });
+    expect(activityB).toMatchObject({
+      success: true,
+      data: {
+        rows: [{ bookingId: created.data.bookingId, kind: "attendance" }],
+      },
+    });
+  });
+
+  it("upcoming activity returns an own-shop confirmed booking", async () => {
+    const ids = await fixture();
+    const created = await createPublicBooking(
+      { shopId: ids.shopId },
+      input(ids),
+    );
+    if (!created.success) throw new Error("Booking fixture failed.");
+    const { getOwnUpcomingBookings } = await import("../queries");
+
+    const upcoming = await getOwnUpcomingBookings(ids.context);
+    expect(upcoming).toMatchObject({
+      success: true,
+      data: {
+        timeZone: "UTC",
+        appointments: [
+          {
+            id: created.data.bookingId,
+            status: "confirmed",
+            startAt: "2026-11-02T10:00:00.000Z",
+            endAt: "2026-11-02T10:30:00.000Z",
+            customer: { name: "Ada Lovelace" },
+            service: { name: "Cut" },
+            barber: { name: "Sam" },
+          },
+        ],
+      },
+    });
+  });
+
+  it("upcoming bookings include start equality and exclude past or non-confirmed rows", async () => {
+    const ids = await fixture();
+    const starts = [9, 10, 11, 12, 13].map(
+      (hour) => `2026-11-02T${String(hour).padStart(2, "0")}:00:00.000Z`,
+    );
+    const created = [];
+    for (const startAt of starts) {
+      const booking = await createOwnerBooking(ids.context, {
+        serviceId: ids.serviceId,
+        barberId: ids.barberId,
+        startAt,
+        reviewedOffer: {
+          name: "Cut",
+          priceUsd: "25.00",
+          durationMinutes: "30",
+        },
+        contact: { name: "Ada Lovelace", whatsappOptIn: false },
+        recoveryKey: randomBytes(32).toString("base64url"),
+      });
+      if (!booking.success)
+        throw new Error(`Booking fixture failed: ${JSON.stringify(booking)}`);
+      created.push(booking.data.bookingId);
+    }
+    const { cancelOwnerBooking, setOwnerAttendance } =
+      await import("../mutations");
+    const cancelled = await cancelOwnerBooking(ids.context, {
+      bookingId: created[2],
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+    });
+    expect(cancelled.success).toBe(true);
+    vi.setSystemTime(new Date("2026-11-02T13:30:00.001Z"));
+    for (const [index, status] of [
+      [3, "completed"],
+      [4, "no_show"],
+    ] as const) {
+      const classified = await setOwnerAttendance(ids.context, {
+        bookingId: created[index],
+        expectedRevision: 0,
+        operationKey: randomBytes(32).toString("base64url"),
+        status,
+      });
+      expect(classified.success).toBe(true);
+    }
+
+    const { getOwnUpcomingBookings } = await import("../queries");
+    const upcoming = await getOwnUpcomingBookings(
+      ids.context,
+      new Date("2026-11-02T10:00:00.000Z"),
+    );
+    expect(upcoming).toMatchObject({
+      success: true,
+      data: {
+        appointments: [
+          { id: created[1], status: "confirmed", startAt: starts[1] },
+        ],
+      },
+    });
+  });
+
+  it("upcoming bookings are derived only from the authenticated owner's shop", async () => {
+    const ownerA = await fixture();
+    const ownerB = await fixture();
+    const booking = await createOwnerBooking(ownerB.context, {
+      serviceId: ownerB.serviceId,
+      barberId: ownerB.barberId,
+      startAt: "2026-11-02T10:00:00.000Z",
+      reviewedOffer: { name: "Cut", priceUsd: "25.00", durationMinutes: "30" },
+      contact: { name: "Private Guest", whatsappOptIn: false },
+      recoveryKey: randomBytes(32).toString("base64url"),
+    });
+    if (!booking.success) throw new Error("Booking fixture failed.");
+    const { getOwnUpcomingBookings } = await import("../queries");
+
+    const [own, foreign] = await Promise.all([
+      getOwnUpcomingBookings(ownerB.context),
+      getOwnUpcomingBookings(ownerA.context),
+    ]);
+    expect(own).toMatchObject({
+      success: true,
+      data: { appointments: [{ id: booking.data.bookingId }] },
+    });
+    expect(foreign).toMatchObject({
+      success: true,
+      data: { appointments: [] },
+    });
+    expect(JSON.stringify(foreign)).not.toContain("Private Guest");
+  });
+
+  it("upcoming bookings sort by start time and then booking ID", async () => {
+    const ids = await fixture();
+    const secondBarber = await saveBarber(ids.context, {
+      name: "Alex",
+      serviceIds: [ids.serviceId],
+    });
+    if (!secondBarber.success) throw new Error("Barber fixture failed.");
+    const bookingA = await createOwnerBooking(ids.context, {
+      serviceId: ids.serviceId,
+      barberId: ids.barberId,
+      startAt: "2026-11-02T11:00:00.000Z",
+      reviewedOffer: { name: "Cut", priceUsd: "25.00", durationMinutes: "30" },
+      contact: { name: "First Guest", whatsappOptIn: false },
+      recoveryKey: randomBytes(32).toString("base64url"),
+    });
+    const bookingB = await createOwnerBooking(ids.context, {
+      serviceId: ids.serviceId,
+      barberId: secondBarber.data.id,
+      startAt: "2026-11-02T10:00:00.000Z",
+      reviewedOffer: { name: "Cut", priceUsd: "25.00", durationMinutes: "30" },
+      contact: { name: "Second Guest", whatsappOptIn: false },
+      recoveryKey: randomBytes(32).toString("base64url"),
+    });
+    if (!bookingA.success || !bookingB.success)
+      throw new Error("Booking fixtures failed.");
+    const tieA = await createOwnerBooking(ids.context, {
+      serviceId: ids.serviceId,
+      barberId: ids.barberId,
+      startAt: "2026-11-02T10:00:00.000Z",
+      reviewedOffer: { name: "Cut", priceUsd: "25.00", durationMinutes: "30" },
+      contact: { name: "Third Guest", whatsappOptIn: false },
+      recoveryKey: randomBytes(32).toString("base64url"),
+    });
+    if (!tieA.success) throw new Error("Tie booking fixture failed.");
+    const { getOwnUpcomingBookings } = await import("../queries");
+
+    const upcoming = await getOwnUpcomingBookings(ids.context);
+    expect(upcoming.success).toBe(true);
+    if (!upcoming.success) return;
+    expect(upcoming.data.appointments.map((booking) => booking.id)).toEqual([
+      ...[bookingB.data.bookingId, tieA.data.bookingId].sort(),
+      bookingA.data.bookingId,
+    ]);
+  });
+
+  it("upcoming reads distinguish an empty shop from missing owner authority", async () => {
+    const ids = await fixture();
+    const { getOwnUpcomingBookings } = await import("../queries");
+
+    await expect(getOwnUpcomingBookings(ids.context)).resolves.toMatchObject({
+      success: true,
+      data: { timeZone: "UTC", appointments: [] },
+    });
+    await expect(getOwnUpcomingBookings(null)).resolves.toMatchObject({
+      success: false,
+      error: { code: "UNAUTHENTICATED" },
+    });
+    await expect(
+      getOwnUpcomingBookings({ userId: randomUUID() }),
+    ).resolves.toMatchObject({
+      success: false,
+      error: { code: "SHOP_REQUIRED" },
+    });
   });
 });

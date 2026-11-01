@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { connection } from "next/server";
 import { OwnerActivity } from "@/features/notifications/components/owner-activity";
+import { getOwnUpcomingBookings } from "@/features/bookings/queries";
 import { getOwnShop } from "@/features/shops/queries";
 import {
   getOwnBookingActivity,
@@ -26,15 +27,18 @@ async function ActivityContent() {
   if (!shop) redirect("/setup");
   let activity = null;
   let changes = null;
+  let upcoming = null;
   let loadFailed = false;
   try {
-    const [result, changeResult] = await Promise.all([
+    const [result, changeResult, upcomingResult] = await Promise.all([
       getOwnNotificationActivity(context),
       getOwnBookingActivity(context),
+      getOwnUpcomingBookings(context),
     ]);
-    if (result.success && changeResult.success) {
+    if (result.success && changeResult.success && upcomingResult.success) {
       activity = result.data;
       changes = changeResult.data;
+      upcoming = upcomingResult.data.appointments;
     } else loadFailed = true;
   } catch {
     loadFailed = true;
@@ -44,6 +48,7 @@ async function ActivityContent() {
       shop={shop}
       activity={activity}
       changes={changes}
+      upcoming={upcoming}
       loadFailed={loadFailed}
     />
   );

@@ -79,7 +79,7 @@ describe("booking notification reads", () => {
   async function addChange(
     bookingId: string,
     revision: number,
-    kind: "move" | "cancel" | "restore" = "move",
+    kind: "move" | "cancel" | "restore" | "attendance" = "move",
   ) {
     const changeId = randomUUID();
     await database.pool.query(
@@ -307,6 +307,89 @@ describe("booking notification reads", () => {
       status: "failed",
       reason: "message_rejected",
       updatedAt: "2026-11-02T08:02:00.000Z",
+    });
+  });
+
+  it("keeps prior confirmation evidence visible after an attendance revision", async () => {
+    const { bookingId, token } = await createBooking(0);
+    await addWork({
+      bookingId,
+      revision: 0,
+      kind: "customer_confirmation",
+      status: "captured",
+      createdAt: new Date("2026-11-02T08:01:00Z"),
+    });
+    await addChange(bookingId, 1, "attendance");
+    await database.pool.query(
+      "UPDATE bookings SET revision=1, status='completed' WHERE id=$1",
+      [bookingId],
+    );
+
+    await expectEmail(bookingId, token, {
+      status: "captured",
+      reason: null,
+      updatedAt: "2026-11-02T08:01:00.000Z",
+    });
+    const attendanceWork = await database.pool.query(
+      "SELECT count(*)::int AS count FROM notification_work WHERE booking_id=$1 AND booking_revision=1",
+      [bookingId],
+    );
+    expect(attendanceWork.rows[0].count).toBe(0);
+  });
+
+  it("keeps prior move and restoration evidence visible across attendance revisions", async () => {
+    const { bookingId, token } = await createBooking(0);
+    await addWork({
+      bookingId,
+      revision: 0,
+      kind: "customer_confirmation",
+      status: "captured",
+      createdAt: new Date("2026-11-02T08:01:00Z"),
+    });
+    const move = await addChange(bookingId, 1, "move");
+    await addWork({
+      bookingId,
+      revision: 1,
+      kind: "customer_move",
+      changeId: move,
+      status: "failed",
+      reason: "permanent_rejection",
+      createdAt: new Date("2026-11-02T08:02:00Z"),
+    });
+    await addChange(bookingId, 2, "attendance");
+    await database.pool.query(
+      "UPDATE bookings SET revision=2, status='completed' WHERE id=$1",
+      [bookingId],
+    );
+
+    await expectEmail(bookingId, token, {
+      status: "failed",
+      reason: "message_rejected",
+      updatedAt: "2026-11-02T08:02:00.000Z",
+    });
+
+    const restoration = await addChange(bookingId, 3, "restore");
+    await addWork({
+      bookingId,
+      revision: 3,
+      kind: "customer_restoration",
+      changeId: restoration,
+      status: "captured",
+      createdAt: new Date("2026-11-02T08:03:00Z"),
+    });
+    await database.pool.query(
+      "UPDATE bookings SET revision=3, status='confirmed' WHERE id=$1",
+      [bookingId],
+    );
+    await addChange(bookingId, 4, "attendance");
+    await database.pool.query(
+      "UPDATE bookings SET revision=4, status='no_show' WHERE id=$1",
+      [bookingId],
+    );
+    await expectEmail(bookingId, token, {
+      status: "captured",
+      reason: null,
+      updatedAt: "2026-11-02T08:03:00.000Z",
     });
   });
 });

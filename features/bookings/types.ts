@@ -1,5 +1,9 @@
 import type { CustomerEmailSummary } from "@/features/notifications/customer-summary";
 
+export type BookingStatus = "confirmed" | "cancelled" | "completed" | "no_show";
+
+export type AttendanceStatus = "completed" | "no_show";
+
 export type PublicBookingContext = {
   shopId: string;
 };
@@ -30,7 +34,7 @@ export type BookingFailureCode =
 export type ManagedBookingView = {
   notifications: { email: CustomerEmailSummary };
   revision: number;
-  status: "confirmed" | "cancelled";
+  status: BookingStatus;
   startAt: string;
   endAt: string;
   service: { name: string; priceUsd: string; durationMinutes: number };
@@ -147,7 +151,7 @@ export type PublicBookingReceipt = {
 
 export type OwnerCalendarAppointment = {
   id: string;
-  status: "confirmed" | "cancelled";
+  status: BookingStatus;
   startAt: string;
   endAt: string;
   service: { name: string; priceUsd: string; durationMinutes: number };
@@ -165,7 +169,7 @@ export type OwnerCalendarView = {
 export type OwnerAppointmentView = {
   id: string;
   revision: number;
-  status: "confirmed" | "cancelled";
+  status: BookingStatus;
   startAt: string;
   endAt: string;
   service: {
@@ -234,10 +238,17 @@ export type OwnerChangeReceipt = {
   bookingId: string;
   operation: {
     id: string;
-    kind: "move" | "cancel" | "restore";
+    kind: "move" | "cancel" | "restore" | "attendance";
     revision: number;
     committedAt: string;
     snapshot: Record<string, unknown>;
   };
   appointment: OwnerAppointmentView;
+};
+
+export type SetOwnerAttendanceInput = {
+  bookingId: string;
+  expectedRevision: number;
+  operationKey: string;
+  status: AttendanceStatus;
 };

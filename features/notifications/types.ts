@@ -42,7 +42,7 @@ export type NotificationActivityView = { rows: NotificationActivityRow[] };
 export type BookingChangeActivityRow = {
   id: string;
   bookingId: string;
-  kind: "move" | "cancel" | "restore";
+  kind: "move" | "cancel" | "restore" | "attendance";
   actorType: "owner" | "customer";
   revision: number;
   committedAt: string;

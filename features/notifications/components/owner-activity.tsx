@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { Mail, MessageCircle } from "lucide-react";
 import {
   Dialog,
@@ -14,6 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { ShopView } from "@/features/shops/queries";
+import type { OwnerCalendarAppointment } from "@/features/bookings/types";
 import type {
   BookingChangeActivityView,
   NotificationActivityRow,
@@ -109,15 +111,24 @@ function date(value: string, timeZone: string) {
   }).format(new Date(value));
 }
 
+function bookingStatus(status: string) {
+  if (status === "no_show") return "No-show";
+  return status
+    .replaceAll("_", " ")
+    .replace(/^./, (first) => first.toUpperCase());
+}
+
 export function OwnerActivity({
   shop,
   activity,
   changes,
+  upcoming,
   loadFailed = false,
 }: {
   shop: ShopView;
   activity: NotificationActivityView | null;
   changes: BookingChangeActivityView | null;
+  upcoming: OwnerCalendarAppointment[] | null;
   loadFailed?: boolean;
 }) {
   const [category, setCategory] =
@@ -269,6 +280,49 @@ export function OwnerActivity({
           <>
             <section className={c.eventGroup}>
               <header>
+                <h2>Upcoming bookings</h2>
+                <span>
+                  {upcoming?.length ?? 0}{" "}
+                  {(upcoming?.length ?? 0) === 1 ? "booking" : "bookings"}
+                </span>
+              </header>
+              {upcoming?.length ? (
+                upcoming.map((appointment) => (
+                  <article className={c.activityEvent} key={appointment.id}>
+                    <span className={c.eventIcon} aria-hidden="true">
+                      ◷
+                    </span>
+                    <div className={c.eventCopy}>
+                      <h3>{appointment.customer.name}</h3>
+                      <p>
+                        {appointment.service.name} · {appointment.barber.name}
+                      </p>
+                      <small>
+                        {date(appointment.startAt, shop.timeZone)} –{" "}
+                        {date(appointment.endAt, shop.timeZone)}
+                      </small>
+                    </div>
+                    <span className={c.eventStatus}>
+                      {bookingStatus(appointment.status)}
+                    </span>
+                    <div className={c.eventActions}>
+                      <Button
+                        variant="outline"
+                        render={
+                          <Link href={`/appointments/${appointment.id}`} />
+                        }
+                      >
+                        Appointment details
+                      </Button>
+                    </div>
+                  </article>
+                ))
+              ) : (
+                <p className={c.noMatches}>No upcoming confirmed bookings.</p>
+              )}
+            </section>
+            <section className={c.eventGroup}>
+              <header>
                 <h2>Recent appointment changes</h2>
                 <span>
                   {changeEvents.length}{" "}
@@ -286,11 +340,13 @@ export function OwnerActivity({
                       </span>
                       <div className={c.eventCopy}>
                         <h3>
-                          {event.kind === "move"
-                            ? "Appointment rescheduled"
-                            : event.kind === "restore"
-                              ? "Appointment restored"
-                              : "Appointment cancelled"}
+                          {event.kind === "attendance"
+                            ? "Attendance recorded"
+                            : event.kind === "move"
+                              ? "Appointment rescheduled"
+                              : event.kind === "restore"
+                                ? "Appointment restored"
+                                : "Appointment cancelled"}
                         </h3>
                         <p>
                           Booking #{event.bookingId} · revision {event.revision}{" "}
@@ -309,9 +365,16 @@ export function OwnerActivity({
                           After: {String(after.serviceName)} ·{" "}
                           {String(after.barberName)} ·{" "}
                           {date(String(after.startAt), shop.timeZone)} –{" "}
-                          {date(String(after.endAt), shop.timeZone)} ·{" "}
-                          {String(after.status)}
+                          {date(String(after.endAt), shop.timeZone)}
+                          {event.kind !== "attendance" &&
+                            ` · ${String(after.status)}`}
                         </small>
+                        {event.kind === "attendance" && (
+                          <small>
+                            Attendance: {bookingStatus(String(before.status))} →{" "}
+                            {bookingStatus(String(after.status))}
+                          </small>
+                        )}
                         <small>
                           Recorded {date(event.committedAt, shop.timeZone)}
                         </small>

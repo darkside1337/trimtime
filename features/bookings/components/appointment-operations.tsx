@@ -26,6 +26,7 @@ import { useAppointmentDismissal } from "../hooks/use-appointment-dismissal";
 import { AppointmentCancelDialogContent } from "./appointment-cancel-dialog";
 import { AppointmentMoveDialogContent } from "./appointment-move-dialog";
 import { AppointmentRestoreDialogContent } from "./appointment-restore-dialog";
+import { AppointmentAttendanceForm } from "./appointment-attendance-form";
 import { createRecoveryKey } from "./recovery-key";
 
 export function AppointmentCalendarBackLink({ href }: { href: string }) {
@@ -173,6 +174,9 @@ function AppointmentOperationsForm({
   const canRestore =
     appointment.status === "cancelled" &&
     Date.parse(appointment.startAt) > Date.parse(now);
+  const canSetAttendance =
+    appointment.status !== "cancelled" &&
+    Date.parse(appointment.endAt) < Date.parse(now);
   const recoveryPending = uncertain || cancelUncertain || restoreUncertain;
 
   function update(patch: Partial<Values>) {
@@ -451,7 +455,8 @@ function AppointmentOperationsForm({
     }
   }
 
-  if (!canChange && !canRestore && !recoveryPending) return null;
+  if (!canChange && !canRestore && !canSetAttendance && !recoveryPending)
+    return null;
 
   return (
     <>
@@ -484,6 +489,7 @@ function AppointmentOperationsForm({
           Recover pending operation
         </Button>
       )}
+      <AppointmentAttendanceForm appointment={appointment} now={now} />
       <Dialog
         open={mode !== null}
         onOpenChange={(open) => {

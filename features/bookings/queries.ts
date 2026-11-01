@@ -1,5 +1,17 @@
 import "server-only";
-import { and, asc, desc, eq, gt, inArray, lt, ne, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  gte,
+  inArray,
+  lt,
+  ne,
+  or,
+  sql,
+} from "drizzle-orm";
 import { Temporal } from "temporal-polyfill";
 import { db } from "@/db";
 import { bookings } from "@/db/schema/bookings";
@@ -12,6 +24,7 @@ import { resolveScheduleForDate } from "@/features/availability/schedule-resolut
 import type { ActionResult } from "@/lib/action-result";
 import { hashSecret } from "./capabilities";
 import type {
+  BookingStatus,
   CustomerReplacementChoices,
   CustomerReplacementSlotsView,
   ManagedBookingView,
@@ -19,6 +32,7 @@ import type {
   OwnerAppointmentMoveChoices,
   OwnerAppointmentView,
   OwnerCalendarView,
+  OwnerCalendarAppointment,
   PublicBookingContext,
 } from "./types";
 import type { OwnerContext } from "@/server/owner-context";
@@ -40,6 +54,24 @@ function dateBounds(date: string, timeZone: string) {
 }
 
 function latestEmailNotification() {
+  const applicableRevision = sql<number>`COALESCE(
+    (
+      SELECT MAX(c.applied_revision)
+      FROM booking_changes c
+      WHERE c.booking_id = ${bookings.id}
+        AND c.kind IN ('move', 'cancel', 'restore')
+    ),
+    CASE
+      WHEN EXISTS (
+        SELECT 1
+        FROM booking_changes c
+        WHERE c.booking_id = ${bookings.id}
+          AND c.kind = 'attendance'
+      ) THEN 0
+      WHEN ${bookings.revision} = 0 THEN 0
+      ELSE NULL
+    END
+  )`;
   return db
     .select({
       status: notificationWork.status,
@@ -52,15 +84,14 @@ function latestEmailNotification() {
       and(
         eq(notificationWork.bookingId, bookings.id),
         eq(notificationWork.channel, "email"),
+        eq(notificationWork.bookingRevision, applicableRevision),
         or(
           and(
-            eq(bookings.revision, 0),
             eq(notificationWork.bookingRevision, 0),
             eq(notificationWork.kind, "customer_confirmation"),
           ),
           and(
-            gt(bookings.revision, 0),
-            eq(notificationWork.bookingRevision, bookings.revision),
+            gt(notificationWork.bookingRevision, 0),
             inArray(notificationWork.kind, [
               "customer_move",
               "customer_cancellation",
@@ -127,7 +158,7 @@ export async function getManagedBooking(
       success: true,
       data: {
         revision: row.revision,
-        status: row.status as "confirmed" | "cancelled",
+        status: row.status as BookingStatus,
         startAt: row.startAt.toISOString(),
         endAt: row.endAt.toISOString(),
         service: {
@@ -274,7 +305,7 @@ export async function getOwnCalendar(
         barbers: barberRows,
         appointments: rows.map((row) => ({
           id: row.id,
-          status: row.status as "confirmed" | "cancelled",
+          status: row.status as BookingStatus,
           startAt: row.startAt.toISOString(),
           endAt: row.endAt.toISOString(),
           service: {
@@ -296,6 +327,85 @@ export async function getOwnCalendar(
     return ownerError(
       "UNAVAILABLE",
       "Your calendar could not be loaded. Try again.",
+    );
+  }
+}
+
+export async function getOwnUpcomingBookings(
+  context: OwnerContext | null,
+  now = new Date(),
+): Promise<
+  ActionResult<{ timeZone: string; appointments: OwnerCalendarAppointment[] }>
+> {
+  if (!context?.userId)
+    return ownerError("UNAUTHENTICATED", "Sign in to view upcoming bookings.");
+  try {
+    const shop = await ownShop(context);
+    if (!shop)
+      return ownerError("SHOP_REQUIRED", "Set up your shop to view bookings.");
+    const rows = await db
+      .select({
+        id: bookings.id,
+        status: bookings.status,
+        startAt: bookings.startAt,
+        endAt: bookings.endAt,
+        serviceName: bookings.serviceName,
+        servicePriceUsd: bookings.servicePriceUsd,
+        serviceDurationMinutes: bookings.serviceDurationMinutes,
+        barberId: bookings.barberId,
+        barberName: bookings.barberName,
+        customerName: bookings.customerName,
+      })
+      .from(bookings)
+      .innerJoin(
+        shops,
+        and(eq(shops.id, bookings.shopId), eq(shops.ownerId, context.userId)),
+      )
+      .where(
+        and(
+          eq(bookings.shopId, shop.id),
+          eq(bookings.status, "confirmed"),
+          gte(bookings.startAt, now),
+        ),
+      )
+      .orderBy(asc(bookings.startAt), asc(bookings.id));
+    const barberRows = await db
+      .select({
+        id: barbers.id,
+        name: barbers.name,
+        archived: barbers.archived,
+      })
+      .from(barbers)
+      .where(eq(barbers.shopId, shop.id));
+    return {
+      success: true,
+      data: {
+        timeZone: shop.timeZone,
+        appointments: rows.map((row) => ({
+          id: row.id,
+          status: row.status as BookingStatus,
+          startAt: row.startAt.toISOString(),
+          endAt: row.endAt.toISOString(),
+          service: {
+            name: row.serviceName,
+            priceUsd: row.servicePriceUsd,
+            durationMinutes: row.serviceDurationMinutes,
+          },
+          barber: {
+            id: row.barberId,
+            name: row.barberName,
+            archived:
+              barberRows.find((barber) => barber.id === row.barberId)
+                ?.archived ?? true,
+          },
+          customer: { name: row.customerName },
+        })),
+      },
+    };
+  } catch {
+    return ownerError(
+      "UNAVAILABLE",
+      "Upcoming bookings could not be loaded. Try again.",
     );
   }
 }
@@ -368,7 +478,7 @@ export async function getOwnAppointment(
       data: {
         id: found.id,
         revision: found.revision,
-        status: found.status as "confirmed" | "cancelled",
+        status: found.status as BookingStatus,
         startAt: found.startAt.toISOString(),
         endAt: found.endAt.toISOString(),
         service: {

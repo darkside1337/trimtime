@@ -106,6 +106,15 @@ export const restoreOwnerBookingSchema = z
   })
   .strict();
 
+export const setOwnerAttendanceSchema = z
+  .object({
+    bookingId: z.uuid(),
+    expectedRevision: z.number().int().nonnegative(),
+    operationKey: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+    status: z.enum(["completed", "no_show"]),
+  })
+  .strict();
+
 export const cancelCustomerBookingSchema: z.ZodType<CancelCustomerBookingInput> =
   z
     .object({

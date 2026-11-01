@@ -8,4 +8,5 @@ export {
   createOwnerBooking,
   moveOwnerBooking,
   restoreOwnerBooking,
+  setOwnerAttendance,
 } from "./owner-mutations";

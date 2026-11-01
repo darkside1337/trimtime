@@ -56,7 +56,7 @@ export const bookingChanges = pgTable(
     unique("booking_changes_id_booking_key").on(table.id, table.bookingId),
     check(
       "booking_changes_kind_check",
-      sql`${table.kind} IN ('move', 'cancel', 'restore')`,
+      sql`${table.kind} IN ('move', 'cancel', 'restore', 'attendance')`,
     ),
     check(
       "booking_changes_actor_type_check",

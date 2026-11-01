@@ -25,6 +25,7 @@ import {
   moveOwnerBooking,
   replaceCustomerBooking,
   restoreOwnerBooking,
+  setOwnerAttendance,
 } from "./mutations";
 import { cancelCustomerBooking } from "./customer-mutations";
 import {
@@ -343,6 +344,31 @@ export async function restoreOwnerBookingAction(
         });
       }),
     );
+  }
+  return result;
+}
+
+export async function setOwnerAttendanceAction(
+  input: unknown,
+): Promise<ActionResult<OwnerChangeReceipt>> {
+  const requestHeaders = await headers();
+  if (
+    classifyHost(requestHeaders) !== "owner" ||
+    !hasOwnerOrigin(requestHeaders)
+  )
+    return {
+      success: false,
+      error: { code: "UNAVAILABLE", message: "Appointment is unavailable." },
+    };
+  const result = await setOwnerAttendance(
+    await readOwnerContext(requestHeaders),
+    input,
+  );
+  if (result.success) {
+    const { bookingId } = result.data;
+    revalidatePath("/owner");
+    revalidatePath(`/owner/appointments/${bookingId}`);
+    revalidatePath("/owner/activity");
   }
   return result;
 }

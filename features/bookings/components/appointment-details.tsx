@@ -25,9 +25,13 @@ export function AppointmentDetails({
   const status =
     appointment.status === "cancelled"
       ? "Cancelled"
-      : past
-        ? "Past, unmarked"
-        : "Confirmed";
+      : appointment.status === "completed"
+        ? "Completed"
+        : appointment.status === "no_show"
+          ? "No-show"
+          : past
+            ? "Past, unmarked"
+            : "Confirmed";
   const email = appointment.customer.email
     ? appointment.customer.email
     : "No email provided";
@@ -56,7 +60,10 @@ export function AppointmentDetails({
           })}
         </p>
       </header>
-      <p className="w-fit rounded-full bg-secondary px-3 py-1 text-xs font-semibold">
+      <p
+        className="w-fit rounded-full bg-secondary px-3 py-1 text-xs font-semibold"
+        role="status"
+      >
         {status}
       </p>
       <dl className="grid grid-cols-2 gap-2.5 max-[520px]:grid-cols-1">

@@ -27,19 +27,28 @@ export type OwnerAppointmentDraftValues = {
 };
 
 export type OwnerAppointmentDraft = {
-  values: OwnerAppointmentDraftValues;
-  baseline: OwnerAppointmentDraftValues;
+  values?: OwnerAppointmentDraftValues;
+  baseline?: OwnerAppointmentDraftValues;
   recoveryKey: string;
   submittedPayload: string | null;
   appointmentId?: string;
-  operationMode?: "move" | "cancel" | "restore";
+  operationMode?: "move" | "cancel" | "restore" | "attendance";
+  attendanceStatus?: "completed" | "no_show";
+  baselineAttendanceStatus?: "completed" | "no_show";
+  needsReview?: boolean;
+  conflictRevision?: number;
+  mutationPending?: boolean;
   recoveryPending?: boolean;
 };
 
 function draftHasUnsavedWork(draft: OwnerAppointmentDraft | null) {
   return (
     !!draft &&
-    (JSON.stringify(draft.values) !== JSON.stringify(draft.baseline) ||
+    ((draft.values !== undefined &&
+      draft.baseline !== undefined &&
+      JSON.stringify(draft.values) !== JSON.stringify(draft.baseline)) ||
+      (draft.operationMode === "attendance" &&
+        draft.attendanceStatus !== draft.baselineAttendanceStatus) ||
       draft.recoveryPending === true)
   );
 }
@@ -93,6 +102,7 @@ export function OwnerAppointmentProvider({
   const dirty = draftHasUnsavedWork(draft);
   const begin = useCallback(
     (next: Dismissal) => {
+      if (draftRef.current?.mutationPending === true) return;
       if (phase.current === "prompt" || phase.current === "restoring") return;
       const isDirty = draftHasUnsavedWork(draftRef.current);
       if (!isDirty) {
@@ -119,6 +129,12 @@ export function OwnerAppointmentProvider({
     const check = (frame = 0) => {
       if (phase.current !== "restoring" || pendingRef.current?.kind !== "pop")
         return;
+      if (draftRef.current?.mutationPending === true) {
+        phase.current = "idle";
+        pendingRef.current = null;
+        restoreRequested.current = false;
+        return;
+      }
       if (`${window.location.pathname}${window.location.search}` !== modalKey)
         return;
       const entry = Array.from(

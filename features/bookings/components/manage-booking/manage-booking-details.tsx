@@ -27,12 +27,18 @@ export function ManageBookingDetails({
 }) {
   const { date, range } = appointmentTime(booking);
   const cancelled = booking.status === "cancelled";
-  const viewOnly = cancelled || past;
+  const completed = booking.status === "completed";
+  const noShow = booking.status === "no_show";
+  const viewOnly = booking.status !== "confirmed" || past;
   const heading = cancelled
     ? "Cancelled"
-    : past
-      ? "Past, unmarked"
-      : "Confirmed";
+    : completed
+      ? "Completed"
+      : noShow
+        ? "No-show"
+        : past
+          ? "Past, unmarked"
+          : "Confirmed";
   return (
     <>
       <div className="flex min-h-[70px] items-center justify-between gap-4 border-b border-[#e6e6e2] text-xs">
@@ -83,11 +89,15 @@ export function ManageBookingDetails({
         <p className="mt-3 text-xs text-[#72726e]">
           {cancelled
             ? "This appointment was cancelled."
-            : past
-              ? "This appointment is past and unmarked."
-              : booking.changeCutoffPassed
-                ? `Online changes are not available within 12 hours of your start. Contact ${booking.shop.publicContact}.`
-                : "You can cancel online until 12 hours before your start. Contact the shop if you need help."}
+            : completed
+              ? "This appointment was marked completed by the shop."
+              : noShow
+                ? "This appointment was marked no-show by the shop."
+                : past
+                  ? "This appointment is past and unmarked."
+                  : booking.changeCutoffPassed
+                    ? `Online changes are not available within 12 hours of your start. Contact ${booking.shop.publicContact}.`
+                    : "You can cancel online until 12 hours before your start. Contact the shop if you need help."}
         </p>
       </div>
 
@@ -136,11 +146,15 @@ export function ManageBookingDetails({
         <p className="font-semibold">
           {cancelled
             ? "Your appointment is cancelled."
-            : past
-              ? "This appointment is past and unmarked."
-              : booking.changeCutoffPassed
-                ? "Online changes are closed."
-                : "Room for a change of plans."}
+            : completed
+              ? "Your appointment is marked completed."
+              : noShow
+                ? "Your appointment is marked no-show."
+                : past
+                  ? "This appointment is past and unmarked."
+                  : booking.changeCutoffPassed
+                    ? "Online changes are closed."
+                    : "Room for a change of plans."}
         </p>
         <p className="mt-2">
           {viewOnly

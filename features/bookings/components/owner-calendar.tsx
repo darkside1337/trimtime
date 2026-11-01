@@ -447,9 +447,13 @@ function AppointmentCard({
       <span className="w-fit rounded-full bg-secondary px-2 py-0.5 text-[10px] font-bold">
         {appointment.status === "cancelled"
           ? "Cancelled"
-          : Date.parse(appointment.endAt) <= Date.parse(now)
-            ? "Past, unmarked"
-            : "Confirmed"}
+          : appointment.status === "completed"
+            ? "Completed"
+            : appointment.status === "no_show"
+              ? "No-show"
+              : Date.parse(appointment.endAt) <= Date.parse(now)
+                ? "Past, unmarked"
+                : "Confirmed"}
       </span>
     </Link>
   );

@@ -82,7 +82,7 @@ export const bookings = pgTable(
     ),
     check(
       "bookings_status_check",
-      sql`${table.status} IN ('confirmed', 'cancelled')`,
+      sql`${table.status} IN ('confirmed', 'cancelled', 'completed', 'no_show')`,
     ),
     check("bookings_revision_check", sql`${table.revision} >= 0`),
     check(
