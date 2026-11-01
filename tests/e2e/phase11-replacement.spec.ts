@@ -738,6 +738,23 @@ test("Case 6: late slot response cannot replace newer service, barber, or date s
   const owner = await owners(context, { shop: true, published: true });
   const { serviceId, barberId } = await addReadyCatalog(database.pool, owner);
   await openAllWeek(database.pool, owner, barberId);
+  for (const [date, start] of [
+    ["2026-11-03", 600],
+    ["2026-11-04", 720],
+  ] as const) {
+    const override = JSON.stringify({
+      working: [{ start, end: start + 60 }],
+      breaks: [],
+    });
+    await database.pool.query(
+      "INSERT INTO shop_date_schedules (shop_id, date, override, closed, revision) VALUES ($1, $2, $3::jsonb, false, 1)",
+      [owner.shopId, date, override],
+    );
+    await database.pool.query(
+      "INSERT INTO barber_date_schedules (shop_id, barber_id, date, override, closed, revision) VALUES ($1, $2, $3, $4::jsonb, false, 1)",
+      [owner.shopId, barberId, date, override],
+    );
+  }
 
   const manageUrl = await createEligibleBooking(
     page,
@@ -761,70 +778,162 @@ test("Case 6: late slot response cannot replace newer service, barber, or date s
     // Wait for initial slots to be visible
     await expect(page.getByRole("radio", { name: "10:00" })).toBeVisible();
 
-    // Intercept 2026-11-03 action request and delay it by 300ms so subsequent selections occur while 2026-11-03 is pending
+    let releaseOldResponse!: () => void;
+    let markOldResponseProcessed!: () => void;
+    let markOldResponseDelivered!: () => void;
+    const oldResponseGate = new Promise<void>((resolve) => {
+      releaseOldResponse = resolve;
+    });
+    const oldResponseProcessed = new Promise<void>((resolve) => {
+      markOldResponseProcessed = resolve;
+    });
+    const oldResponseDelivered = new Promise<void>((resolve) => {
+      markOldResponseDelivered = resolve;
+    });
     await page.route("**/*", async (route) => {
       const req = route.request();
-      if (req.method() === "POST" && Boolean(req.headers()["next-action"])) {
-        const postData = req.postData() ?? "";
-        if (postData.includes("2026-11-03")) {
-          await new Promise((r) => setTimeout(r, 300));
-        }
+      const postData = req.postData() ?? "";
+      if (
+        req.method() === "POST" &&
+        Boolean(req.headers()["next-action"]) &&
+        postData.includes("2026-11-03")
+      ) {
+        // Fetch waits for the server action to finish; hold only its processed response.
+        const response = await route.fetch();
+        markOldResponseProcessed();
+        await oldResponseGate;
+        await route.fulfill({ response });
+        markOldResponseDelivered();
+        return;
       }
       await route.continue();
     });
 
-    // Selecting an empty date while a slots request is in flight:
-    await page.getByLabel("Choose a date").fill("2026-11-03");
-    // Immediately clear date while 2026-11-03 request is in flight
-    await page.getByLabel("Choose a date").fill("");
+    try {
+      // Select an empty date while the older action's response is held after processing.
+      await page.getByLabel("Choose a date").fill("2026-11-03");
+      await oldResponseProcessed;
+      await page.getByLabel("Choose a date").fill("");
 
-    // Verify slots are cleared synchronously and empty date prompt is visible
-    await expect(
-      page.getByText("Choose a date to view available times."),
-    ).toBeVisible();
-    await expect(page.locator('input[name="replacement-start"]')).toHaveCount(
-      0,
-    );
+      // Verify slots are cleared synchronously and empty date prompt is visible
+      await expect(
+        page.getByText("Choose a date to view available times."),
+      ).toBeVisible();
+      await expect(page.locator('input[name="replacement-start"]')).toHaveCount(
+        0,
+      );
 
-    // Wait 350ms for delayed 2026-11-03 response to arrive
-    await page.waitForTimeout(350);
+      // Let the already-processed stale response arrive only after the clear completed.
+      releaseOldResponse();
+      await oldResponseDelivered;
+      await expect(
+        page.getByText("Choose a date to view available times."),
+      ).toBeVisible();
+      await expect(page.locator('input[name="replacement-start"]')).toHaveCount(
+        0,
+      );
 
-    // Verify delayed response did NOT repopulate slots after input was cleared
-    await expect(
-      page.getByText("Choose a date to view available times."),
-    ).toBeVisible();
-    await expect(page.locator('input[name="replacement-start"]')).toHaveCount(
-      0,
-    );
+      // Hold both processed responses so the older response arrives while the newer
+      // date is selected and its own response is still pending.
+      let releaseThirdResponse!: () => void;
+      let releaseFourthResponse!: () => void;
+      let markThirdResponseProcessed!: () => void;
+      let markThirdResponseDelivered!: () => void;
+      let markFourthResponseProcessed!: () => void;
+      let markFourthResponseDelivered!: () => void;
+      const thirdResponseGate = new Promise<void>((resolve) => {
+        releaseThirdResponse = resolve;
+      });
+      const fourthResponseGate = new Promise<void>((resolve) => {
+        releaseFourthResponse = resolve;
+      });
+      const thirdResponseProcessed = new Promise<void>((resolve) => {
+        markThirdResponseProcessed = resolve;
+      });
+      const thirdResponseDelivered = new Promise<void>((resolve) => {
+        markThirdResponseDelivered = resolve;
+      });
+      const fourthResponseProcessed = new Promise<void>((resolve) => {
+        markFourthResponseProcessed = resolve;
+      });
+      const fourthResponseDelivered = new Promise<void>((resolve) => {
+        markFourthResponseDelivered = resolve;
+      });
+      let slotActionCount = 0;
+      await page.unrouteAll({ behavior: "wait" });
+      await page.route("**/*", async (route) => {
+        const req = route.request();
+        if (req.method() === "POST" && Boolean(req.headers()["next-action"])) {
+          slotActionCount += 1;
+          const response = await route.fetch();
+          if (slotActionCount === 1) {
+            markThirdResponseProcessed();
+            await thirdResponseGate;
+            await route.fulfill({ response });
+            markThirdResponseDelivered();
+            return;
+          }
+          if (slotActionCount === 2) {
+            markFourthResponseProcessed();
+            await fourthResponseGate;
+            await route.fulfill({ response });
+            markFourthResponseDelivered();
+            return;
+          }
+          await route.fulfill({ response });
+          return;
+        }
+        await route.continue();
+      });
+      try {
+        await page.getByLabel("Choose a date").fill("2026-11-03");
+        await thirdResponseProcessed;
+        await page.getByLabel("Choose a date").fill("2026-11-04");
+        releaseThirdResponse();
+        await thirdResponseDelivered;
+        await fourthResponseProcessed;
 
-    // Now test selecting a newer date before older response finishes:
-    await page.getByLabel("Choose a date").fill("2026-11-03");
-    // Immediately select date 2026-11-04 before request finishes
-    await page.getByLabel("Choose a date").fill("2026-11-04");
+        // Nov 3 has only 10:00; while the Nov 4 response is held, the old
+        // response must not appear in the rendered choices.
+        await expect(page.getByLabel("Choose a date")).toHaveValue(
+          "2026-11-04",
+        );
+        await expect(page.getByRole("radio", { name: "10:00" })).toHaveCount(0);
+        await expect(page.getByText("Loading times…")).toBeVisible();
 
-    // Wait for 2026-11-04 slots to appear and select 10:00
-    const slotRadio = page.getByRole("radio", { name: "10:00" });
-    await expect(slotRadio).toHaveCount(1);
-    await slotRadio.check({ force: true });
+        releaseFourthResponse();
+        await fourthResponseDelivered;
+        const slotRadio = page.getByRole("radio", { name: "12:00" });
+        await expect(slotRadio).toBeVisible();
+        await slotRadio.check({ force: true });
+        await expect(slotRadio).toBeChecked();
+      } finally {
+        releaseThirdResponse();
+        releaseFourthResponse();
+      }
 
-    // Verify 2026-11-04 selection remains intact and is not overwritten by the older request
-    await expect(page.getByLabel("Choose a date")).toHaveValue("2026-11-04");
-    await expect(page.getByRole("radio", { name: "10:00" })).toBeChecked();
+      // Advance to review
+      await page.getByRole("button", { name: "Review change" }).click();
+      await expect(
+        page.getByRole("heading", {
+          name: "A quick look before we change it.",
+        }),
+      ).toBeVisible();
 
-    // Advance to review
-    await page.getByRole("button", { name: "Review change" }).click();
-    await expect(
-      page.getByRole("heading", { name: "A quick look before we change it." }),
-    ).toBeVisible();
-
-    const newAppointmentSection = page
-      .locator("section")
-      .filter({
-        has: page.getByRole("heading", { name: "Your new appointment" }),
-      })
-      .last();
-    // Review must reflect Wednesday, November 4
-    await expect(newAppointmentSection).toContainText("Wednesday, November 4");
+      const newAppointmentSection = page
+        .locator("section")
+        .filter({
+          has: page.getByRole("heading", { name: "Your new appointment" }),
+        })
+        .last();
+      // Review must reflect Wednesday, November 4
+      await expect(newAppointmentSection).toContainText(
+        "Wednesday, November 4",
+      );
+    } finally {
+      releaseOldResponse();
+      await page.unrouteAll({ behavior: "wait" });
+    }
   } finally {
     await database.pool.query(
       "DELETE FROM public_rate_keys WHERE scope='customer_change_link' AND key_hash=$1",
