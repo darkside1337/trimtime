@@ -615,21 +615,26 @@ test("uncertain cancellation survives close and standalone Back until recovery",
   const bookingId = await createOwnerAppointment(owner);
   await page.goto(`${ownerOrigin}/appointments/${bookingId}`);
   await page.getByRole("button", { name: "Cancel appointment" }).click();
-  let dropped = false;
+  const requestBodies: Buffer[] = [];
+  let operationAction: string | undefined;
   await page.route("**/*", async (route) => {
     const request = route.request();
-    if (request.method() !== "POST" || !request.headers()["next-action"])
-      return route.continue();
-    await route.fetch();
-    dropped = true;
-    await route.abort();
+    const action = request.headers()["next-action"];
+    if (request.method() !== "POST" || !action) return route.continue();
+    if (operationAction && action !== operationAction) return route.continue();
+    operationAction ??= action;
+    requestBodies.push(request.postDataBuffer()!);
+    if (requestBodies.length === 1) {
+      await route.fetch();
+      await route.abort();
+    } else {
+      await route.continue();
+    }
   });
   await page.getByRole("button", { name: "Confirm cancellation" }).click();
   await expect(page.getByRole("alert")).toContainText(
     "response was interrupted",
   );
-  expect(dropped).toBe(true);
-  await page.unrouteAll({ behavior: "wait" });
   await page.mouse.click(1, 1);
   await expect(
     page.getByRole("button", { name: "Recover pending operation" }),
@@ -644,6 +649,9 @@ test("uncertain cancellation survives close and standalone Back until recovery",
     page.getByRole("button", { name: "Retry same operation" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Retry same operation" }).click();
+  expect(requestBodies).toHaveLength(2);
+  expect(requestBodies[1]).toEqual(requestBodies[0]);
+  await page.unrouteAll({ behavior: "wait" });
   await expect(
     page.getByRole("main").getByText("Cancelled", { exact: true }),
   ).toBeVisible();
