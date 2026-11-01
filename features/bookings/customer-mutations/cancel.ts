@@ -19,6 +19,10 @@ import type {
   PublicBookingContext,
 } from "../types";
 import { findShopChangeReplay } from "../change-primitives";
+import {
+  isCustomerChangeCutoffPassed,
+  isCustomerManageLinkValid,
+} from "../customer-primitives";
 
 function failure(code: string, message: string) {
   return { success: false as const, error: { code, message } };
@@ -57,8 +61,11 @@ export async function cancelCustomerBooking(
         .limit(1);
       if (
         !booking ||
-        booking.capabilityRevokedAt ||
-        now.getTime() >= booking.endAt.getTime() + 168 * 60 * 60_000
+        !isCustomerManageLinkValid(
+          booking.endAt,
+          booking.capabilityRevokedAt,
+          now,
+        )
       )
         return failure("UNAVAILABLE", "This booking link is unavailable.");
       const operationKeyHash = hashSecret(parsed.data.operationKey);
@@ -123,7 +130,7 @@ export async function cancelCustomerBooking(
           "INVALID_STATE",
           "This appointment can no longer be cancelled.",
         );
-      if (booking.startAt.getTime() - now.getTime() < 12 * 60 * 60_000)
+      if (isCustomerChangeCutoffPassed(booking.startAt, now))
         return failure(
           "CUTOFF_PASSED",
           "This appointment is inside the change window. Contact the shop.",
