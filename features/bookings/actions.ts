@@ -12,7 +12,6 @@ import type {
   CustomerReplacementChoices,
   CustomerReplacementReceipt,
   CustomerReplacementSlotsView,
-  ManagedBookingView,
   PublicBookingInput,
   PublicBookingReceipt,
   OwnerBookingReceipt,
@@ -31,7 +30,6 @@ import { cancelCustomerBooking } from "./customer-mutations";
 import {
   getCustomerReplacementChoices,
   getCustomerReplacementSlots,
-  getManagedBooking,
 } from "./queries";
 import { previewPublicSlots } from "@/features/shops/public-queries";
 import { dispatchInitialBookingNotifications } from "@/features/notifications/dispatch";
@@ -107,13 +105,6 @@ export async function createOwnerBookingAction(
     );
   }
   return result;
-}
-
-export async function getManagedBookingAction(
-  token: string,
-): Promise<ActionResult<ManagedBookingView>> {
-  const context = await resolvePublicRequest(await headers());
-  return getManagedBooking(context, token);
 }
 
 export async function getCustomerReplacementChoicesAction(
