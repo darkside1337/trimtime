@@ -184,5 +184,10 @@ Use fictional customer data. “Captured locally” means the app verified the M
 attempt-correlation header; it does not mean the message reached an inbox. The owner alert goes to the owner's stored account email and does not
 contain the customer manage token. Routine tests use the isolated HTTP double
 on `127.0.0.1:8027`; they must not contact this Mailpit instance. Hosted v1 has
-no real email sender. Real delivery, provider setup, retry/backoff, future-event
-templates, and manual resend remain deferred; Resend is tentative v2 only.
+no real email sender. The retry worker exposes
+`POST /api/jobs/notifications/retry` on the configured owner host. Configure
+`NOTIFICATION_JOB_SECRET` with at least 32 random characters and send it in
+`X-TrimTime-Job-Secret`; the endpoint accepts no body or query parameters and
+returns aggregate counts only. No hosted scheduler or real email provider is
+configured by this repository. Real delivery, future-event templates, and
+manual resend remain deferred; Resend is tentative v2 only.

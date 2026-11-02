@@ -449,7 +449,9 @@ Break labels and dated reasons retain read-only sample fields with explicit no-s
 
 **Phase 14 reference context:** Activity for per-channel attempt and outcome evidence.
 
-**Coverage and evidence limits:** Dedicated retrying/exhausted/permanent/unknown/recovered-claim states are not established. Define labels after OTQ-010–OTQ-012; avoid a new worker-control page. Provider and scheduled-job evidence remain separate from reference screenshots.
+**Phase 14 local implementation selection (2026-11-02):** Reuse the existing Activity record and details dialog. Show scheduled retry, exhausted attempts, permanent failure, unknown, accepted, and captured-local distinctly; keep one row per work item, list ordered attempt reservations/invocations/results in a bounded scroll region, and count persisted invocations rather than reserved attempts. Preserve responsive wrapping and the existing keyboard-dismissal/focus-return behavior. Do not add resend or worker controls, or inbox-delivery copy.
+
+**Coverage and evidence limits:** Local unit and desktop-browser evidence covers these presentations, own-shop isolation, refresh, narrow-screen overflow, and dialog focus return. It does not establish physical-device or dedicated screen-reader evidence. Provider and scheduled-job evidence remain separate from reference screenshots.
 
 **Phase 15 reference context:** Activity and the existing appointment message-status presentation for current-schedule reminders.
 
