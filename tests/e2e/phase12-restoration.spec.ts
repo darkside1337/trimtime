@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 import { expect, ownerOrigin, test, type Owner } from "./fixtures";
 import { addReadyCatalog } from "./publication-fixtures";
@@ -347,6 +347,27 @@ test("restore denies a slot rebooked through the public booking flow without dis
     await publicContext.close();
   }
 });
+
+async function poisonNextRestorationRead(pool: Pool, bookingId: string) {
+  const name = `poison_restore_read_${randomUUID().replaceAll("-", "")}`;
+  await pool.query(
+    `CREATE FUNCTION ${name}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.updated_at = 'infinity'; RETURN NEW; END $$`,
+  );
+  await pool.query(
+    `CREATE TRIGGER ${name} BEFORE INSERT ON notification_work FOR EACH ROW WHEN (NEW.booking_id = '${bookingId}'::uuid AND NEW.kind = 'customer_restoration') EXECUTE FUNCTION ${name}()`,
+  );
+  let cleaned = false;
+  return async () => {
+    if (cleaned) return;
+    cleaned = true;
+    await pool.query(`DROP TRIGGER IF EXISTS ${name} ON notification_work`);
+    await pool.query(`DROP FUNCTION IF EXISTS ${name}()`);
+    await pool.query(
+      "UPDATE notification_work SET updated_at=now() WHERE booking_id=$1 AND kind='customer_restoration'",
+      [bookingId],
+    );
+  };
+}
 
 async function openAllWeek(pool: Pool, owner: Owner, barberId: string) {
   const week = Array.from({ length: 7 }, () => ({
@@ -730,6 +751,297 @@ test("interrupted restoration refreshes the confirmed revision before an identic
   ).toEqual([
     { kind: "customer_cancellation", booking_revision: 1 },
     { kind: "customer_restoration", booking_revision: 2 },
+  ]);
+});
+
+test("committed restoration with a failed projection keeps one identical recovery", async ({
+  page,
+  context,
+  owners,
+  database,
+}) => {
+  const owner = await owners(context, { shop: true, createSetup: true });
+  const bookingId = await createOwnerAppointment(owner);
+  const { cancelOwnerBooking } =
+    await import("../../features/bookings/mutations");
+  const cancelled = await cancelOwnerBooking(
+    { userId: owner.id },
+    {
+      bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+    },
+  );
+  expect(cancelled.success).toBe(true);
+
+  await page.goto(`${ownerOrigin}/appointments/${bookingId}`);
+  await expect(page.getByText("Cancelled", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Restore appointment" }).click();
+  const dialog = page.getByRole("dialog", { name: "Restore appointment?" });
+  await expect(dialog).toBeVisible();
+
+  const bodies: Buffer[] = [];
+  await page.route("**/*", async (route) => {
+    const request = route.request();
+    if (request.method() !== "POST" || !request.headers()["next-action"])
+      return route.continue();
+    if (!request.postData()?.includes(bookingId)) return route.continue();
+    bodies.push(request.postDataBuffer()!);
+    await route.continue();
+  });
+
+  const clearPoison = await poisonNextRestorationRead(database.pool, bookingId);
+  try {
+    await dialog.getByRole("button", { name: "Restore appointment" }).click();
+    await expect(dialog.getByRole("alert")).toContainText(
+      "Appointment could not be loaded.",
+    );
+    await expect(dialog.getByRole("alert")).toContainText("may have completed");
+    await expect(
+      dialog.getByRole("button", { name: "Retry same operation" }),
+    ).toBeVisible();
+    await expect(
+      dialog.getByRole("button", { name: "Restore appointment" }),
+    ).toHaveCount(0);
+
+    const committed = await database.pool.query(
+      "SELECT status, revision, occupancy_id FROM bookings WHERE id=$1",
+      [bookingId],
+    );
+    expect(committed.rows[0]).toMatchObject({
+      status: "confirmed",
+      revision: 2,
+    });
+    expect(committed.rows[0].occupancy_id).toEqual(expect.any(String));
+    expect(
+      (
+        await database.pool.query(
+          "SELECT kind, applied_revision FROM booking_changes WHERE booking_id=$1 ORDER BY applied_revision",
+          [bookingId],
+        )
+      ).rows,
+    ).toEqual([
+      { kind: "cancel", applied_revision: 1 },
+      { kind: "restore", applied_revision: 2 },
+    ]);
+
+    await clearPoison();
+    await dialog.getByRole("button", { name: "Retry same operation" }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByText("Confirmed", { exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Restore appointment" }),
+    ).toHaveCount(0);
+
+    expect(bodies).toHaveLength(2);
+    expect(bodies[1]).toEqual(bodies[0]);
+    const recovered = await database.pool.query(
+      "SELECT status, revision, occupancy_id FROM bookings WHERE id=$1",
+      [bookingId],
+    );
+    expect(recovered.rows[0]).toMatchObject({
+      status: "confirmed",
+      revision: 2,
+    });
+    expect(recovered.rows[0].occupancy_id).toEqual(expect.any(String));
+    expect(
+      (
+        await database.pool.query(
+          "SELECT kind, applied_revision FROM booking_changes WHERE booking_id=$1 ORDER BY applied_revision",
+          [bookingId],
+        )
+      ).rows,
+    ).toEqual([
+      { kind: "cancel", applied_revision: 1 },
+      { kind: "restore", applied_revision: 2 },
+    ]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM notification_work WHERE booking_id=$1 AND kind='customer_restoration'",
+          [bookingId],
+        )
+      ).rows[0].count,
+    ).toBe(1);
+  } finally {
+    await clearPoison();
+    await page.unrouteAll({ behavior: "wait" });
+  }
+});
+
+test("restoration mismatch keeps the saved request until an authoritative refresh", async ({
+  page,
+  context,
+  owners,
+  database,
+}) => {
+  const owner = await owners(context, { shop: true, createSetup: true });
+  const bookingId = await createOwnerAppointment(owner);
+  const otherBookingId = await createOwnerAppointment(
+    owner,
+    "2027-01-19T15:07:00.000Z",
+  );
+  const { cancelOwnerBooking } =
+    await import("../../features/bookings/mutations");
+  for (const id of [bookingId, otherBookingId]) {
+    const result = await cancelOwnerBooking(
+      { userId: owner.id },
+      {
+        bookingId: id,
+        expectedRevision: 0,
+        operationKey: randomBytes(32).toString("base64url"),
+      },
+    );
+    expect(result.success).toBe(true);
+  }
+
+  await page.goto(`${ownerOrigin}/appointments/${bookingId}`);
+  await expect(page.getByText("Cancelled", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Restore appointment" }).click();
+  const dialog = page.getByRole("dialog", { name: "Restore appointment?" });
+  await expect(dialog).toBeVisible();
+
+  let rewritten = false;
+  await page.route("**/*", async (route) => {
+    const request = route.request();
+    if (
+      rewritten ||
+      request.method() !== "POST" ||
+      !request.headers()["next-action"]
+    )
+      return route.continue();
+    const body = request.postData();
+    if (!body?.includes(bookingId)) return route.continue();
+    rewritten = true;
+    await route.fetch({ postData: body.replace(bookingId, otherBookingId) });
+    await route.abort();
+  });
+
+  await dialog.getByRole("button", { name: "Restore appointment" }).click();
+  await expect(dialog.getByRole("alert")).toContainText(
+    "response was interrupted",
+  );
+  expect(rewritten).toBe(true);
+  await page.unrouteAll({ behavior: "wait" });
+  await dialog.getByRole("button", { name: "Retry same operation" }).click();
+  await expect(dialog.getByRole("alert")).toContainText(
+    /cannot confirm whether that earlier attempt completed/i,
+  );
+  await expect(
+    dialog.getByRole("button", { name: "Retry same operation" }),
+  ).toHaveCount(0);
+  await expect(
+    dialog.getByRole("button", { name: "Refresh appointment" }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: "Keep pending operation" }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: "Restore appointment" }),
+  ).toHaveCount(0);
+
+  const beforeRefresh = await database.pool.query(
+    "SELECT id, status, revision FROM bookings WHERE id = ANY($1::uuid[]) ORDER BY id",
+    [[bookingId, otherBookingId]],
+  );
+  expect(beforeRefresh.rows.find((row) => row.id === bookingId)).toMatchObject({
+    status: "cancelled",
+    revision: 1,
+  });
+  expect(
+    beforeRefresh.rows.find((row) => row.id === otherBookingId),
+  ).toMatchObject({ status: "confirmed", revision: 2 });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT kind FROM booking_changes WHERE booking_id=$1",
+        [bookingId],
+      )
+    ).rows,
+  ).toEqual([{ kind: "cancel" }]);
+
+  await dialog.getByRole("button", { name: "Keep pending operation" }).click();
+  await expect(
+    page.getByRole("button", { name: "Recover pending operation" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Recover pending operation" }).click();
+  await page.getByRole("button", { name: "Refresh appointment" }).click();
+  await expect(
+    page.getByRole("button", { name: "Recover pending operation" }),
+  ).toHaveCount(0);
+  await expect(page.getByText("Cancelled", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Restore appointment" }),
+  ).toBeVisible();
+  expect(
+    (
+      await database.pool.query(
+        "SELECT kind FROM booking_changes WHERE booking_id=$1",
+        [bookingId],
+      )
+    ).rows,
+  ).toEqual([{ kind: "cancel" }]);
+});
+
+test("stale restoration offers an authoritative refresh without a second restore", async ({
+  page,
+  context,
+  owners,
+  database,
+}) => {
+  const owner = await owners(context, { shop: true, createSetup: true });
+  const bookingId = await createOwnerAppointment(owner);
+  const { cancelOwnerBooking, restoreOwnerBooking } =
+    await import("../../features/bookings/mutations");
+  const cancelled = await cancelOwnerBooking(
+    { userId: owner.id },
+    {
+      bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+    },
+  );
+  expect(cancelled.success).toBe(true);
+
+  await page.goto(`${ownerOrigin}/appointments/${bookingId}`);
+  await page.getByRole("button", { name: "Restore appointment" }).click();
+  const dialog = page.getByRole("dialog", { name: "Restore appointment?" });
+  await expect(dialog).toBeVisible();
+
+  const concurrent = await restoreOwnerBooking(
+    { userId: owner.id },
+    {
+      bookingId,
+      expectedRevision: 1,
+      operationKey: randomBytes(32).toString("base64url"),
+    },
+  );
+  expect(concurrent.success).toBe(true);
+
+  await dialog.getByRole("button", { name: "Restore appointment" }).click();
+  await expect(dialog.getByRole("alert")).toContainText("Appointment changed");
+  await expect(
+    dialog.getByRole("button", { name: "Retry same operation" }),
+  ).toHaveCount(0);
+  await expect(
+    dialog.getByRole("button", { name: "Restore appointment" }),
+  ).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Refresh appointment" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByText("Confirmed", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Restore appointment" }),
+  ).toHaveCount(0);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT kind, applied_revision FROM booking_changes WHERE booking_id=$1 ORDER BY applied_revision",
+        [bookingId],
+      )
+    ).rows,
+  ).toEqual([
+    { kind: "cancel", applied_revision: 1 },
+    { kind: "restore", applied_revision: 2 },
   ]);
 });
 

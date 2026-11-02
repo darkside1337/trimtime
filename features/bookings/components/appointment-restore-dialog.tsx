@@ -3,6 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import type { OwnerAppointmentView } from "../types";
+import { RECOVERY_MISMATCH_WARNING } from "./owner-operation-recovery";
 
 function dateTime(
   instant: string,
@@ -19,16 +20,26 @@ export function AppointmentRestoreDialogContent({
   busy,
   error,
   uncertain,
+  mismatch,
+  terminal,
   onRetry,
+  onRefresh,
+  onRefreshSaved,
   onKeep,
+  onKeepPending,
   onConfirm,
 }: {
   appointment: OwnerAppointmentView;
   busy: boolean;
   error: string;
   uncertain: boolean;
+  mismatch: boolean;
+  terminal: boolean;
   onRetry: () => void;
+  onRefresh: () => void;
+  onRefreshSaved: () => void;
   onKeep: () => void;
+  onKeepPending: () => void;
   onConfirm: () => void;
 }) {
   const { timeZone } = appointment.shop;
@@ -41,10 +52,12 @@ export function AppointmentRestoreDialogContent({
         This restores the saved interval and details below. We will recheck
         availability before reserving this time.
       </DialogDescription>
-      {(error || uncertain) && (
+      {(error || uncertain || mismatch) && (
         <p role="alert" tabIndex={-1}>
           {error ||
-            "The response was interrupted. Retry the same operation to recover its result."}
+            (mismatch
+              ? RECOVERY_MISMATCH_WARNING
+              : "The response was interrupted. Retry the same operation to recover its result.")}
         </p>
       )}
       <dl className="grid gap-2 rounded-xl bg-muted px-4 py-3 text-sm">
@@ -83,10 +96,33 @@ export function AppointmentRestoreDialogContent({
         </div>
       </dl>
       <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-        {uncertain ? (
-          <Button type="button" disabled={busy} onClick={onRetry}>
-            {busy ? "Recovering…" : "Retry same operation"}
-          </Button>
+        {mismatch ? (
+          <>
+            <Button disabled={busy} onClick={onRefresh}>
+              {busy ? "Refreshing…" : "Refresh appointment"}
+            </Button>
+            <Button variant="outline" disabled={busy} onClick={onKeepPending}>
+              Keep pending operation
+            </Button>
+          </>
+        ) : uncertain ? (
+          <>
+            <Button disabled={busy} onClick={onRetry}>
+              {busy ? "Recovering…" : "Retry same operation"}
+            </Button>
+            <Button variant="outline" disabled={busy} onClick={onRefreshSaved}>
+              Refresh saved details
+            </Button>
+          </>
+        ) : terminal ? (
+          <>
+            <Button variant="outline" disabled={busy} onClick={onRefresh}>
+              Refresh appointment
+            </Button>
+            <Button variant="outline" disabled={busy} onClick={onKeep}>
+              Keep cancelled
+            </Button>
+          </>
         ) : (
           <>
             <Button variant="outline" disabled={busy} onClick={onKeep}>

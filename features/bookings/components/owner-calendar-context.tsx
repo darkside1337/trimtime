@@ -39,6 +39,7 @@ export type OwnerAppointmentDraft = {
   conflictRevision?: number;
   mutationPending?: boolean;
   recoveryPending?: boolean;
+  recoveryKind?: "uncertain" | "mismatch";
 };
 
 function draftHasUnsavedWork(draft: OwnerAppointmentDraft | null) {

@@ -592,6 +592,219 @@ test("owner cancellation after a proven stale denial offers an authoritative ref
   ).toBeVisible();
 });
 
+test("owner move mismatch keeps its key until an authoritative refresh succeeds", async ({
+  page,
+  context,
+  owners,
+  database,
+}) => {
+  const owner = await owners(context, { shop: true, createSetup: true });
+  const bookingId = await createOwnerAppointment(owner);
+  await page.goto(`${ownerOrigin}/appointments/${bookingId}`);
+  await page.getByRole("button", { name: "Move appointment" }).click();
+  await page.getByLabel("Start time").fill("10:07");
+
+  let rewritten = false;
+  await page.route("**/*", async (route) => {
+    const request = route.request();
+    if (
+      rewritten ||
+      request.method() !== "POST" ||
+      !request.headers()["next-action"]
+    )
+      return route.continue();
+    const body = request.postData();
+    if (!body?.includes("2027-01-19T15:07:00Z")) return route.continue();
+    rewritten = true;
+    await route.fetch({
+      postData: body.replace("2027-01-19T15:07:00Z", "2027-01-19T16:07:00Z"),
+    });
+    await route.abort();
+  });
+
+  await page.getByRole("button", { name: "Save move" }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "response was interrupted",
+  );
+  expect(rewritten).toBe(true);
+  await page.unrouteAll({ behavior: "wait" });
+
+  await page.getByRole("button", { name: "Retry same operation" }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    /cannot confirm whether that earlier attempt completed/i,
+  );
+  await expect(
+    page.getByRole("button", { name: "Retry same operation" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Refresh appointment" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Keep pending operation" }),
+  ).toBeVisible();
+
+  const committed = await database.pool.query(
+    "SELECT status, revision, start_at FROM bookings WHERE id=$1",
+    [bookingId],
+  );
+  expect(committed.rows[0]).toMatchObject({
+    status: "confirmed",
+    revision: 1,
+  });
+  expect(new Date(committed.rows[0].start_at).toISOString()).toBe(
+    "2027-01-19T16:07:00.000Z",
+  );
+  expect(
+    (
+      await database.pool.query(
+        "SELECT kind, applied_revision FROM booking_changes WHERE booking_id=$1",
+        [bookingId],
+      )
+    ).rows,
+  ).toEqual([{ kind: "move", applied_revision: 1 }]);
+
+  await page.getByRole("button", { name: "Keep pending operation" }).click();
+  await expect(
+    page.getByRole("button", { name: "Recover pending operation" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Recover pending operation" }).click();
+  await expect(
+    page.getByRole("button", { name: "Refresh appointment" }),
+  ).toBeVisible();
+
+  let refreshRequests = 0;
+  await page.route("**/*", async (route) => {
+    const request = route.request();
+    if (request.method() !== "POST" || !request.headers()["next-action"])
+      return route.continue();
+    refreshRequests += 1;
+    if (refreshRequests === 1) {
+      await route.abort();
+      return;
+    }
+    await route.continue();
+  });
+
+  const refresh = page.getByRole("button", { name: "Refresh appointment" });
+  await refresh.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("alert")).toContainText("could not be refreshed");
+  await expect(refresh).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Recover pending operation" }),
+  ).toHaveCount(0);
+  await page.unrouteAll({ behavior: "wait" });
+
+  await refresh.click();
+  await expect(
+    page.getByRole("button", { name: "Recover pending operation" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("main").getByRole("definition").filter({
+      hasText: "11:07–11:42",
+    }),
+  ).toBeVisible();
+  expect(
+    (
+      await database.pool.query(
+        "SELECT kind, applied_revision FROM booking_changes WHERE booking_id=$1",
+        [bookingId],
+      )
+    ).rows,
+  ).toEqual([{ kind: "move", applied_revision: 1 }]);
+});
+
+test("owner cancellation mismatch retains the saved request until refreshed", async ({
+  page,
+  context,
+  owners,
+  database,
+}) => {
+  const owner = await owners(context, { shop: true, createSetup: true });
+  const bookingId = await createOwnerAppointment(owner);
+  const otherBookingId = await createOwnerAppointment(
+    owner,
+    "2027-01-19T15:07:00.000Z",
+  );
+  await page.goto(`${ownerOrigin}/appointments/${bookingId}`);
+  await page.getByRole("button", { name: "Cancel appointment" }).click();
+
+  let rewritten = false;
+  await page.route("**/*", async (route) => {
+    const request = route.request();
+    if (
+      rewritten ||
+      request.method() !== "POST" ||
+      !request.headers()["next-action"]
+    )
+      return route.continue();
+    const body = request.postData();
+    if (!body?.includes(bookingId)) return route.continue();
+    rewritten = true;
+    await route.fetch({ postData: body.replace(bookingId, otherBookingId) });
+    await route.abort();
+  });
+
+  await page.getByRole("button", { name: "Confirm cancellation" }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "response was interrupted",
+  );
+  expect(rewritten).toBe(true);
+  await page.unrouteAll({ behavior: "wait" });
+  await page.getByRole("button", { name: "Retry same operation" }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    /cannot confirm whether that earlier attempt completed/i,
+  );
+  await expect(
+    page.getByRole("button", { name: "Retry same operation" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Keep pending operation" }),
+  ).toBeVisible();
+
+  const beforeRefresh = await database.pool.query(
+    "SELECT id, status, revision FROM bookings WHERE id = ANY($1::uuid[]) ORDER BY id",
+    [[bookingId, otherBookingId]],
+  );
+  expect(beforeRefresh.rows.find((row) => row.id === bookingId)).toMatchObject({
+    status: "confirmed",
+    revision: 0,
+  });
+  expect(
+    beforeRefresh.rows.find((row) => row.id === otherBookingId),
+  ).toMatchObject({ status: "cancelled", revision: 1 });
+
+  await page.getByRole("button", { name: "Keep pending operation" }).click();
+  await page.getByRole("button", { name: "Recover pending operation" }).click();
+  await page.getByRole("button", { name: "Refresh appointment" }).click();
+  await expect(
+    page.getByRole("button", { name: "Recover pending operation" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("main").getByRole("button", { name: "Cancel appointment" }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Cancel appointment" }).click();
+  await page.getByRole("button", { name: "Confirm cancellation" }).click();
+  await expect(
+    page.getByRole("main").getByText("Cancelled", { exact: true }),
+  ).toBeVisible();
+
+  const booking = await database.pool.query(
+    "SELECT status, revision FROM bookings WHERE id=$1",
+    [bookingId],
+  );
+  expect(booking.rows).toEqual([{ status: "cancelled", revision: 1 }]);
+  const changes = await database.pool.query(
+    "SELECT booking_id, kind, applied_revision FROM booking_changes WHERE booking_id = ANY($1::uuid[]) ORDER BY booking_id",
+    [[bookingId, otherBookingId]],
+  );
+  expect(changes.rows).toHaveLength(2);
+  expect(changes.rows.filter((row) => row.booking_id === bookingId)).toEqual([
+    { booking_id: bookingId, kind: "cancel", applied_revision: 1 },
+  ]);
+});
+
 test("dirty move drafts survive keep and discard decisions on dismissal @device", async ({
   page,
   context,

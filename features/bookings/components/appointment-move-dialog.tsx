@@ -5,6 +5,10 @@ import { Button } from "@/components/ui/button";
 import { DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import type { OwnerAppointmentMoveChoices } from "../types";
 import type { OwnerAppointmentDraftValues } from "./owner-calendar-context";
+import {
+  RECOVERY_MISMATCH_WARNING,
+  type OwnerOperationTerminalAction,
+} from "./owner-operation-recovery";
 
 type Values = OwnerAppointmentDraftValues;
 type MoveService = OwnerAppointmentMoveChoices["services"][number];
@@ -21,10 +25,14 @@ export function AppointmentMoveDialogContent({
   busy,
   error,
   uncertain,
-  terminal,
+  mismatch,
+  terminalAction,
   onUpdate,
   onSubmit,
   onRetry,
+  onRefresh,
+  onRefreshSaved,
+  onKeepPending,
   onReloadSaved,
   onReviewCurrentOffer,
 }: {
@@ -37,10 +45,14 @@ export function AppointmentMoveDialogContent({
   busy: boolean;
   error: string;
   uncertain: boolean;
-  terminal: boolean;
+  mismatch: boolean;
+  terminalAction: OwnerOperationTerminalAction | null;
   onUpdate: (patch: Partial<Values>) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onRetry: () => void;
+  onRefresh: () => void;
+  onRefreshSaved: () => void;
+  onKeepPending: () => void;
   onReloadSaved: () => void;
   onReviewCurrentOffer: () => void;
 }) {
@@ -51,27 +63,52 @@ export function AppointmentMoveDialogContent({
         Review the service, barber and exact local start time. The saved
         appointment stays in place if the new time is unavailable.
       </DialogDescription>
-      {error && (
+      {(error || mismatch) && (
         <p role="alert" tabIndex={-1}>
-          {error}
+          {error || RECOVERY_MISMATCH_WARNING}
         </p>
       )}
-      {terminal && (
+      {terminalAction && (
         <Button
           type="button"
           variant="outline"
+          disabled={busy}
           onClick={() => {
-            if (/Appointment changed/i.test(error)) onReloadSaved();
+            if (terminalAction === "reload") onReloadSaved();
             else onReviewCurrentOffer();
           }}
         >
           Reload saved appointment and review
         </Button>
       )}
-      {uncertain ? (
-        <Button type="button" disabled={busy} onClick={onRetry}>
-          {busy ? "Recovering…" : "Retry same operation"}
-        </Button>
+      {mismatch ? (
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <Button type="button" disabled={busy} onClick={onRefresh}>
+            {busy ? "Refreshing…" : "Refresh appointment"}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={busy}
+            onClick={onKeepPending}
+          >
+            Keep pending operation
+          </Button>
+        </div>
+      ) : uncertain ? (
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <Button type="button" disabled={busy} onClick={onRetry}>
+            {busy ? "Recovering…" : "Retry same operation"}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={busy}
+            onClick={onRefreshSaved}
+          >
+            Refresh saved details
+          </Button>
+        </div>
       ) : (
         <form onSubmit={onSubmit} className="grid gap-4">
           <label className="grid gap-1 text-sm">
