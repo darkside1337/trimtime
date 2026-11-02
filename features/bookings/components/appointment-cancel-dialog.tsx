@@ -7,14 +7,18 @@ export function AppointmentCancelDialogContent({
   error,
   busy,
   uncertain,
+  terminal,
   onRetry,
+  onRefresh,
   onKeep,
   onConfirm,
 }: {
   error: string;
   busy: boolean;
   uncertain: boolean;
+  terminal: boolean;
   onRetry: () => void;
+  onRefresh: () => void;
   onKeep: () => void;
   onConfirm: () => void;
 }) {
@@ -32,12 +36,19 @@ export function AppointmentCancelDialogContent({
         </Button>
       ) : (
         <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+          {terminal && (
+            <Button variant="outline" disabled={busy} onClick={onRefresh}>
+              Refresh appointment
+            </Button>
+          )}
           <Button variant="outline" disabled={busy} onClick={onKeep}>
             Keep appointment
           </Button>
-          <Button variant="destructive" disabled={busy} onClick={onConfirm}>
-            {busy ? "Cancelling…" : "Confirm cancellation"}
-          </Button>
+          {!terminal && (
+            <Button variant="destructive" disabled={busy} onClick={onConfirm}>
+              {busy ? "Cancelling…" : "Confirm cancellation"}
+            </Button>
+          )}
         </div>
       )}
     </>

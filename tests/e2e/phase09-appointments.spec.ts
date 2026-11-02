@@ -1,6 +1,24 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import type { Pool } from "pg";
 import { test, expect, ownerOrigin } from "./fixtures";
 import { createOwnerAppointment } from "./owner-booking-fixtures";
+
+async function rejectBookingUpdates(pool: Pool, bookingId: string) {
+  const name = `reject_booking_update_${randomUUID().replaceAll("-", "")}`;
+  await pool.query(
+    `CREATE FUNCTION ${name}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'simulated booking update failure'; END $$`,
+  );
+  await pool.query(
+    `CREATE TRIGGER ${name} BEFORE UPDATE ON bookings FOR EACH ROW WHEN (NEW.id = '${bookingId}'::uuid) EXECUTE FUNCTION ${name}()`,
+  );
+  let removed = false;
+  return async () => {
+    if (removed) return;
+    removed = true;
+    await pool.query(`DROP TRIGGER IF EXISTS ${name} ON bookings`);
+    await pool.query(`DROP FUNCTION IF EXISTS ${name}()`);
+  };
+}
 
 test("owner can move a booking from calendar details @device", async ({
   page,
@@ -437,6 +455,141 @@ test("owner keeps the uncertain operation payload fixed until recovery", async (
   ).toBeVisible();
   expect(bodies).toHaveLength(2);
   expect(bodies[1]).toEqual(bodies[0]);
+});
+
+test("owner move keeps identical recovery after a returned unconfirmed failure", async ({
+  page,
+  context,
+  owners,
+  database,
+}) => {
+  const owner = await owners(context, { shop: true, createSetup: true });
+  const bookingId = await createOwnerAppointment(owner);
+  const clearFailure = await rejectBookingUpdates(database.pool, bookingId);
+  try {
+    await page.goto(`${ownerOrigin}/appointments/${bookingId}`);
+    await page.getByRole("button", { name: "Move appointment" }).click();
+    await page.getByLabel("Start time").fill("10:07");
+    const bodies: Buffer[] = [];
+    await page.route("**/*", async (route) => {
+      const request = route.request();
+      if (request.method() !== "POST" || !request.headers()["next-action"])
+        return route.continue();
+      bodies.push(request.postDataBuffer()!);
+      await route.continue();
+    });
+
+    await page.getByRole("button", { name: "Save move" }).click();
+    await expect(page.getByRole("alert")).toContainText("may have completed");
+    await expect(page.getByLabel("Start time")).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Retry same operation" }),
+    ).toBeVisible();
+
+    await clearFailure();
+    await page.getByRole("button", { name: "Retry same operation" }).click();
+    await expect(
+      page.getByRole("main").getByRole("definition").filter({
+        hasText: "10:07–10:42",
+      }),
+    ).toBeVisible();
+
+    expect(bodies).toHaveLength(2);
+    expect(bodies[1]).toEqual(bodies[0]);
+  } finally {
+    await clearFailure();
+    await page.unrouteAll({ behavior: "wait" });
+  }
+});
+
+test("owner cancellation keeps identical recovery after a returned unconfirmed failure", async ({
+  page,
+  context,
+  owners,
+  database,
+}) => {
+  const owner = await owners(context, { shop: true, createSetup: true });
+  const bookingId = await createOwnerAppointment(owner);
+  const clearFailure = await rejectBookingUpdates(database.pool, bookingId);
+  try {
+    await page.goto(`${ownerOrigin}/appointments/${bookingId}`);
+    await page.getByRole("button", { name: "Cancel appointment" }).click();
+    const bodies: Buffer[] = [];
+    await page.route("**/*", async (route) => {
+      const request = route.request();
+      if (request.method() !== "POST" || !request.headers()["next-action"])
+        return route.continue();
+      bodies.push(request.postDataBuffer()!);
+      await route.continue();
+    });
+
+    await page.getByRole("button", { name: "Confirm cancellation" }).click();
+    await expect(page.getByRole("alert")).toContainText("may have completed");
+    await expect(
+      page.getByRole("button", { name: "Retry same operation" }),
+    ).toBeVisible();
+
+    await clearFailure();
+    await page.getByRole("button", { name: "Retry same operation" }).click();
+    await expect(
+      page.getByRole("main").getByText("Cancelled", { exact: true }),
+    ).toBeVisible();
+
+    expect(bodies).toHaveLength(2);
+    expect(bodies[1]).toEqual(bodies[0]);
+  } finally {
+    await clearFailure();
+    await page.unrouteAll({ behavior: "wait" });
+  }
+});
+
+test("owner cancellation after a proven stale denial offers an authoritative refresh", async ({
+  page,
+  context,
+  owners,
+}) => {
+  const owner = await owners(context, { shop: true, createSetup: true });
+  const bookingId = await createOwnerAppointment(owner);
+  await page.goto(`${ownerOrigin}/appointments/${bookingId}`);
+  await page.getByRole("button", { name: "Cancel appointment" }).click();
+
+  const { moveOwnerBooking } =
+    await import("../../features/bookings/mutations");
+  const concurrent = await moveOwnerBooking(
+    { userId: owner.id },
+    {
+      bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+      serviceId: owner.serviceId!,
+      barberId: owner.barberId!,
+      startAt: "2027-01-19T14:07:00.000Z",
+      reviewedOffer: {
+        name: "Walk-in Cut",
+        priceUsd: "25.00",
+        durationMinutes: "35",
+      },
+    },
+  );
+  expect(concurrent.success).toBe(true);
+
+  await page.getByRole("button", { name: "Confirm cancellation" }).click();
+  await expect(page.getByRole("alert")).toContainText("Appointment changed");
+  await expect(
+    page.getByRole("button", { name: "Retry same operation" }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Refresh appointment" }).click();
+  await expect(
+    page.getByRole("main").getByRole("definition").filter({
+      hasText: "09:07–09:42",
+    }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Cancel appointment" }).click();
+  await page.getByRole("button", { name: "Confirm cancellation" }).click();
+  await expect(
+    page.getByRole("main").getByText("Cancelled", { exact: true }),
+  ).toBeVisible();
 });
 
 test("dirty move drafts survive keep and discard decisions on dismissal @device", async ({

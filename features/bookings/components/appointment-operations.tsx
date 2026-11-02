@@ -20,6 +20,7 @@ import type {
 } from "../types";
 import {
   useOwnerAppointmentDraft,
+  type OwnerAppointmentDraft,
   type OwnerAppointmentDraftValues,
 } from "./owner-calendar-context";
 import { useAppointmentDismissal } from "../hooks/use-appointment-dismissal";
@@ -55,6 +56,25 @@ type AppointmentOperationsProps = {
   choices: OwnerAppointmentMoveChoices;
   now: string;
 };
+
+// Move/cancel recover an identical operation-key replay before any fresh
+// revision, state, offer, or availability check. Only these later denials
+// establish that an identical operation was not found. Authority, validation,
+// missing-booking, mismatch, and projection failures cannot establish that.
+const TERMINAL_OPERATION_FAILURE_CODES = new Set([
+  "STALE_BOOKING",
+  "INVALID_STATE",
+  "STALE_OFFER",
+  "UNAVAILABLE_INTERVAL",
+  "NO_CHANGE",
+]);
+
+const UNCONFIRMED_OPERATION_MESSAGE =
+  "The operation may have completed. Retry the same operation to recover its result.";
+
+function operationFailureIsTerminal(code: string | undefined) {
+  return code !== undefined && TERMINAL_OPERATION_FAILURE_CODES.has(code);
+}
 
 function localParts(instant: string, timeZone: string) {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -121,6 +141,8 @@ function AppointmentOperationsForm({
   const [restoreUncertain, setRestoreUncertain] = useState(
     savedRestoreDraft?.recoveryPending === true,
   );
+  const [moveTerminal, setMoveTerminal] = useState(false);
+  const [cancelTerminal, setCancelTerminal] = useState(false);
   const [reloadConfirmation, setReloadConfirmation] = useState(false);
   const initial = useMemo<Values>(() => {
     const initialLocal = localParts(appointment.startAt, choices.timeZone);
@@ -154,7 +176,6 @@ function AppointmentOperationsForm({
         ? savedRestoreDraft?.recoveryKey
         : savedDraft?.recoveryKey) ?? createRecoveryKey();
   const submittedPayload = savedDraft?.submittedPayload ?? null;
-  const cancelPayload = savedCancelDraft?.submittedPayload ?? null;
   const restorePayload = savedRestoreDraft?.submittedPayload ?? null;
   const service = choices.services.find((item) => item.id === values.serviceId);
   const barbers = choices.barbers.filter(
@@ -226,39 +247,46 @@ function AppointmentOperationsForm({
       },
     };
     const serialized = JSON.stringify(payload);
-    setDraft({
+    const persistedDraft: OwnerAppointmentDraft = {
       values,
       baseline,
       recoveryKey,
       submittedPayload: serialized,
       appointmentId: appointment.id,
       operationMode: "move",
-    });
+    };
+    setDraft(persistedDraft);
     setBusy(true);
     setError("");
+    setMoveTerminal(false);
     try {
       const result = await moveOwnerBookingAction(payload);
       if (!result.success) {
-        if (draft) setDraft({ ...draft, recoveryPending: false });
-        setError(result.error.message);
+        if (operationFailureIsTerminal(result.error.code)) {
+          setDraft({ ...persistedDraft, recoveryPending: false });
+          setUncertain(false);
+          setMoveTerminal(true);
+          setError(result.error.message);
+        } else {
+          // A returned failure does not prove the earlier attempt did not
+          // commit. Keep the exact key and payload recoverable.
+          setDraft({ ...persistedDraft, recoveryPending: true });
+          setUncertain(true);
+          setMoveTerminal(false);
+          setError(`${result.error.message} ${UNCONFIRMED_OPERATION_MESSAGE}`);
+        }
         return;
       }
       clearDraft();
       setUncertain(false);
       setCancelUncertain(false);
+      setMoveTerminal(false);
       setMode(null);
       router.refresh();
     } catch {
-      setDraft({
-        values,
-        baseline,
-        recoveryKey,
-        submittedPayload: serialized,
-        appointmentId: appointment.id,
-        operationMode: "move",
-        recoveryPending: true,
-      });
+      setDraft({ ...persistedDraft, recoveryPending: true });
       setUncertain(true);
+      setMoveTerminal(false);
       setError(
         "The response was interrupted. Retry the same operation to recover its result.",
       );
@@ -268,22 +296,36 @@ function AppointmentOperationsForm({
   }
 
   async function retryMove() {
-    if (!submittedPayload || busy) return;
+    if (!savedDraft?.submittedPayload || busy) return;
     setBusy(true);
     try {
-      const result = await moveOwnerBookingAction(JSON.parse(submittedPayload));
+      const result = await moveOwnerBookingAction(
+        JSON.parse(savedDraft.submittedPayload),
+      );
       if (!result.success) {
-        if (draft) setDraft({ ...draft, recoveryPending: false });
-        setError(result.error.message);
+        if (operationFailureIsTerminal(result.error.code)) {
+          setDraft({ ...savedDraft, recoveryPending: false });
+          setUncertain(false);
+          setMoveTerminal(true);
+          setError(result.error.message);
+        } else {
+          setDraft({ ...savedDraft, recoveryPending: true });
+          setUncertain(true);
+          setMoveTerminal(false);
+          setError(`${result.error.message} ${UNCONFIRMED_OPERATION_MESSAGE}`);
+        }
         return;
       }
       clearDraft();
       setUncertain(false);
       setCancelUncertain(false);
+      setMoveTerminal(false);
       setMode(null);
       router.refresh();
     } catch {
-      if (draft) setDraft({ ...draft, recoveryPending: true });
+      setDraft({ ...savedDraft, recoveryPending: true });
+      setUncertain(true);
+      setMoveTerminal(false);
       setError("Recovery is still unavailable. Retry the same operation.");
     } finally {
       setBusy(false);
@@ -297,39 +339,44 @@ function AppointmentOperationsForm({
       expectedRevision: appointment.revision,
       operationKey: recoveryKey,
     };
-    setDraft({
+    const persistedDraft: OwnerAppointmentDraft = {
       values,
       baseline,
       recoveryKey,
       submittedPayload: JSON.stringify(payload),
       appointmentId: appointment.id,
       operationMode: "cancel",
-    });
+    };
+    setDraft(persistedDraft);
     setBusy(true);
     setError("");
+    setCancelTerminal(false);
     try {
       const result = await cancelOwnerBookingAction(payload);
       if (!result.success) {
-        if (draft) setDraft({ ...draft, recoveryPending: false });
-        setError(result.error.message);
+        if (operationFailureIsTerminal(result.error.code)) {
+          setDraft({ ...persistedDraft, recoveryPending: false });
+          setCancelUncertain(false);
+          setCancelTerminal(true);
+          setError(result.error.message);
+        } else {
+          setDraft({ ...persistedDraft, recoveryPending: true });
+          setCancelUncertain(true);
+          setCancelTerminal(false);
+          setError(`${result.error.message} ${UNCONFIRMED_OPERATION_MESSAGE}`);
+        }
         return;
       }
       clearDraft();
       setUncertain(false);
       setCancelUncertain(false);
+      setCancelTerminal(false);
       setMode(null);
       router.refresh();
     } catch {
-      setDraft({
-        values,
-        baseline,
-        recoveryKey,
-        submittedPayload: JSON.stringify(payload),
-        appointmentId: appointment.id,
-        operationMode: "cancel",
-        recoveryPending: true,
-      });
+      setDraft({ ...persistedDraft, recoveryPending: true });
       setCancelUncertain(true);
+      setCancelTerminal(false);
       setError(
         "The response was interrupted. Retry cancellation to recover its result.",
       );
@@ -339,22 +386,36 @@ function AppointmentOperationsForm({
   }
 
   async function retryCancel() {
-    if (!cancelPayload || busy) return;
+    if (!savedCancelDraft?.submittedPayload || busy) return;
     setBusy(true);
     try {
-      const result = await cancelOwnerBookingAction(JSON.parse(cancelPayload));
+      const result = await cancelOwnerBookingAction(
+        JSON.parse(savedCancelDraft.submittedPayload),
+      );
       if (!result.success) {
-        if (draft) setDraft({ ...draft, recoveryPending: false });
-        setError(result.error.message);
+        if (operationFailureIsTerminal(result.error.code)) {
+          setDraft({ ...savedCancelDraft, recoveryPending: false });
+          setCancelUncertain(false);
+          setCancelTerminal(true);
+          setError(result.error.message);
+        } else {
+          setDraft({ ...savedCancelDraft, recoveryPending: true });
+          setCancelUncertain(true);
+          setCancelTerminal(false);
+          setError(`${result.error.message} ${UNCONFIRMED_OPERATION_MESSAGE}`);
+        }
         return;
       }
       clearDraft();
       setUncertain(false);
       setCancelUncertain(false);
+      setCancelTerminal(false);
       setMode(null);
       router.refresh();
     } catch {
-      if (draft) setDraft({ ...draft, recoveryPending: true });
+      setDraft({ ...savedCancelDraft, recoveryPending: true });
+      setCancelUncertain(true);
+      setCancelTerminal(false);
       setError("Recovery is still unavailable. Retry the same operation.");
     } finally {
       setBusy(false);
@@ -455,6 +516,19 @@ function AppointmentOperationsForm({
     }
   }
 
+  function refreshAfterTerminalFailure() {
+    clearDraft();
+    setMode(null);
+    setError("");
+    setMoveTerminal(false);
+    setCancelTerminal(false);
+    setUncertain(false);
+    setCancelUncertain(false);
+    // Fetch the authoritative revision after a proven terminal denial so a
+    // fresh operation can use current data and a fresh recovery key.
+    refreshOwnerAppointmentAction().catch(() => router.refresh());
+  }
+
   if (!canChange && !canRestore && !canSetAttendance && !recoveryPending)
     return null;
 
@@ -497,6 +571,8 @@ function AppointmentOperationsForm({
             const refreshAfterInterruption = restoreUncertain;
             setMode(null);
             setError("");
+            setMoveTerminal(false);
+            setCancelTerminal(false);
             // Fetch the authoritative revision after an interrupted outcome so
             // recovery stays reachable when fresh restore controls disappear.
             if (refreshAfterInterruption)
@@ -519,6 +595,7 @@ function AppointmentOperationsForm({
               busy={busy}
               error={error}
               uncertain={uncertain}
+              terminal={moveTerminal}
               onUpdate={update}
               onSubmit={submitMove}
               onRetry={retryMove}
@@ -541,7 +618,9 @@ function AppointmentOperationsForm({
               error={error}
               busy={busy}
               uncertain={cancelUncertain}
+              terminal={cancelTerminal}
               onRetry={retryCancel}
+              onRefresh={refreshAfterTerminalFailure}
               onKeep={() => setMode(null)}
               onConfirm={cancel}
             />

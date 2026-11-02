@@ -21,6 +21,7 @@ export function AppointmentMoveDialogContent({
   busy,
   error,
   uncertain,
+  terminal,
   onUpdate,
   onSubmit,
   onRetry,
@@ -36,6 +37,7 @@ export function AppointmentMoveDialogContent({
   busy: boolean;
   error: string;
   uncertain: boolean;
+  terminal: boolean;
   onUpdate: (patch: Partial<Values>) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onRetry: () => void;
@@ -54,7 +56,7 @@ export function AppointmentMoveDialogContent({
           {error}
         </p>
       )}
-      {error && /changed|current service/i.test(error) && (
+      {terminal && (
         <Button
           type="button"
           variant="outline"
