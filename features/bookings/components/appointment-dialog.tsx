@@ -14,6 +14,7 @@ import { AppointmentDetails } from "./appointment-details";
 import { AppointmentOperations } from "./appointment-operations";
 import type { OwnerAppointmentMoveChoices } from "../types";
 import { useAppointmentDismissal } from "../hooks/use-appointment-dismissal";
+import { OWNER_APPOINTMENT_DETAILS_DIALOG_ATTRIBUTES } from "./appointment-dialog-attributes";
 
 export function AppointmentDialog({
   appointment,
@@ -33,6 +34,7 @@ export function AppointmentDialog({
       }}
     >
       <DialogContent
+        {...OWNER_APPOINTMENT_DETAILS_DIALOG_ATTRIBUTES}
         showCloseButton={false}
         className="max-h-[calc(100dvh-2rem)] w-[min(680px,calc(100vw-32px))] max-w-[680px] overflow-y-auto rounded-3xl border border-border bg-background p-6 shadow-xl sm:max-w-[680px] max-[520px]:max-h-dvh max-[520px]:w-full max-[520px]:rounded-none max-[520px]:p-5 [&_*:focus-visible]:border-[var(--tt-success)] [&_*:focus-visible]:ring-2 [&_*:focus-visible]:ring-[var(--tt-success)]"
       >

@@ -32,6 +32,7 @@ import {
   type PendingBookingAttempt,
   type RecoveryWarningKind,
 } from "./booking-flow/recovery";
+import { bookingMessage, type BookingMessage } from "./booking-flow/feedback";
 import type { RecoveryNoticeKind } from "./booking-flow/booking-recovery-notice";
 import type {
   BookingContact,
@@ -78,8 +79,7 @@ export function BookingFlow({
     whatsappOptIn: false,
   });
   const [pending, setPending] = useState(false);
-  const [message, setMessage] = useState("");
-  const [messageKind, setMessageKind] = useState<"error" | "info">("info");
+  const [message, setMessage] = useState<BookingMessage | null>(null);
   const [receipt, setReceipt] = useState<PublicBookingReceipt | null>(null);
   const [recoveryNotice, setRecoveryNotice] =
     useState<RecoveryNoticeKind | null>(null);
@@ -191,7 +191,7 @@ export function BookingFlow({
     if (inFlightRef.current) return;
     setStep(nextStep);
     focusHeadingRef.current = true;
-    setMessage("");
+    setMessage(null);
   }
 
   function clearStartAt() {
@@ -280,9 +280,11 @@ export function BookingFlow({
       persistWarning("mismatch");
       setRecoveryNotice("mismatch");
       setMessage(
-        "The shop couldn’t confirm this earlier request. It may already be booked. Check it again, or check with the shop before starting a separate booking.",
+        bookingMessage(
+          "error",
+          "The shop couldn’t confirm this earlier request. It may already be booked. Check it again, or check with the shop before starting a separate booking.",
+        ),
       );
-      setMessageKind("error");
       return;
     }
 
@@ -290,11 +292,13 @@ export function BookingFlow({
       persistWarning("uncertain");
       setRecoveryNotice("uncertain");
       setMessage(
-        error.code === "SHOP_PAUSED"
-          ? "The shop isn’t accepting bookings right now. That response doesn’t confirm whether your earlier request was saved. Check the earlier request when the shop reopens."
-          : `${error.message} We couldn’t confirm whether this request was saved. Check the same request before starting over.`,
+        bookingMessage(
+          "error",
+          error.code === "SHOP_PAUSED"
+            ? "The shop isn’t accepting bookings right now. That response doesn’t confirm whether your earlier request was saved. Check the earlier request when the shop reopens."
+            : `${error.message} We couldn’t confirm whether this request was saved. Check the same request before starting over.`,
+        ),
       );
-      setMessageKind("error");
       return;
     }
 
@@ -310,20 +314,24 @@ export function BookingFlow({
       setStep(0);
       focusHeadingRef.current = true;
       setMessage(
-        "The service details changed. Review the current options and choose again.",
+        bookingMessage(
+          "error",
+          "The service details changed. Review the current options and choose again.",
+        ),
       );
-      setMessageKind("error");
       router.refresh();
     } else if (error.code === "UNAVAILABLE_INTERVAL") {
       setSlots((current) => current.filter((slot) => slot.start !== startAt));
       clearStartAt();
       setMessage(
-        "That time was just taken. No booking was created; your details are still here. Choose another available time.",
+        bookingMessage(
+          "error",
+          "That time was just taken. No booking was created; your details are still here. Choose another available time.",
+          "choose-another-time",
+        ),
       );
-      setMessageKind("error");
     } else {
-      setMessage(error.message);
-      setMessageKind("error");
+      setMessage(bookingMessage("error", error.message));
     }
   }
 
@@ -336,9 +344,13 @@ export function BookingFlow({
     inFlightRef.current = true;
     setPending(true);
     setMessage(
-      recovering ? "Checking your saved request…" : "Confirming your booking…",
+      bookingMessage(
+        "info",
+        recovering
+          ? "Checking your saved request…"
+          : "Confirming your booking…",
+      ),
     );
-    setMessageKind("info");
     try {
       const result = await createPublicBookingAction({
         ...payload,
@@ -355,9 +367,11 @@ export function BookingFlow({
       persistWarning("uncertain");
       setRecoveryNotice("uncertain");
       setMessage(
-        "We couldn’t confirm whether this booking was saved. Check the same request before starting over.",
+        bookingMessage(
+          "error",
+          "We couldn’t confirm whether this booking was saved. Check the same request before starting over.",
+        ),
       );
-      setMessageKind("error");
     } finally {
       inFlightRef.current = false;
       setPending(false);
@@ -371,9 +385,11 @@ export function BookingFlow({
       expireAttempt();
       setRecoveryNotice("expired");
       setMessage(
-        "The recovery copy saved in this tab expired. If the earlier request was saved, it may still exist. Check with the shop before booking again.",
+        bookingMessage(
+          "error",
+          "The recovery copy saved in this tab expired. If the earlier request was saved, it may still exist. Check with the shop before booking again.",
+        ),
       );
-      setMessageKind("error");
       return;
     }
     await sendAttempt(attempt.payload, attempt.recoveryKey, true);
@@ -383,9 +399,11 @@ export function BookingFlow({
     clearRecovery();
     setRecoveryNotice(null);
     setMessage(
-      "Recovery warning cleared. If you’re unsure whether the earlier request was saved, check with the shop before booking the same time.",
+      bookingMessage(
+        "info",
+        "Recovery warning cleared. If you’re unsure whether the earlier request was saved, check with the shop before booking the same time.",
+      ),
     );
-    setMessageKind("info");
     headingRef.current?.focus();
   }
 
@@ -399,8 +417,7 @@ export function BookingFlow({
     clearStartAt();
     setSlots([]);
     setLoadingSlots(false);
-    setMessage("");
-    setMessageKind("info");
+    setMessage(null);
     setContact({ name: "", email: "", phone: "", whatsappOptIn: false });
     setDateRailPage(0);
     setStep(0);
@@ -426,9 +443,11 @@ export function BookingFlow({
         expireAttempt();
         setRecoveryNotice("expired");
         setMessage(
-          "The recovery copy saved in this tab expired. If the earlier request was saved, it may still exist. Check with the shop before booking again.",
+          bookingMessage(
+            "error",
+            "The recovery copy saved in this tab expired. If the earlier request was saved, it may still exist. Check with the shop before booking again.",
+          ),
         );
-        setMessageKind("error");
         return;
       }
       if (sameBookingPayload(existing.payload, payload)) {
@@ -436,18 +455,22 @@ export function BookingFlow({
       } else {
         setRecoveryNotice("changed");
         setMessage(
-          "The form details changed after the earlier request. Check the earlier request before starting over.",
+          bookingMessage(
+            "error",
+            "The form details changed after the earlier request. Check the earlier request before starting over.",
+          ),
         );
-        setMessageKind("error");
       }
       return;
     }
 
     if (recoveryNotice) {
       setMessage(
-        "Review the earlier request notice and choose whether to start a separate booking.",
+        bookingMessage(
+          "error",
+          "Review the earlier request notice and choose whether to start a separate booking.",
+        ),
       );
-      setMessageKind("error");
       return;
     }
 
@@ -547,7 +570,7 @@ export function BookingFlow({
     setSlots([]);
     setLoadingSlots(false);
     setSlotLoadError(false);
-    setMessage("");
+    setMessage(null);
   }
 
   return (
@@ -598,7 +621,7 @@ export function BookingFlow({
             serviceId={serviceId}
             selectedService={selectedService}
             pending={pending}
-            message={message}
+            message={message?.text ?? ""}
             headingRef={headingRef}
             onSelectService={selectService}
             onContinue={() => goTo(1)}
@@ -649,7 +672,6 @@ export function BookingFlow({
             startAt={startAt}
             pending={pending}
             message={message}
-            messageKind={messageKind}
             selectedStartIsWithinChangeWindow={
               selectedStartIsWithinChangeWindow
             }

@@ -19,6 +19,11 @@ import {
   publicationRequirementLabels,
   type PublicationReadiness,
 } from "../publication-readiness";
+import {
+  PUBLICATION_UNKNOWN_FEEDBACK,
+  publicationFeedbackFromError,
+  type PublicationFeedback,
+} from "./publication-feedback";
 
 export function PublicationControls({
   published,
@@ -30,10 +35,10 @@ export function PublicationControls({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [feedback, setFeedback] = useState("");
+  const [feedback, setFeedback] = useState<PublicationFeedback | null>(null);
 
   function save(next: boolean) {
-    setFeedback("");
+    setFeedback(null);
     startTransition(async () => {
       try {
         const result = await setShopPublicationAction({
@@ -41,36 +46,34 @@ export function PublicationControls({
           expectedPublished: published,
         });
         if (!result.success) {
-          setFeedback(result.error.message);
+          setFeedback(publicationFeedbackFromError(result.error));
           return;
         }
         setDialogOpen(false);
         router.refresh();
       } catch {
-        setFeedback(
-          "Connection lost. Refresh publication status to check whether the change saved.",
-        );
+        setFeedback(PUBLICATION_UNKNOWN_FEEDBACK);
       }
     });
   }
 
-  const refreshNeeded =
-    feedback.includes("another tab") ||
-    feedback.includes("Refresh publication status");
   function refreshStatus() {
-    setFeedback("");
+    setFeedback(null);
     router.refresh();
   }
   const feedbackView = feedback ? (
-    <div className="grid justify-items-start gap-2">
+    <div
+      className="grid justify-items-start gap-2"
+      data-outcome={feedback.outcome}
+    >
       <p
         aria-live="polite"
         role="alert"
         className="text-sm text-destructive-text"
       >
-        {feedback}
+        {feedback.message}
       </p>
-      {refreshNeeded && (
+      {feedback.refreshRequired && (
         <Button type="button" variant="link" onClick={refreshStatus}>
           Refresh publication status
         </Button>

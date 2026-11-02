@@ -4,6 +4,10 @@ import type { RefObject } from "react";
 import type { BookingContact, BookingService } from "./types";
 import { money } from "./format";
 import { bookingStyles as styles } from "../shop-styles";
+import {
+  bookingMessageOffersAnotherTime,
+  type BookingMessage,
+} from "./feedback";
 
 export function BookingStepContact({
   headingRef,
@@ -11,7 +15,6 @@ export function BookingStepContact({
   startAt,
   pending,
   message,
-  messageKind,
   selectedStartIsWithinChangeWindow,
   publicContact,
   contact,
@@ -22,8 +25,7 @@ export function BookingStepContact({
   selectedService: BookingService | undefined;
   startAt: string;
   pending: boolean;
-  message: string;
-  messageKind: "error" | "info";
+  message: BookingMessage | null;
   selectedStartIsWithinChangeWindow: boolean;
   publicContact: string;
   contact: BookingContact;
@@ -52,12 +54,12 @@ export function BookingStepContact({
       {message ? (
         <p
           className={
-            messageKind === "error" ? styles.errorMessage : styles.inlineStatus
+            message.kind === "error" ? styles.errorMessage : styles.inlineStatus
           }
-          role={messageKind === "error" ? "alert" : "status"}
+          role={message.kind === "error" ? "alert" : "status"}
         >
-          {message}
-          {message.includes("Choose another available time") ? (
+          {message.text}
+          {bookingMessageOffersAnotherTime(message) ? (
             <button
               type="button"
               className={styles.inlineAction}

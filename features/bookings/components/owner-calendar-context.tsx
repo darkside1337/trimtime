@@ -13,6 +13,10 @@ import {
 } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { OwnerDiscardDialog } from "@/components/owner-discard-dialog";
+import {
+  OWNER_APPOINTMENT_DIALOG_SELECTOR,
+  findVisibleOwnerAppointmentDialog,
+} from "./appointment-dialog-attributes";
 
 export type OwnerAppointmentDraftValues = {
   customerName: string;
@@ -138,22 +142,11 @@ export function OwnerAppointmentProvider({
       }
       if (`${window.location.pathname}${window.location.search}` !== modalKey)
         return;
-      const entry = Array.from(
-        document.querySelectorAll<HTMLElement>('[role="dialog"][data-open]'),
-      ).find((dialog) => {
-        const title = dialog
-          .getAttribute("aria-labelledby")
-          ?.split(/\s+/)
-          .map((id) => document.getElementById(id)?.textContent ?? "")
-          .join(" ");
-        const portal = dialog.closest<HTMLElement>("[data-base-ui-portal]");
-        return (
-          (title?.includes("New appointment") ||
-            title?.includes("Appointment details")) &&
-          !portal?.hasAttribute("aria-hidden") &&
-          !portal?.hasAttribute("inert")
-        );
-      });
+      const entry = findVisibleOwnerAppointmentDialog(
+        document.querySelectorAll<HTMLElement>(
+          OWNER_APPOINTMENT_DIALOG_SELECTOR,
+        ),
+      );
       if (entry) {
         phase.current = "prompt";
         restoreRequested.current = false;
