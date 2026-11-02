@@ -1413,3 +1413,132 @@ test("Case 12: cutoff disclosure is dynamically updated across boundary while re
     );
   }
 });
+
+test("Case 13: conflict refresh shows loading and offers current available starts", async ({
+  page,
+  context,
+  owners,
+  database,
+}) => {
+  const owner = await owners(context, { shop: true, published: true });
+  const { serviceId, barberId } = await addReadyCatalog(database.pool, owner);
+  await openAllWeek(database.pool, owner, barberId);
+
+  const manageUrl = await createEligibleBooking(
+    page,
+    owner,
+    serviceId,
+    barberId,
+  );
+  const token = manageUrl.pathname.split("/").at(-1)!;
+  const { rows } = await database.pool.query(
+    "SELECT id, shop_id FROM bookings WHERE shop_id=$1",
+    [owner.shopId],
+  );
+  const rateKey = createHash("sha256")
+    .update(`${rows[0].shop_id}:${token}`)
+    .digest("hex");
+
+  try {
+    await page.goto(manageUrl.toString());
+    await page.getByRole("button", { name: "Open change preview" }).click();
+
+    await page.getByLabel("Choose a date").fill("2026-11-02");
+    const slotRadio = page.getByRole("radio", { name: "10:00" });
+    await expect(slotRadio).toHaveCount(1);
+    await slotRadio.check({ force: true });
+    await page.getByRole("button", { name: "Review change" }).click();
+    await expect(
+      page.getByRole("heading", { name: "A quick look before we change it." }),
+    ).toBeVisible();
+
+    // Make the reviewed 10:00 start unavailable before confirmation.
+    await database.pool.query(
+      `INSERT INTO occupied_intervals (id, shop_id, barber_id, start_at, end_at)
+       VALUES ($1, $2, $3, '2026-11-02T15:00:00Z', '2026-11-02T15:35:00Z')`,
+      [randomUUID(), owner.shopId, barberId],
+    );
+
+    let releaseRefresh!: () => void;
+    let markRefreshProcessed!: () => void;
+    let markRefreshDelivered!: () => void;
+    const refreshGate = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    const refreshProcessed = new Promise<void>((resolve) => {
+      markRefreshProcessed = resolve;
+    });
+    const refreshDelivered = new Promise<void>((resolve) => {
+      markRefreshDelivered = resolve;
+    });
+    let heldRefresh = false;
+
+    await page.route("**/*", async (route) => {
+      const request = route.request();
+      const postData = request.postData() ?? "";
+      if (
+        !heldRefresh &&
+        request.method() === "POST" &&
+        Boolean(request.headers()["next-action"]) &&
+        postData.includes('"date":')
+      ) {
+        // Hold only the post-conflict slot refresh after the server has read it.
+        heldRefresh = true;
+        const response = await route.fetch();
+        markRefreshProcessed();
+        await refreshGate;
+        await route.fulfill({ response });
+        markRefreshDelivered();
+        return;
+      }
+      await route.continue();
+    });
+
+    try {
+      await page
+        .getByRole("button", { name: "Confirm appointment change" })
+        .click();
+      await refreshProcessed;
+
+      await expect(
+        page
+          .getByRole("alert")
+          .filter({ hasText: "The selected time is no longer available." }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("heading", { name: "A fresh time. Your call." }),
+      ).toBeVisible();
+      await expect(page.getByLabel("Choose a date")).toHaveValue("2026-11-02");
+      await expect(page.getByText("Loading times…")).toBeVisible();
+      await expect(page.getByRole("radio", { name: "10:00" })).toHaveCount(0);
+      await expect(
+        page.getByRole("button", { name: "Review change" }),
+      ).toBeDisabled();
+
+      releaseRefresh();
+      await refreshDelivered;
+      await expect(page.getByText("Loading times…")).toHaveCount(0);
+      await expect(page.getByRole("radio", { name: "10:00" })).toHaveCount(0);
+      await expect(page.getByRole("radio", { name: "12:00" })).toHaveCount(1);
+
+      await page.getByRole("radio", { name: "12:00" }).check({ force: true });
+      await expect(
+        page.getByRole("button", { name: "Review change" }),
+      ).toBeEnabled();
+      await page.getByRole("button", { name: "Review change" }).click();
+      await expect(
+        page.getByRole("heading", {
+          name: "A quick look before we change it.",
+        }),
+      ).toBeVisible();
+    } finally {
+      releaseRefresh();
+      await page.unrouteAll({ behavior: "wait" });
+    }
+  } finally {
+    await database.pool.query(
+      "DELETE FROM public_rate_keys WHERE scope='customer_change_link' AND key_hash=$1",
+      [rateKey],
+    );
+  }
+});

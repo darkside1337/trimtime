@@ -93,6 +93,7 @@ export function BookingPreview({
     loading: loadingSlots,
     error: slotsError,
     invalidate: invalidateSlots,
+    refresh: refreshSlots,
   } = useReplacementSlots({
     token,
     choices,
@@ -225,9 +226,7 @@ export function BookingPreview({
           );
           setStartAt("");
           setScreen("edit");
-          // Trigger slot refresh
-          invalidateSlots(Boolean(date && serviceId && barberId));
-          setChoices({ ...choices });
+          refreshSlots();
         } else {
           setError(result.error.message);
         }

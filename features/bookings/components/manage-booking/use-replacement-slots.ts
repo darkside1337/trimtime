@@ -43,11 +43,18 @@ export function useReplacementSlots({
     loading: false,
     error: null,
   });
+  const [refreshSignal, setRefreshSignal] = useState(0);
 
   const invalidate = useCallback((loading = true) => {
     requestId.current += 1;
     setState({ queryKey: null, slots: [], loading, error: null });
   }, []);
+
+  /** Re-runs the current query while invalidating every earlier request. */
+  const refresh = useCallback(() => {
+    invalidate(hasQuery);
+    setRefreshSignal((signal) => signal + 1);
+  }, [hasQuery, invalidate]);
 
   useEffect(() => {
     const reqId = ++requestId.current;
@@ -97,7 +104,16 @@ export function useReplacementSlots({
     return () => {
       active = false;
     };
-  }, [token, choices, serviceId, barberId, date, onServerNow, queryKey]);
+  }, [
+    token,
+    choices,
+    serviceId,
+    barberId,
+    date,
+    onServerNow,
+    queryKey,
+    refreshSignal,
+  ]);
 
   const settledForCurrentQuery = state.queryKey === queryKey;
   return {
@@ -105,5 +121,6 @@ export function useReplacementSlots({
     loading: hasQuery && (!settledForCurrentQuery || state.loading),
     error: settledForCurrentQuery ? state.error : null,
     invalidate,
+    refresh,
   };
 }
