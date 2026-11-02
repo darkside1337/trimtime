@@ -2,6 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { OwnerActivity } from "../components/owner-activity";
+import type { NotificationActivityRow } from "../types";
 
 const shop = {
   id: "shop-id",
@@ -12,6 +13,27 @@ const shop = {
   address: "123 Example Street",
   published: false,
 };
+
+function notification(
+  overrides: Partial<NotificationActivityRow> = {},
+): NotificationActivityRow {
+  return {
+    id: "work-1",
+    bookingId: "booking-1",
+    creationSource: "public",
+    kind: "customer_confirmation",
+    channel: "email",
+    status: "failed",
+    recipient: "guest@example.test",
+    reason: "transient_rejection",
+    createdAt: "2026-11-02T10:00:00.000Z",
+    updatedAt: "2026-11-02T10:00:00.000Z",
+    nextAttemptAt: null,
+    attempt: null,
+    attempts: [],
+    ...overrides,
+  };
+}
 
 describe("owner Activity read states", () => {
   it("distinguishes empty upcoming, change, and message records and unavailable reminders", () => {
@@ -50,5 +72,125 @@ describe("owner Activity read states", () => {
       "No appointment changes recorded for this shop.",
     );
     expect(markup).not.toContain("No notification records yet for this shop.");
+  });
+
+  it("labels scheduled, exhausted, and permanent retry outcomes", () => {
+    const markup = renderToStaticMarkup(
+      createElement(OwnerActivity, {
+        shop,
+        activity: {
+          rows: [
+            notification({ nextAttemptAt: "2026-11-02T10:10:00.000Z" }),
+            notification({
+              id: "work-2",
+              reason: "transient_rejection",
+              attempt: {
+                id: "attempt-3",
+                attemptNumber: 3,
+                budgetDay: "2026-11-02",
+                reservedAt: "2026-11-02T10:00:00.000Z",
+                invokedAt: "2026-11-02T10:00:01.000Z",
+                outcome: "failed",
+                captureId: null,
+                reason: "transient_rejection",
+                finishedAt: "2026-11-02T10:00:02.000Z",
+              },
+            }),
+            notification({ id: "work-3", reason: "permanent_rejection" }),
+          ],
+        },
+        changes: { rows: [] },
+        upcoming: [],
+      }),
+    );
+
+    expect(markup).toContain("Retry scheduled");
+    expect(markup).toContain("Attempts exhausted");
+    expect(markup).toContain("Permanent failure");
+  });
+
+  it("counts persisted invocations across attempts while rendering one work row", () => {
+    const firstAttempt = {
+      id: "attempt-1",
+      attemptNumber: 1,
+      budgetDay: "2026-11-02",
+      reservedAt: "2026-11-02T10:00:00.000Z",
+      invokedAt: "2026-11-02T10:00:01.000Z",
+      outcome: "failed" as const,
+      captureId: null,
+      reason: "transient_rejection",
+      finishedAt: "2026-11-02T10:00:02.000Z",
+    };
+    const secondAttempt = {
+      ...firstAttempt,
+      id: "attempt-2",
+      attemptNumber: 2,
+      reservedAt: "2026-11-02T10:10:00.000Z",
+      invokedAt: "2026-11-02T10:10:01.000Z",
+      outcome: "accepted" as const,
+      reason: null,
+      finishedAt: null,
+    };
+    const reservationOnlyAttempt = {
+      ...firstAttempt,
+      id: "attempt-reserved-only",
+      attemptNumber: 1,
+      invokedAt: null,
+      outcome: null,
+      reason: null,
+      finishedAt: null,
+    };
+    const markup = renderToStaticMarkup(
+      createElement(OwnerActivity, {
+        shop,
+        activity: {
+          rows: [
+            notification({
+              id: "work-history",
+              status: "accepted",
+              attempt: secondAttempt,
+              attempts: [firstAttempt, secondAttempt],
+            }),
+            notification({
+              id: "work-reserved-only",
+              status: "sending",
+              attempt: reservationOnlyAttempt,
+              attempts: [reservationOnlyAttempt],
+            }),
+          ],
+        },
+        changes: { rows: [] },
+        upcoming: [],
+      }),
+    );
+
+    expect(markup).toMatch(
+      /Confirmed transport invocations<\/span><strong>2<\/strong>/,
+    );
+    expect(markup.match(/#work-history/g)).toHaveLength(1);
+  });
+
+  it("keeps unknown, accepted, and captured outcomes distinct", () => {
+    const markup = renderToStaticMarkup(
+      createElement(OwnerActivity, {
+        shop,
+        activity: {
+          rows: [
+            notification({ id: "unknown-work", status: "unknown" }),
+            notification({ id: "accepted-work", status: "accepted" }),
+            notification({ id: "captured-work", status: "captured" }),
+          ],
+        },
+        changes: { rows: [] },
+        upcoming: [],
+      }),
+    );
+
+    expect(markup).toContain("Unknown · invocation/result uncertain");
+    expect(markup).toContain("Accepted by local capture service");
+    expect(markup).toContain(
+      "Captured locally · inbox delivery is not enabled",
+    );
+    expect(markup).not.toContain("delivered");
   });
 });

@@ -13,12 +13,18 @@ export async function suppressSupersededNotificationWork(
 ) {
   await tx
     .update(notificationWork)
-    .set({ status: "suppressed", reason: "superseded", updatedAt: now })
+    .set({
+      status: "suppressed",
+      reason: "superseded",
+      nextAttemptAt: null,
+      updatedAt: now,
+    })
     .where(
       and(
         eq(notificationWork.bookingId, bookingId),
         sql`${notificationWork.bookingRevision} < ${revision}`,
-        eq(notificationWork.status, "not_attempted"),
+        sql`(${notificationWork.status}='not_attempted' OR
+          (${notificationWork.status}='failed' AND ${notificationWork.reason}='transient_rejection' AND ${notificationWork.nextAttemptAt} IS NOT NULL))`,
       ),
     );
 }

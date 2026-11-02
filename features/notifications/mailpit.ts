@@ -18,19 +18,19 @@ function result(
   return { status, reason, captureId, invoked };
 }
 
-async function verifyCapture(
-  origin: string,
-  captureId: string,
-  recipient: string,
-  attemptId: string,
-): Promise<MailpitTransportResult["reason"]> {
+export async function verifyMailpitCapture(input: {
+  origin: string;
+  captureId: string;
+  recipient: string;
+  attemptId: string;
+}): Promise<MailpitTransportResult["reason"]> {
   try {
     const requestOptions = () => ({
       redirect: "error" as const,
       signal: AbortSignal.timeout(3000),
     });
     const summaryResponse = await fetch(
-      `${origin}/api/v1/message/${encodeURIComponent(captureId)}`,
+      `${input.origin}/api/v1/message/${encodeURIComponent(input.captureId)}`,
       requestOptions(),
     );
     if (summaryResponse.status !== 200)
@@ -48,13 +48,13 @@ async function verifyCapture(
     if (
       recipients.length !== 1 ||
       typeof recipients[0]?.Address !== "string" ||
-      recipients[0].Address.toLowerCase() !== recipient.toLowerCase()
+      recipients[0].Address.toLowerCase() !== input.recipient.toLowerCase()
     ) {
       return "capture_recipient_mismatch";
     }
 
     const headersResponse = await fetch(
-      `${origin}/api/v1/message/${encodeURIComponent(captureId)}/headers`,
+      `${input.origin}/api/v1/message/${encodeURIComponent(input.captureId)}/headers`,
       requestOptions(),
     );
     if (headersResponse.status !== 200)
@@ -69,7 +69,7 @@ async function verifyCapture(
     if (
       !Array.isArray(correlation) ||
       correlation.length !== 1 ||
-      correlation[0] !== attemptId
+      correlation[0] !== input.attemptId
     ) {
       return "capture_attempt_mismatch";
     }
@@ -84,6 +84,7 @@ export async function sendMailpitMessage(input: {
   message: OutboundMessage;
   attemptId: string;
   onInvoked: () => Promise<void>;
+  onAccepted?: (captureId: string) => Promise<void>;
 }): Promise<MailpitTransportResult> {
   let post: Response;
   let invoked = false;
@@ -143,12 +144,18 @@ export async function sendMailpitMessage(input: {
     return result("unknown", "malformed_success_response", null, true);
   }
 
-  const verificationReason = await verifyCapture(
-    input.origin,
+  try {
+    await input.onAccepted?.(captureId);
+  } catch {
+    return result("unknown", "acceptance_evidence_failed", captureId, true);
+  }
+
+  const verificationReason = await verifyMailpitCapture({
+    origin: input.origin,
     captureId,
-    input.message.to,
-    input.attemptId,
-  );
+    recipient: input.message.to,
+    attemptId: input.attemptId,
+  });
   return verificationReason
     ? result("accepted", verificationReason, captureId, true)
     : result("captured", null, captureId, true);

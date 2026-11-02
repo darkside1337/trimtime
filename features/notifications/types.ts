@@ -27,14 +27,19 @@ export type NotificationActivityRow = {
   reason: string | null;
   createdAt: string;
   updatedAt: string;
+  nextAttemptAt: string | null;
   attempt: null | {
     id: string;
+    attemptNumber: number;
     budgetDay: string;
     reservedAt: string;
     invokedAt: string | null;
     outcome: "accepted" | "captured" | "failed" | "unknown" | null;
     captureId: string | null;
+    reason: string | null;
+    finishedAt: string | null;
   };
+  attempts: Array<NonNullable<NotificationActivityRow["attempt"]>>;
 };
 
 export type NotificationActivityView = { rows: NotificationActivityRow[] };

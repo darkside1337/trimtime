@@ -12,14 +12,16 @@ import {
 } from "./eligibility";
 import { buildNotificationMessage } from "./rendering";
 import { sendMailpitMessage, type MailpitTransportResult } from "./mailpit";
+import { getNextRetryAt } from "./retry-policy";
 
-type DispatchDependencies = {
+export type DispatchDependencies = {
   now?: () => Date;
   send?: (input: {
     origin: string;
     message: OutboundMessage;
     attemptId: string;
     onInvoked: () => Promise<void>;
+    onAccepted?: (captureId: string) => Promise<void>;
   }) => Promise<MailpitTransportResult>;
 };
 
@@ -46,15 +48,16 @@ async function suppress(
 ) {
   await tx
     .update(notificationWork)
-    .set({ status, reason, updatedAt: now })
+    .set({ status, reason, nextAttemptAt: null, updatedAt: now })
     .where(
-      sql`${notificationWork.id}=${workId} AND ${notificationWork.status}='not_attempted'`,
+      sql`${notificationWork.id}=${workId} AND ${notificationWork.status} IN ('not_attempted','failed')`,
     );
 }
 
 async function authorize(input: {
   bookingId: string;
   workId: string;
+  retry: boolean;
   dependencies: Required<DispatchDependencies>;
 }) {
   return db.transaction(async (tx) => {
@@ -84,7 +87,8 @@ async function authorize(input: {
       Record<string, unknown> | undefined;
     const workResult = await tx.execute(sql`
       SELECT w.id, w.kind, w.status, w.recipient, w.booking_revision AS "bookingRevision",
-        w.content_identity AS "contentIdentity", c.before_snapshot AS "beforeSnapshot",
+        w.content_identity AS "contentIdentity", w.next_attempt_at AS "nextAttemptAt",
+        c.before_snapshot AS "beforeSnapshot",
         c.kind AS "changeKind", c.actor_type AS "changeActor",
         c.applied_revision AS "changeRevision"
       FROM notification_work w
@@ -93,10 +97,34 @@ async function authorize(input: {
       FOR UPDATE OF w
     `);
     const rawWork = workResult.rows[0] as Record<string, unknown> | undefined;
-    if (!rawBooking || !rawWork || rawWork.status !== "not_attempted")
-      return null;
+    if (!rawBooking || !rawWork) return null;
 
     const now = input.dependencies.now();
+    const priorAttempts = await tx.execute(sql`
+      SELECT id, attempt_number AS "attemptNumber", outcome, reason
+      FROM notification_attempts WHERE work_id=${input.workId}
+      ORDER BY attempt_number DESC FOR UPDATE
+    `);
+    const latestAttempt = priorAttempts.rows[0] as
+      | { attemptNumber: number; outcome: string | null; reason: string | null }
+      | undefined;
+    const nextAttemptAt =
+      rawWork.nextAttemptAt === null || rawWork.nextAttemptAt === undefined
+        ? Number.NaN
+        : new Date(rawWork.nextAttemptAt as string | Date).getTime();
+    const retryDue =
+      input.retry &&
+      rawWork.status === "failed" &&
+      Number.isFinite(nextAttemptAt) &&
+      nextAttemptAt <= now.getTime() &&
+      latestAttempt?.outcome === "failed" &&
+      latestAttempt.reason === "transient_rejection" &&
+      Number(latestAttempt.attemptNumber) < 3;
+    const initialEligible =
+      rawWork.status === "not_attempted" && priorAttempts.rows.length === 0;
+    if (!(input.retry ? retryDue || initialEligible : initialEligible))
+      return null;
+
     const booking: CurrentBooking = {
       id: String(rawBooking.id),
       shopId: String(rawBooking.shopId),
@@ -157,7 +185,7 @@ async function authorize(input: {
         eligibility.reason,
         now,
       );
-      return null;
+      return { suppressed: true as const, result: eligibility.status };
     }
 
     const rendering = buildNotificationMessage({
@@ -173,7 +201,7 @@ async function authorize(input: {
     });
     if (!rendering.ok) {
       await suppress(tx, input.workId, rendering.status, rendering.reason, now);
-      return null;
+      return { suppressed: true as const, result: rendering.status };
     }
     const authorizedAt = input.dependencies.now();
     if (
@@ -187,7 +215,7 @@ async function authorize(input: {
         "work_no_longer_eligible",
         authorizedAt,
       );
-      return null;
+      return { suppressed: true as const, result: "suppressed" as const };
     }
     const day = authorizedAt.toISOString().slice(0, 10);
     const allocation = await tx.execute(sql`
@@ -205,14 +233,19 @@ async function authorize(input: {
         "daily_budget_exhausted",
         authorizedAt,
       );
-      return null;
+      return { suppressed: true as const, result: "skipped" as const };
     }
 
     const attemptId = randomUUID();
     const claimId = randomUUID();
-    await tx
-      .insert(notificationAttempts)
-      .values({ id: attemptId, workId: input.workId, budgetDay: day });
+    await tx.insert(notificationAttempts).values({
+      id: attemptId,
+      workId: input.workId,
+      budgetDay: day,
+      attemptNumber: latestAttempt
+        ? Number(latestAttempt.attemptNumber) + 1
+        : 1,
+    });
     await tx
       .update(notificationWork)
       .set({
@@ -222,7 +255,9 @@ async function authorize(input: {
         updatedAt: authorizedAt,
       })
       .where(
-        sql`${notificationWork.id}=${input.workId} AND ${notificationWork.status}='not_attempted'`,
+        input.retry
+          ? sql`${notificationWork.id}=${input.workId} AND ${notificationWork.status} IN ('not_attempted','failed')`
+          : sql`${notificationWork.id}=${input.workId} AND ${notificationWork.status}='not_attempted'`,
       );
     return {
       message: rendering.message,
@@ -230,6 +265,7 @@ async function authorize(input: {
       attemptId,
       claimId,
       authorizedAt,
+      suppressed: false as const,
     };
   });
 }
@@ -246,7 +282,7 @@ async function finish(input: {
       .select({ id: notificationWork.id })
       .from(notificationWork)
       .where(
-        sql`${notificationWork.id}=${input.workId} AND ${notificationWork.claimId}=${input.claimId} AND ${notificationWork.status}='sending'`,
+        sql`${notificationWork.id}=${input.workId} AND ${notificationWork.claimId}=${input.claimId} AND ${notificationWork.status} IN ('sending','accepted')`,
       )
       .for("update");
     if (!work) return;
@@ -258,9 +294,25 @@ async function finish(input: {
       )
       .for("update");
     if (!attempt) return;
+    const [numberedAttempt] = await tx
+      .select({ attemptNumber: notificationAttempts.attemptNumber })
+      .from(notificationAttempts)
+      .where(sql`${notificationAttempts.id}=${input.attemptId}`)
+      .for("update");
+    if (!numberedAttempt) return;
+    const nextAttemptAt = getNextRetryAt({
+      attemptNumber: numberedAttempt.attemptNumber,
+      reason: input.result.reason,
+      finishedAt: input.now,
+    });
     const updatedAttempt = await tx
       .update(notificationAttempts)
-      .set({ outcome: input.result.status, captureId: input.result.captureId })
+      .set({
+        outcome: input.result.status,
+        captureId: input.result.captureId,
+        reason: input.result.reason,
+        finishedAt: input.now,
+      })
       .where(
         sql`${notificationAttempts.id}=${input.attemptId} AND ${notificationAttempts.workId}=${input.workId}`,
       )
@@ -271,12 +323,38 @@ async function finish(input: {
       .set({
         status: input.result.status,
         reason: input.result.reason,
+        nextAttemptAt,
         updatedAt: input.now,
       })
       .where(
-        sql`${notificationWork.id}=${input.workId} AND ${notificationWork.claimId}=${input.claimId}`,
+        sql`${notificationWork.id}=${input.workId} AND ${notificationWork.claimId}=${input.claimId} AND ${notificationWork.status} IN ('sending','accepted')`,
       );
   });
+}
+
+type DispatchTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+async function lockCurrentAttempt(
+  tx: DispatchTransaction,
+  input: { workId: string; attemptId: string; claimId: string },
+) {
+  const [work] = await tx
+    .select({ id: notificationWork.id })
+    .from(notificationWork)
+    .where(
+      sql`${notificationWork.id}=${input.workId} AND ${notificationWork.claimId}=${input.claimId} AND ${notificationWork.status}='sending'`,
+    )
+    .for("update");
+  if (!work) return false;
+
+  const [attempt] = await tx
+    .select({ id: notificationAttempts.id })
+    .from(notificationAttempts)
+    .where(
+      sql`${notificationAttempts.id}=${input.attemptId} AND ${notificationAttempts.workId}=${input.workId}`,
+    )
+    .for("update");
+  return Boolean(attempt);
 }
 
 export async function dispatchInitialBookingNotifications(
@@ -292,54 +370,114 @@ export async function dispatchInitialBookingNotifications(
     ORDER BY CASE WHEN kind IN ('customer_confirmation', 'customer_move', 'customer_cancellation', 'customer_restoration') THEN 0 ELSE 1 END
   `);
   for (const row of items.rows as { id: string }[]) {
+    await dispatchNotificationWork(bookingId, row.id, false, dependencies);
+  }
+}
+
+export async function dispatchNotificationWork(
+  bookingId: string,
+  workId: string,
+  allowRetry: boolean,
+  injected: DispatchDependencies = {},
+): Promise<"attempted" | "suppressed" | "skipped" | "unavailable"> {
+  const dependencies: Required<DispatchDependencies> = {
+    now: injected.now ?? (() => new Date()),
+    send: injected.send ?? sendMailpitMessage,
+  };
+  let wasReserved = false;
+  try {
+    const authorized = await authorize({
+      bookingId,
+      workId,
+      retry: allowRetry,
+      dependencies,
+    });
+    if (!authorized) return "skipped";
+    if (authorized.suppressed) {
+      if (authorized.result === "suppressed") return "suppressed";
+      if (authorized.result === "unavailable") return "unavailable";
+      return "skipped";
+    }
+    wasReserved = true;
+    let result: MailpitTransportResult;
     try {
-      const authorized = await authorize({
-        bookingId,
-        workId: row.id,
-        dependencies,
-      });
-      if (!authorized) continue;
-      let result: MailpitTransportResult;
-      try {
-        result = await dependencies.send({
-          origin: authorized.origin,
-          message: authorized.message,
-          attemptId: authorized.attemptId,
-          onInvoked: async () => {
-            await db
+      result = await dependencies.send({
+        origin: authorized.origin,
+        message: authorized.message,
+        attemptId: authorized.attemptId,
+        onInvoked: async () => {
+          await db.transaction(async (tx) => {
+            if (
+              !(await lockCurrentAttempt(tx, {
+                workId,
+                attemptId: authorized.attemptId,
+                claimId: authorized.claimId,
+              }))
+            )
+              return;
+            await tx
               .update(notificationAttempts)
               .set({ invokedAt: dependencies.now() })
               .where(
-                sql`${notificationAttempts.id}=${authorized.attemptId} AND ${notificationAttempts.workId}=${row.id} AND EXISTS (SELECT 1 FROM notification_work WHERE id=${row.id} AND claim_id=${authorized.claimId} AND status='sending')`,
+                sql`${notificationAttempts.id}=${authorized.attemptId} AND ${notificationAttempts.workId}=${workId}`,
               );
-          },
-        });
-      } catch {
-        result = {
-          status: "unknown",
-          reason: "transport_interrupted",
-          captureId: null,
-          invoked: false,
-        };
-      }
-      if (!result.invoked)
-        result = {
-          ...result,
-          status: "unknown",
-          reason: result.reason ?? "transport_interrupted",
-        };
-      await finish({
-        workId: row.id,
-        attemptId: authorized.attemptId,
-        claimId: authorized.claimId,
-        result,
-        now: dependencies.now(),
+          });
+        },
+        onAccepted: async (captureId) => {
+          await db.transaction(async (tx) => {
+            if (
+              !(await lockCurrentAttempt(tx, {
+                workId,
+                attemptId: authorized.attemptId,
+                claimId: authorized.claimId,
+              }))
+            )
+              return;
+            const updatedWork = await tx
+              .update(notificationWork)
+              .set({ status: "accepted", updatedAt: dependencies.now() })
+              .where(
+                sql`${notificationWork.id}=${workId} AND ${notificationWork.claimId}=${authorized.claimId} AND ${notificationWork.status}='sending'`,
+              )
+              .returning({ id: notificationWork.id });
+            if (!updatedWork.length) return;
+            const updatedAttempt = await tx
+              .update(notificationAttempts)
+              .set({ outcome: "accepted", captureId })
+              .where(
+                sql`${notificationAttempts.id}=${authorized.attemptId} AND ${notificationAttempts.workId}=${workId}`,
+              )
+              .returning({ id: notificationAttempts.id });
+            if (!updatedAttempt.length)
+              throw new Error("Current notification attempt disappeared.");
+          });
+        },
       });
     } catch {
-      console.error("Notification dispatch failed.", {
-        bookingId,
-        workId: row.id,
-      });
+      result = {
+        status: "unknown",
+        reason: "transport_interrupted",
+        captureId: null,
+        invoked: false,
+      };
     }
+    if (!result.invoked)
+      result = {
+        ...result,
+        status: "unknown",
+        reason: result.reason ?? "transport_interrupted",
+      };
+    await finish({
+      workId,
+      attemptId: authorized.attemptId,
+      claimId: authorized.claimId,
+      result,
+      now: dependencies.now(),
+    });
+    return "attempted";
+  } catch (error) {
+    console.error("Notification dispatch failed.", { bookingId, workId });
+    if (allowRetry) throw error;
+    return wasReserved ? "attempted" : "skipped";
   }
 }

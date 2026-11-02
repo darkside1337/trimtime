@@ -106,6 +106,13 @@
       "when": 1793491200000,
       "tag": "0014_shop_creation_rate_limit",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1793577600000,
+      "tag": "0015_notification_recovery",
+      "breakpoints": true
     }
   ]
 }

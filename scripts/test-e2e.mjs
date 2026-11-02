@@ -21,6 +21,8 @@ const env = {
   APP_ORIGIN: "http://app.localhost:3100",
   MARKETING_ORIGIN: "http://localhost:3100",
   BETTER_AUTH_SECRET: "e2e-only-secret-that-is-long-enough-for-better-auth",
+  NOTIFICATION_JOB_SECRET:
+    "e2e-only-notification-job-secret-never-use-outside-tests",
   BOOKING_CAPABILITY_KEY_ID: "e2e-v1",
   BOOKING_CAPABILITY_ENCRYPTION_KEY:
     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
@@ -49,21 +51,8 @@ if (process.env.TRIMTIME_E2E_EMAIL_MODE === "mailpit-double") {
 } else {
   delete env.MAILPIT_ORIGIN;
 }
-if (process.env.TRIMTIME_E2E_NOW) {
-  const preload = resolve("tests/support/fixed-clock.mjs");
-  const check = `${process.env.TRIMTIME_E2E_NOW}`;
-  if (Number.isNaN(Date.parse(check)) || !check.endsWith("Z")) {
-    throw new Error("TRIMTIME_E2E_NOW must be a UTC ISO instant ending in Z.");
-  }
-  execFileSync(process.execPath, ["--import", preload, "--eval", ""], {
-    stdio: "inherit",
-    env: { ...env, TRIMTIME_E2E_NOW: check },
-  });
-  env.TRIMTIME_E2E_NOW = check;
-  env.NODE_OPTIONS = [process.env.NODE_OPTIONS, `--import=${preload}`]
-    .filter(Boolean)
-    .join(" ");
-}
+const args = process.argv.slice(2);
+if (args[0] === "--") args.shift();
 const releaseGlobal = await acquireE2eDirectory("/tmp/trimtime-e2e-55432.lock");
 let release;
 let pool;
@@ -76,10 +65,24 @@ try {
     { flag: "wx" },
   );
   await applyMigrations(pool, "db/migrations");
+  if (env.TRIMTIME_E2E_NOW) {
+    const preload = resolve("tests/support/fixed-clock.mjs");
+    const check = `${env.TRIMTIME_E2E_NOW}`;
+    if (Number.isNaN(Date.parse(check)) || !check.endsWith("Z")) {
+      throw new Error(
+        "TRIMTIME_E2E_NOW must be a UTC ISO instant ending in Z.",
+      );
+    }
+    execFileSync(process.execPath, ["--import", preload, "--eval", ""], {
+      stdio: "inherit",
+      env: { ...env, TRIMTIME_E2E_NOW: check },
+    });
+    env.NODE_OPTIONS = [process.env.NODE_OPTIONS, `--import=${preload}`]
+      .filter(Boolean)
+      .join(" ");
+  }
   if (!developmentServer)
     execFileSync("pnpm", ["build"], { stdio: "inherit", env });
-  const args = process.argv.slice(2);
-  if (args[0] === "--") args.shift();
   if (env.EMAIL_MODE === "mailpit") args.push("--workers=1");
   execFileSync(
     process.execPath,

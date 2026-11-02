@@ -411,6 +411,14 @@ describe("initial notification dispatch", () => {
       attempt: null,
     });
     expect(created.manageUrl).toContain("/manage/");
+    expect(
+      await database.pool.query(
+        `SELECT attempt_number FROM notification_attempts WHERE work_id IN
+         (SELECT id FROM notification_work WHERE booking_id=$1 AND channel='email')
+         ORDER BY attempt_number`,
+        [created.bookingId],
+      ),
+    ).toMatchObject({ rows: [{ attempt_number: 1 }, { attempt_number: 1 }] });
     const token = created.manageUrl.split("/manage/")[1];
     await expect(
       getManagedBooking({ shopId: ids.shopId }, token),
@@ -605,6 +613,52 @@ describe("initial notification dispatch", () => {
       { kind: "customer_move", status: "suppressed" },
       { kind: "owner_alert", status: "suppressed" },
     ]);
+  });
+
+  it("suppresses queued transient failures on supersession while preserving their attempt evidence", async () => {
+    const ids = await fixture();
+    const created = await booking(ids, "superseded-retry@example.test");
+    await dispatchTracked(created.bookingId, {
+      now: () => new Date("2026-11-03T12:00:00Z"),
+      send: async ({ onInvoked }) => {
+        await onInvoked();
+        return {
+          status: "failed",
+          reason: "transient_rejection",
+          captureId: null,
+          invoked: true,
+        };
+      },
+    });
+    const moved = await moveOwnerBooking(ids.context, {
+      bookingId: created.bookingId,
+      expectedRevision: 0,
+      operationKey: randomBytes(32).toString("base64url"),
+      serviceId: ids.serviceId,
+      barberId: ids.barberId,
+      startAt: "2026-11-02T11:00:00.000Z",
+      reviewedOffer: { name: "Cut", priceUsd: "25.00", durationMinutes: "30" },
+    });
+    expect(moved.success).toBe(true);
+    const obsolete = await database.pool.query(
+      `SELECT w.status,w.reason,w.next_attempt_at,a.attempt_number,a.outcome,a.reason AS attempt_reason
+       FROM notification_work w JOIN notification_attempts a ON a.work_id=w.id
+       WHERE w.booking_id=$1 AND w.booking_revision=0 ORDER BY w.kind`,
+      [created.bookingId],
+    );
+    expect(obsolete.rows).toHaveLength(2);
+    expect(obsolete.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "suppressed",
+          reason: "superseded",
+          next_attempt_at: null,
+          attempt_number: 1,
+          outcome: "failed",
+          attempt_reason: "transient_rejection",
+        }),
+      ]),
+    );
   });
 
   it("suppresses old cancellation work and later obsolete restoration work before dispatch", async () => {
@@ -2378,6 +2432,419 @@ describe("initial notification dispatch", () => {
       day,
       day,
     ]);
+  });
+
+  it("stores transient rejection completion and retry due time on the failed attempt", async () => {
+    const ids = await fixture();
+    const created = await booking(ids, "retry-evidence@example.test");
+    const finishedAt = new Date("2026-11-03T12:00:00Z");
+    await dispatchTracked(created.bookingId, {
+      now: () => finishedAt,
+      send: async ({ onInvoked }) => {
+        await onInvoked();
+        return {
+          status: "failed",
+          reason: "transient_rejection",
+          captureId: null,
+          invoked: true,
+        };
+      },
+    });
+    const result = await database.pool.query(
+      `SELECT w.status,w.reason,w.next_attempt_at,a.attempt_number,a.reason AS attempt_reason,a.finished_at
+       FROM notification_work w JOIN notification_attempts a ON a.work_id=w.id
+       WHERE w.booking_id=$1 AND w.kind='customer_confirmation' AND w.channel='email'`,
+      [created.bookingId],
+    );
+    expect(result.rows[0]).toMatchObject({
+      status: "failed",
+      reason: "transient_rejection",
+      next_attempt_at: new Date("2026-11-03T12:10:00Z"),
+      attempt_number: 1,
+      attempt_reason: "transient_rejection",
+      finished_at: finishedAt,
+    });
+  });
+
+  it("does not schedule a retry after permanent rejection or an unknown result", async () => {
+    const ids = await fixture();
+    const created = await booking(ids, "terminal-retry@example.test");
+    await dispatchTracked(created.bookingId, {
+      now: () => new Date("2026-11-03T12:00:00Z"),
+      send: async ({ message, onInvoked }) => {
+        await onInvoked();
+        return message.to === "terminal-retry@example.test"
+          ? {
+              status: "failed",
+              reason: "permanent_rejection",
+              captureId: null,
+              invoked: true,
+            }
+          : {
+              status: "unknown",
+              reason: "transport_interrupted",
+              captureId: null,
+              invoked: true,
+            };
+      },
+    });
+    const result = await database.pool.query(
+      `SELECT w.status,w.next_attempt_at,a.reason,a.finished_at
+       FROM notification_work w JOIN notification_attempts a ON a.work_id=w.id
+       WHERE w.booking_id=$1 AND w.channel='email' ORDER BY w.kind`,
+      [created.bookingId],
+    );
+    expect(result.rows).toHaveLength(2);
+    expect(result.rows.every((row) => row.next_attempt_at === null)).toBe(true);
+    expect(result.rows.every((row) => row.finished_at instanceof Date)).toBe(
+      true,
+    );
+    expect(result.rows.map((row) => row.status).sort()).toEqual([
+      "failed",
+      "unknown",
+    ]);
+  });
+
+  it("persists Mailpit acceptance before capture verification and keeps it on verification failure", async () => {
+    const ids = await fixture();
+    const created = await booking(ids, "accepted-evidence@example.test");
+    await dispatchTracked(created.bookingId, {
+      now: () => new Date("2026-11-03T12:00:00Z"),
+      send: async ({ onInvoked, onAccepted }) => {
+        await onInvoked();
+        await onAccepted?.("accepted-capture-id");
+        return {
+          status: "accepted",
+          reason: "capture_verification_unavailable",
+          captureId: "accepted-capture-id",
+          invoked: true,
+        };
+      },
+    });
+    const result = await database.pool.query(
+      `SELECT w.status,w.next_attempt_at,a.outcome,a.capture_id,a.reason,a.finished_at
+       FROM notification_work w JOIN notification_attempts a ON a.work_id=w.id
+       WHERE w.booking_id=$1 AND w.kind='customer_confirmation' AND w.channel='email'`,
+      [created.bookingId],
+    );
+    expect(result.rows[0]).toMatchObject({
+      status: "accepted",
+      next_attempt_at: null,
+      outcome: "accepted",
+      capture_id: "accepted-capture-id",
+      reason: "capture_verification_unavailable",
+      finished_at: expect.any(Date),
+    });
+  });
+
+  it("fences invocation and acceptance behind the current work claim lock", async () => {
+    const ids = await fixture();
+    const created = await booking(ids, "fenced-callbacks@example.test");
+    const work = (
+      await database.pool.query(
+        `SELECT id FROM notification_work WHERE booking_id=$1 AND kind='customer_confirmation' AND channel='email'`,
+        [created.bookingId],
+      )
+    ).rows[0]!;
+    const workId = String(work.id);
+    let releaseSend!: () => void;
+    const sendGate = new Promise<void>((resolve) => {
+      releaseSend = resolve;
+    });
+    let announceCallbacks!: () => void;
+    const callbacksReady = new Promise<void>((resolve) => {
+      announceCallbacks = resolve;
+    });
+    let callbacks:
+      | {
+          onInvoked: () => Promise<void>;
+          onAccepted?: (captureId: string) => Promise<void>;
+        }
+      | undefined;
+    const sending = dispatchTracked(created.bookingId, {
+      send: async (input) => {
+        if (input.message.to === "fenced-callbacks@example.test") {
+          callbacks = input;
+          announceCallbacks();
+          await sendGate;
+          return {
+            status: "accepted",
+            reason: "capture_verification_unavailable",
+            captureId: "late-capture-id",
+            invoked: true,
+          };
+        }
+        await input.onInvoked();
+        return captured;
+      },
+    });
+    await callbacksReady;
+    if (!callbacks) throw new Error("Dispatch callbacks were not exposed.");
+
+    const recovery = await database.pool.connect();
+    let recoveryOpen = false;
+    try {
+      await recovery.query("BEGIN");
+      recoveryOpen = true;
+      await recovery.query(
+        "SELECT id FROM notification_work WHERE id=$1 FOR UPDATE",
+        [workId],
+      );
+
+      const invoked = callbacks.onInvoked();
+      const accepted = callbacks.onAccepted!("late-capture-id");
+      await vi.waitFor(async () => {
+        const waiting = await database.pool.query(
+          `SELECT count(*)::int AS count FROM pg_stat_activity
+           WHERE datname=current_database() AND wait_event_type='Lock'
+             AND query LIKE '%notification_work%'`,
+        );
+        expect(waiting.rows[0]?.count).toBe(2);
+      });
+
+      await recovery.query("SET LOCAL lock_timeout = '300ms'");
+      await recovery.query(
+        "SELECT id FROM notification_attempts WHERE work_id=$1 AND attempt_number=1 FOR UPDATE",
+        [workId],
+      );
+      await recovery.query(
+        `UPDATE notification_attempts
+         SET outcome='unknown',reason='dispatch_interrupted',finished_at=$2
+         WHERE work_id=$1 AND attempt_number=1`,
+        [workId, new Date("2026-11-03T12:00:31Z")],
+      );
+      await recovery.query(
+        `UPDATE notification_work SET status='unknown',reason='dispatch_interrupted',updated_at=$2
+         WHERE id=$1 AND status='sending'`,
+        [workId, new Date("2026-11-03T12:00:31Z")],
+      );
+      await recovery.query("COMMIT");
+      recoveryOpen = false;
+      await Promise.all([invoked, accepted]);
+    } finally {
+      if (recoveryOpen) await recovery.query("ROLLBACK");
+      recovery.release();
+      releaseSend();
+    }
+    await sending;
+
+    const state = await database.pool.query(
+      `SELECT w.status,w.reason,a.outcome,a.reason AS attempt_reason,a.capture_id,a.invoked_at
+       FROM notification_work w JOIN notification_attempts a ON a.work_id=w.id
+       WHERE w.id=$1 AND a.attempt_number=1`,
+      [workId],
+    );
+    expect(state.rows[0]).toMatchObject({
+      status: "unknown",
+      reason: "dispatch_interrupted",
+      outcome: "unknown",
+      attempt_reason: "dispatch_interrupted",
+      capture_id: null,
+    });
+    expect(state.rows[0]?.invoked_at).toBeNull();
+  });
+
+  it("allows acceptance to commit before a work-then-attempt recovery transaction", async () => {
+    const ids = await fixture();
+    const created = await booking(ids, "acceptance-first@example.test");
+    const work = (
+      await database.pool.query(
+        `SELECT id FROM notification_work WHERE booking_id=$1 AND kind='customer_confirmation' AND channel='email'`,
+        [created.bookingId],
+      )
+    ).rows[0]!;
+    const workId = String(work.id);
+    let announceAccepted!: () => void;
+    const acceptedReady = new Promise<void>((resolve) => {
+      announceAccepted = resolve;
+    });
+    let releaseSend!: () => void;
+    const sendGate = new Promise<void>((resolve) => {
+      releaseSend = resolve;
+    });
+    const sending = dispatchTracked(created.bookingId, {
+      send: async (input) => {
+        if (input.message.to === "acceptance-first@example.test") {
+          await input.onInvoked();
+          await input.onAccepted?.("accepted-before-recovery");
+          announceAccepted();
+          await sendGate;
+          return {
+            status: "accepted",
+            reason: "capture_verification_unavailable",
+            captureId: "accepted-before-recovery",
+            invoked: true,
+          };
+        }
+        await input.onInvoked();
+        return captured;
+      },
+    });
+    try {
+      await acceptedReady;
+      const accepted = await database.pool.query(
+        `SELECT w.status,a.outcome,a.capture_id
+         FROM notification_work w JOIN notification_attempts a ON a.work_id=w.id
+         WHERE w.id=$1 AND a.attempt_number=1`,
+        [workId],
+      );
+      expect(accepted.rows[0]).toMatchObject({
+        status: "accepted",
+        outcome: "accepted",
+        capture_id: "accepted-before-recovery",
+      });
+
+      const recovery = await database.pool.connect();
+      try {
+        await recovery.query("BEGIN");
+        await recovery.query(
+          "SELECT id FROM notification_work WHERE id=$1 FOR UPDATE",
+          [workId],
+        );
+        await recovery.query(
+          "SELECT id FROM notification_attempts WHERE work_id=$1 AND attempt_number=1 FOR UPDATE",
+          [workId],
+        );
+        await recovery.query(
+          `UPDATE notification_attempts SET outcome='unknown',reason='dispatch_interrupted'
+           WHERE work_id=$1 AND attempt_number=1`,
+          [workId],
+        );
+        await recovery.query(
+          `UPDATE notification_work SET status='unknown',reason='dispatch_interrupted'
+           WHERE id=$1`,
+          [workId],
+        );
+        await recovery.query("COMMIT");
+      } catch (error) {
+        await recovery.query("ROLLBACK");
+        throw error;
+      } finally {
+        recovery.release();
+      }
+    } finally {
+      releaseSend();
+    }
+    await sending;
+    const final = await database.pool.query(
+      `SELECT w.status,a.outcome,a.capture_id
+       FROM notification_work w JOIN notification_attempts a ON a.work_id=w.id
+       WHERE w.id=$1 AND a.attempt_number=1`,
+      [workId],
+    );
+    expect(final.rows[0]).toMatchObject({
+      status: "unknown",
+      outcome: "unknown",
+      capture_id: "accepted-before-recovery",
+    });
+  });
+
+  it("returns one Activity work row with ordered attempts and the latest compatibility attempt", async () => {
+    const ids = await fixture();
+    const created = await booking(ids, "attempt-history@example.test");
+    const day = "2026-11-03";
+    await dispatchTracked(created.bookingId, {
+      now: () => new Date(`${day}T12:00:00Z`),
+      send: async ({ onInvoked }) => {
+        await onInvoked();
+        return captured;
+      },
+    });
+    const work = await database.pool.query(
+      `SELECT id FROM notification_work WHERE booking_id=$1 AND kind='customer_confirmation' AND channel='email'`,
+      [created.bookingId],
+    );
+    await database.pool.query(
+      `INSERT INTO notification_attempts (id,work_id,budget_day,attempt_number,reserved_at,outcome,reason,finished_at)
+       VALUES ($1,$2,$3,2,$4,'failed','transient_rejection',$4)`,
+      [randomUUID(), work.rows[0]!.id, day, new Date(`${day}T12:10:00Z`)],
+    );
+    const activity = await getActivity({ userId: ids.owner.id });
+    expect(activity.success).toBe(true);
+    if (!activity.success) return;
+    const customerRows = activity.data.rows.filter(
+      (row) =>
+        row.bookingId === created.bookingId &&
+        row.kind === "customer_confirmation",
+    );
+    expect(customerRows).toHaveLength(1);
+    expect(
+      customerRows[0]?.attempts.map((attempt) => attempt.attemptNumber),
+    ).toEqual([1, 2]);
+    expect(customerRows[0]?.attempt).toMatchObject({
+      attemptNumber: 2,
+      outcome: "failed",
+      reason: "transient_rejection",
+    });
+  });
+
+  it("projects only the latest expired sending attempt as unknown and preserves prior failure evidence", async () => {
+    const ids = await fixture();
+    const created = await booking(ids, "expired-history@example.test");
+    const work = (
+      await database.pool.query(
+        `SELECT id FROM notification_work WHERE booking_id=$1 AND kind='customer_confirmation' AND channel='email'`,
+        [created.bookingId],
+      )
+    ).rows[0]!;
+    const workId = String(work.id);
+    const budgetDay = "2026-11-03";
+    await setBudget(budgetDay, 2);
+    await database.pool.query(
+      `INSERT INTO notification_attempts
+         (id,work_id,budget_day,attempt_number,reserved_at,invoked_at,outcome,reason,finished_at)
+       VALUES ($1,$2,$3,1,$4,$4,'failed','transient_rejection',$5),
+              ($6,$2,$3,2,$7,$7,NULL,NULL,NULL)`,
+      [
+        randomUUID(),
+        workId,
+        budgetDay,
+        new Date("2026-11-03T08:00:00Z"),
+        new Date("2026-11-03T08:00:02Z"),
+        randomUUID(),
+        new Date("2026-11-03T08:10:00Z"),
+      ],
+    );
+    await database.pool.query(
+      `UPDATE notification_work
+       SET status='sending',reason=NULL,claim_id=$2,claimed_at=$3
+       WHERE id=$1`,
+      [workId, randomUUID(), new Date("2026-11-03T08:10:00Z")],
+    );
+
+    const activity = await getActivity(
+      ids.context,
+      new Date("2026-11-03T08:10:31Z"),
+    );
+    expect(activity.success).toBe(true);
+    if (!activity.success) return;
+    const customerRows = activity.data.rows.filter((row) => row.id === workId);
+    expect(customerRows).toHaveLength(1);
+    expect(customerRows[0]).toMatchObject({
+      status: "unknown",
+      reason: "dispatch_interrupted",
+      attempts: [
+        {
+          attemptNumber: 1,
+          outcome: "failed",
+          reason: "transient_rejection",
+          finishedAt: "2026-11-03T08:00:02.000Z",
+        },
+        {
+          attemptNumber: 2,
+          outcome: "unknown",
+          reason: null,
+          finishedAt: null,
+        },
+      ],
+      attempt: { attemptNumber: 2, outcome: "unknown" },
+    });
+    expect(
+      await database.pool.query(
+        "SELECT count(*)::int AS count FROM notification_work WHERE id=$1",
+        [workId],
+      ),
+    ).toMatchObject({ rows: [{ count: 1 }] });
   });
 
   it("sends valid work after unpublication and suppresses stale content, cancellation, and revoked capability", async () => {

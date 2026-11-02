@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { sendMailpitMessage } from "../mailpit";
+import { sendMailpitMessage, verifyMailpitCapture } from "../mailpit";
 import type { OutboundMessage } from "../messages";
 
 const message: OutboundMessage = {
@@ -40,12 +40,14 @@ describe("Mailpit transport", () => {
     const fetchMock = queuedFetch(capturedResponses());
     vi.stubGlobal("fetch", fetchMock);
     const onInvoked = vi.fn(async () => {});
+    const onAccepted = vi.fn(async () => {});
 
     const result = await sendMailpitMessage({
       origin: "http://127.0.0.1:8025",
       message,
       attemptId: "attempt-1",
       onInvoked,
+      onAccepted,
     });
 
     expect(result).toEqual({
@@ -55,6 +57,11 @@ describe("Mailpit transport", () => {
       invoked: true,
     });
     expect(onInvoked).toHaveBeenCalledOnce();
+    expect(onAccepted).toHaveBeenCalledOnce();
+    expect(onAccepted).toHaveBeenCalledWith("capture-1");
+    expect(onAccepted.mock.invocationCallOrder[0]).toBeLessThan(
+      fetchMock.mock.invocationCallOrder[1]!,
+    );
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(timeout.mock.calls).toEqual([[3000], [3000], [3000]]);
     const [postUrl, postInit] = fetchMock.mock.calls[0]!;
@@ -71,6 +78,60 @@ describe("Mailpit transport", () => {
       Headers: { "X-TrimTime-Attempt-ID": "attempt-1" },
     });
   });
+
+  it("reconciles a known capture with read-only recipient and attempt correlation checks", async () => {
+    const fetchMock = queuedFetch([
+      response({ To: [{ Address: message.to }] }),
+      response({ "X-TrimTime-Attempt-ID": ["attempt-7"] }),
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const reason = await verifyMailpitCapture({
+      origin: "http://127.0.0.1:8025",
+      captureId: "known-capture",
+      recipient: message.to,
+      attemptId: "attempt-7",
+    });
+
+    expect(reason).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(
+      fetchMock.mock.calls.map(([url, init]) => [url, init?.method]),
+    ).toEqual([
+      ["http://127.0.0.1:8025/api/v1/message/known-capture", undefined],
+      ["http://127.0.0.1:8025/api/v1/message/known-capture/headers", undefined],
+    ]);
+  });
+
+  it.each([
+    [
+      { To: [{ Address: "other@example.test" }] },
+      { "X-TrimTime-Attempt-ID": ["attempt-7"] },
+      "capture_recipient_mismatch",
+    ],
+    [
+      { To: [{ Address: message.to }] },
+      { "X-TrimTime-Attempt-ID": ["another-attempt"] },
+      "capture_attempt_mismatch",
+    ],
+  ] as const)(
+    "keeps a known capture unpromoted when read evidence mismatches",
+    async (summary, headers, expected) => {
+      vi.stubGlobal(
+        "fetch",
+        queuedFetch([response(summary), response(headers)]),
+      );
+
+      const reason = await verifyMailpitCapture({
+        origin: "http://127.0.0.1:8025",
+        captureId: "known-capture",
+        recipient: message.to,
+        attemptId: "attempt-7",
+      });
+
+      expect(reason).toBe(expected);
+    },
+  );
 
   it.each([
     [429, "transient_rejection"],
@@ -108,11 +169,13 @@ describe("Mailpit transport", () => {
       }),
     );
 
+    const onAccepted = vi.fn(async () => {});
     const result = await sendMailpitMessage({
       origin: "http://127.0.0.1:8025",
       message,
       attemptId: "attempt-1",
       onInvoked: async () => {},
+      onAccepted,
     });
 
     expect(result).toEqual({
@@ -121,6 +184,7 @@ describe("Mailpit transport", () => {
       captureId: "capture-1",
       invoked: true,
     });
+    expect(onAccepted).toHaveBeenCalledWith("capture-1");
   });
 
   it.each([

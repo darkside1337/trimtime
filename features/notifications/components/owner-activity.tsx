@@ -12,7 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { ShopView } from "@/features/shops/queries";
 import type { OwnerCalendarAppointment } from "@/features/bookings/types";
@@ -66,6 +66,8 @@ const c = {
     "rounded-[var(--radius)] border border-border p-7 text-center text-[var(--muted-foreground)]",
   details:
     "m-0 grid grid-cols-2 gap-2.5 max-[520px]:grid-cols-1 [&>div]:min-w-0 [&>div]:rounded-[var(--radius-control)] [&>div]:bg-[var(--surface)] [&>div]:px-3 [&>div]:py-2.5 [&_dt]:text-[11px] [&_dt]:text-[var(--muted-foreground)] [&_dd]:mt-1 [&_dd]:text-[13px] [&_dd]:font-semibold [&_dd]:[overflow-wrap:anywhere]",
+  attemptHistory:
+    "grid max-h-52 min-w-0 gap-2 overflow-y-auto rounded-[var(--radius-control)] border border-border bg-[var(--surface)] p-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--foreground)] [&>h3]:text-xs [&>h3]:font-semibold [&>ol]:grid [&>ol]:gap-2 [&>ol>li]:grid [&>ol>li]:min-w-0 [&>ol>li]:gap-1 [&>ol>li]:border-t [&>ol>li]:border-border [&>ol>li]:pt-2 [&_strong]:text-xs [&_strong]:[overflow-wrap:anywhere] [&_small]:text-[11px] [&_small]:leading-relaxed [&_small]:[overflow-wrap:anywhere]",
   payload:
     "col-span-full [&_code]:font-mono [&_code]:text-[11px] [&_code]:font-normal [&_code]:[overflow-wrap:anywhere] max-[520px]:[grid-column:auto]",
 };
@@ -95,6 +97,11 @@ function title(row: Row) {
 
 function statusLabel(row: Row) {
   if (row.status === "unknown") return "Unknown · invocation/result uncertain";
+  if (row.status === "failed" && row.reason === "permanent_rejection")
+    return "Permanent failure";
+  if (row.status === "failed" && row.nextAttemptAt) return "Retry scheduled";
+  if (row.status === "failed" && (row.attempt?.attemptNumber ?? 0) >= 3)
+    return "Attempts exhausted";
   if (row.attempt?.reservedAt && !row.attempt.invokedAt)
     return `${row.status.replaceAll("_", " ")} · invocation unconfirmed`;
   if (row.status === "accepted") return "Accepted by local capture service";
@@ -201,7 +208,15 @@ export function OwnerActivity({
           <article className={c.statCard}>
             <span>Confirmed transport invocations</span>
             <strong>
-              {events.filter((event) => event.attempt?.invokedAt).length}
+              {events.reduce(
+                (total, event) =>
+                  total +
+                  (event.attempts.length
+                    ? event.attempts.filter((attempt) => attempt.invokedAt)
+                        .length
+                    : Number(Boolean(event.attempt?.invokedAt))),
+                0,
+              )}
             </strong>
             <p>For this shop’s records only.</p>
           </article>
@@ -306,14 +321,12 @@ export function OwnerActivity({
                       {bookingStatus(appointment.status)}
                     </span>
                     <div className={c.eventActions}>
-                      <Button
-                        variant="outline"
-                        render={
-                          <Link href={`/appointments/${appointment.id}`} />
-                        }
+                      <Link
+                        className={buttonVariants({ variant: "outline" })}
+                        href={`/appointments/${appointment.id}`}
                       >
                         Appointment details
-                      </Button>
+                      </Link>
                     </div>
                   </article>
                 ))
@@ -469,80 +482,120 @@ export function OwnerActivity({
             </DialogDescription>
           </DialogHeader>
           {row && (
-            <dl className={c.details}>
-              <div>
-                <dt>Message</dt>
-                <dd>{title(row)}</dd>
-              </div>
-              <div>
-                <dt>Creation</dt>
-                <dd>
-                  {row.creationSource === "owner"
-                    ? "Manual appointment"
-                    : "Public booking"}
-                </dd>
-              </div>
-              <div>
-                <dt>Booking ID</dt>
-                <dd>{row.bookingId}</dd>
-              </div>
-              <div>
-                <dt>Work ID</dt>
-                <dd>{row.id}</dd>
-              </div>
-              <div>
-                <dt>Status</dt>
-                <dd>{statusLabel(row)}</dd>
-              </div>
-              <div>
-                <dt>Authorized recipient</dt>
-                <dd>{row.recipient ?? "None"}</dd>
-              </div>
-              <div>
-                <dt>Reason</dt>
-                <dd>{row.reason ?? "None recorded"}</dd>
-              </div>
-              <div>
-                <dt>Created</dt>
-                <dd>{date(row.createdAt, shop.timeZone)}</dd>
-              </div>
-              <div>
-                <dt>Updated</dt>
-                <dd>{date(row.updatedAt, shop.timeZone)}</dd>
-              </div>
-              <div>
-                <dt>Budget reservation</dt>
-                <dd>
-                  {row.attempt
-                    ? `${row.attempt.budgetDay} UTC · ${date(row.attempt.reservedAt, "UTC")}`
-                    : "None"}
-                </dd>
-              </div>
-              <div>
-                <dt>Transport invocation</dt>
-                <dd>
-                  {row.attempt?.invokedAt
-                    ? `${date(row.attempt.invokedAt, "UTC")} UTC`
-                    : "Not confirmed"}
-                </dd>
-              </div>
-              <div>
-                <dt>Attempt outcome</dt>
-                <dd>{row.attempt?.outcome ?? "None"}</dd>
-              </div>
-              <div>
-                <dt>Capture ID</dt>
-                <dd>{row.attempt?.captureId ?? "None"}</dd>
-              </div>
-              <div className={c.payload}>
-                <dt>Inbox delivery</dt>
-                <dd>
-                  {row.status === "captured"
-                    ? "Captured locally; inbox delivery is not enabled."
-                    : "Not verified or claimed."}
-                </dd>
-              </div>
-            </dl>
+            <>
+              <dl className={c.details}>
+                <div>
+                  <dt>Message</dt>
+                  <dd>{title(row)}</dd>
+                </div>
+                <div>
+                  <dt>Creation</dt>
+                  <dd>
+                    {row.creationSource === "owner"
+                      ? "Manual appointment"
+                      : "Public booking"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Booking ID</dt>
+                  <dd>{row.bookingId}</dd>
+                </div>
+                <div>
+                  <dt>Work ID</dt>
+                  <dd>{row.id}</dd>
+                </div>
+                <div>
+                  <dt>Status</dt>
+                  <dd>{statusLabel(row)}</dd>
+                </div>
+                <div>
+                  <dt>Authorized recipient</dt>
+                  <dd>{row.recipient ?? "None"}</dd>
+                </div>
+                <div>
+                  <dt>Reason</dt>
+                  <dd>{row.reason ?? "None recorded"}</dd>
+                </div>
+                <div>
+                  <dt>Created</dt>
+                  <dd>{date(row.createdAt, shop.timeZone)}</dd>
+                </div>
+                <div>
+                  <dt>Updated</dt>
+                  <dd>{date(row.updatedAt, shop.timeZone)}</dd>
+                </div>
+                <div>
+                  <dt>Budget reservation</dt>
+                  <dd>
+                    {row.attempt
+                      ? `${row.attempt.budgetDay} UTC · ${date(row.attempt.reservedAt, "UTC")}`
+                      : "None"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Transport invocation</dt>
+                  <dd>
+                    {row.attempt?.invokedAt
+                      ? `${date(row.attempt.invokedAt, "UTC")} UTC`
+                      : "Not confirmed"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Attempt outcome</dt>
+                  <dd>{row.attempt?.outcome ?? "None"}</dd>
+                </div>
+                <div>
+                  <dt>Capture ID</dt>
+                  <dd>{row.attempt?.captureId ?? "None"}</dd>
+                </div>
+                <div className={c.payload}>
+                  <dt>Inbox delivery</dt>
+                  <dd>
+                    {row.status === "captured"
+                      ? "Captured locally; inbox delivery is not enabled."
+                      : "Not verified or claimed."}
+                  </dd>
+                </div>
+              </dl>
+              <section
+                className={c.attemptHistory}
+                aria-label="Attempt history"
+                data-attempt-history
+                tabIndex={0}
+              >
+                <h3>Attempt history</h3>
+                {row.attempts.length ? (
+                  <ol>
+                    {row.attempts.map((attempt) => {
+                      const label = `Attempt ${attempt.attemptNumber} · ${attempt.outcome ?? (attempt.invokedAt ? "pending" : "invocation unconfirmed")}`;
+                      return (
+                        <li
+                          key={attempt.id}
+                          data-attempt-label={label}
+                          className="min-w-0"
+                        >
+                          <strong>{label}</strong>
+                          <small>
+                            Reserved {date(attempt.reservedAt, "UTC")} UTC ·{" "}
+                            {attempt.invokedAt
+                              ? `invoked ${date(attempt.invokedAt, "UTC")} UTC`
+                              : "invocation not confirmed"}
+                          </small>
+                          <small>
+                            Reason: {attempt.reason ?? "None recorded"}
+                          </small>
+                          <small>
+                            Capture ID: {attempt.captureId ?? "None"}
+                          </small>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                ) : (
+                  <p>No attempts recorded.</p>
+                )}
+              </section>
+            </>
           )}
           <DialogFooter>
             <DialogClose render={<Button variant="outline" />}>

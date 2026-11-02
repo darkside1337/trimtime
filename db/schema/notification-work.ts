@@ -37,6 +37,10 @@ export const notificationWork = pgTable(
       .defaultNow(),
     claimedAt: timestamp("claimed_at", { withTimezone: true, mode: "date" }),
     claimId: uuid("claim_id"),
+    nextAttemptAt: timestamp("next_attempt_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
   },
   (table) => [
     unique("notification_work_booking_kind_channel_key").on(
@@ -70,6 +74,9 @@ export const notificationWork = pgTable(
       table.bookingId,
       table.createdAt,
     ),
+    index("notification_work_next_attempt_at_idx")
+      .on(table.nextAttemptAt, table.id)
+      .where(sql`${table.nextAttemptAt} IS NOT NULL`),
     uniqueIndex("notification_work_claim_id_key")
       .on(table.claimId)
       .where(sql`${table.claimId} IS NOT NULL`),
