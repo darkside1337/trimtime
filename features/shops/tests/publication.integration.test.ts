@@ -14,6 +14,7 @@ describe("shop publication", () => {
   let getOwnShop: typeof import("../queries").getOwnShop;
   let getOwnPublicationReadiness: typeof import("../queries").getOwnPublicationReadiness;
   let saveBarber: typeof import("@/features/barbers/mutations").saveBarber;
+  let archiveBarber: typeof import("@/features/barbers/mutations").archiveBarber;
   let saveService: typeof import("@/features/catalog/mutations").saveService;
   let saveShopSchedule: typeof import("@/features/availability/mutations").saveShopSchedule;
   let saveBarberSchedule: typeof import("@/features/availability/mutations").saveBarberSchedule;
@@ -31,7 +32,8 @@ describe("shop publication", () => {
     ({ readOwnerContext } = await import("@/server/owner-context"));
     ({ createShop, setOwnShopPublication } = await import("../mutations"));
     ({ getOwnShop, getOwnPublicationReadiness } = await import("../queries"));
-    ({ saveBarber } = await import("@/features/barbers/mutations"));
+    ({ saveBarber, archiveBarber } =
+      await import("@/features/barbers/mutations"));
     ({ saveService } = await import("@/features/catalog/mutations"));
     ({ saveShopSchedule, saveBarberSchedule } =
       await import("@/features/availability/mutations"));
@@ -106,18 +108,30 @@ describe("shop publication", () => {
     const context = await owner();
     expect(await getOwnPublicationReadiness(context)).toEqual({
       ready: false,
-      missing: [
-        "an offered service",
-        "an active barber assigned to a service",
-        "shared recurring hours with a complete 15-minute-grid start",
-      ],
+      missing: ["offered-service", "active-barber-assignment", "shared-hours"],
+    });
+    expect(
+      await setOwnShopPublication(context, {
+        published: true,
+        expectedPublished: true,
+      }),
+    ).toMatchObject({
+      success: false,
+      error: { code: "STALE_PUBLICATION" },
     });
     expect(
       await setOwnShopPublication(context, {
         published: true,
         expectedPublished: false,
       }),
-    ).toMatchObject({ success: false, error: { code: "NOT_READY" } });
+    ).toMatchObject({
+      success: false,
+      error: {
+        code: "NOT_READY",
+        message:
+          "Add an offered service, an active barber assigned to a service, shared recurring hours with a complete 15-minute-grid start before publishing.",
+      },
+    });
     expect(await getOwnShop(context)).toMatchObject({ published: false });
 
     const week: WeeklySchedule = Array.from({ length: 7 }, (_, day) => ({
@@ -167,6 +181,47 @@ describe("shop publication", () => {
       }),
     ).toMatchObject({ success: true, data: { published: false } });
     expect(await getOwnShop(context)).toMatchObject({ published: false });
+  });
+
+  it("requires an active barber rather than an archived assignment", async () => {
+    const context = await owner();
+    const week: WeeklySchedule = Array.from({ length: 7 }, (_, day) => ({
+      working: day === 0 ? [{ start: 540, end: 600 }] : [],
+      breaks: [],
+    }));
+    expect(
+      (await saveShopSchedule(context, { week, revision: 0 })).success,
+    ).toBe(true);
+    const barber = await saveBarber(context, { name: "Sam", serviceIds: [] });
+    expect(barber.success).toBe(true);
+    if (!barber.success) return;
+    const service = await saveService(context, {
+      name: "Cut",
+      priceUsd: "30",
+      durationMinutes: "35",
+      offered: true,
+      barberIds: [barber.data.id],
+    });
+    expect(service.success).toBe(true);
+    expect((await archiveBarber(context, barber.data.id)).success).toBe(true);
+
+    expect(await getOwnPublicationReadiness(context)).toEqual({
+      ready: false,
+      missing: ["active-barber-assignment", "shared-hours"],
+    });
+    expect(
+      await setOwnShopPublication(context, {
+        published: true,
+        expectedPublished: false,
+      }),
+    ).toMatchObject({
+      success: false,
+      error: {
+        code: "NOT_READY",
+        message:
+          "Add an active barber assigned to a service, shared recurring hours with a complete 15-minute-grid start before publishing.",
+      },
+    });
   });
 
   it("denies unsigned callers and rejects authority fields", async () => {
@@ -224,7 +279,7 @@ describe("shop publication", () => {
     ).toBe(true);
     expect(await getOwnPublicationReadiness(context)).toMatchObject({
       ready: false,
-      missing: ["shared recurring hours with a complete 15-minute-grid start"],
+      missing: ["shared-hours"],
     });
     expect(
       await setOwnShopPublication(context, {

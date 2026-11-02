@@ -8,7 +8,13 @@ import { barberServices, barbers, services } from "@/db/schema/catalog";
 import { barberSchedules, shopSchedules } from "@/db/schema/availability";
 import type { ActionResult } from "@/lib/action-result";
 import type { OwnerContext } from "@/server/owner-context";
-import { hasUsableRecurringHours } from "@/features/availability/publication-readiness";
+import {
+  evaluatePublicationReadiness,
+  publicationNotReadyMessage,
+  type PublicationBarberFacts,
+  type PublicationReadinessFacts,
+  type PublicationServiceFacts,
+} from "./publication-readiness";
 import type { ShopView } from "./queries";
 import {
   createShopSchema,
@@ -262,39 +268,24 @@ export async function setOwnShopPublication(
         };
 
       if (parsed.data.published) {
-        const missing: string[] = [];
-        if (
-          ![shop.name, shop.public_contact, shop.address].every((value) =>
-            value.trim(),
-          )
-        )
-          missing.push("shop details");
-        const offered = await tx
-          .select({ id: services.id })
-          .from(services)
-          .where(
-            and(
-              eq(services.shopId, shop.id),
-              eq(services.offered, true),
-              eq(services.archived, false),
-            ),
-          );
-        if (!offered.length) missing.push("an offered service");
-        const eligible = await tx
+        const rows = await tx
           .select({
+            serviceId: services.id,
             durationMinutes: services.durationMinutes,
+            barberId: barbers.id,
+            barberArchived: barbers.archived,
             barberWeek: barberSchedules.week,
             shopWeek: shopSchedules.week,
           })
           .from(services)
-          .innerJoin(
+          .leftJoin(
             barberServices,
             and(
               eq(barberServices.shopId, services.shopId),
               eq(barberServices.serviceId, services.id),
             ),
           )
-          .innerJoin(
+          .leftJoin(
             barbers,
             and(
               eq(barbers.shopId, barberServices.shopId),
@@ -314,32 +305,46 @@ export async function setOwnShopPublication(
               eq(services.shopId, shop.id),
               eq(services.offered, true),
               eq(services.archived, false),
-              eq(barbers.archived, false),
             ),
           );
-        if (!eligible.length)
-          missing.push("an active barber assigned to a service");
-        if (
-          !eligible.some(
-            (row) =>
-              row.shopWeek &&
-              row.barberWeek &&
-              hasUsableRecurringHours({
-                durationMinutes: row.durationMinutes,
-                shopWeek: row.shopWeek,
-                barberWeek: row.barberWeek,
-              }),
-          )
-        )
-          missing.push(
-            "shared recurring hours with a complete 15-minute-grid start",
-          );
-        if (missing.length)
+
+        const servicesById = new Map<string, PublicationServiceFacts>();
+        const barbersById = new Map<string, PublicationBarberFacts>();
+        let shopWeek: PublicationReadinessFacts["shopWeek"] = null;
+        for (const row of rows) {
+          if (shopWeek === null) shopWeek = row.shopWeek ?? null;
+          const service = servicesById.get(row.serviceId) ?? {
+            durationMinutes: row.durationMinutes,
+            barberIds: [],
+          };
+          if (row.barberId) {
+            service.barberIds = [...service.barberIds, row.barberId];
+            if (!barbersById.has(row.barberId))
+              barbersById.set(row.barberId, {
+                id: row.barberId,
+                archived: row.barberArchived ?? false,
+                week: row.barberWeek ?? null,
+              });
+          }
+          servicesById.set(row.serviceId, service);
+        }
+
+        const readiness = evaluatePublicationReadiness({
+          shop: {
+            name: shop.name,
+            publicContact: shop.public_contact,
+            address: shop.address,
+          },
+          shopWeek,
+          services: [...servicesById.values()],
+          barbers: [...barbersById.values()],
+        });
+        if (!readiness.ready)
           return {
             success: false as const,
             error: {
               code: "NOT_READY",
-              message: `Add ${missing.join(", ")} before publishing.`,
+              message: publicationNotReadyMessage(readiness.missing),
             },
           };
       }

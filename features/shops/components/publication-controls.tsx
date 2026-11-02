@@ -14,7 +14,11 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { setShopPublicationAction } from "../actions";
-import type { PublicationReadiness } from "../queries";
+import {
+  PUBLICATION_REQUIREMENTS,
+  publicationRequirementLabels,
+  type PublicationReadiness,
+} from "../publication-readiness";
 
 export function PublicationControls({
   published,
@@ -100,29 +104,8 @@ export function PublicationControls({
           Before you publish
         </p>
         <ul className="grid gap-3 text-xs">
-          {[
-            [
-              "shop details",
-              "Shop details",
-              "Name, address, public contact and time zone.",
-            ],
-            [
-              "an offered service",
-              "Services",
-              "At least one active service offered publicly.",
-            ],
-            [
-              "an active barber assigned to a service",
-              "Staff assigned",
-              "An active barber assigned to an offered service.",
-            ],
-            [
-              "shared recurring hours with a complete 15-minute-grid start",
-              "Usable hours",
-              "A complete appointment fits the shared recurring hours.",
-            ],
-          ].map(([key, label, description]) => {
-            const missing = readiness.missing.includes(key!);
+          {PUBLICATION_REQUIREMENTS.map(({ key, title, description }) => {
+            const missing = readiness.missing.includes(key);
             const Icon = missing ? Circle : CheckCircle2;
             return (
               <li key={key} className="flex items-start gap-2">
@@ -135,7 +118,7 @@ export function PublicationControls({
                   aria-hidden="true"
                 />
                 <span>
-                  <strong>{label}: </strong>
+                  <strong>{title}: </strong>
                   {description}
                   <span className="sr-only">
                     {missing ? " Incomplete." : " Complete."}
@@ -154,7 +137,7 @@ export function PublicationControls({
         <div className="grid gap-2">
           <p className="text-sm">Complete these items before publishing:</p>
           <ul className="list-inside list-disc text-sm text-muted-foreground">
-            {readiness.missing.map((item) => (
+            {publicationRequirementLabels(readiness.missing).map((item) => (
               <li key={item}>{item}</li>
             ))}
           </ul>
