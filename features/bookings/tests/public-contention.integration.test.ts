@@ -208,4 +208,90 @@ describe("public booking and owner operation contention", () => {
       await Promise.allSettled([publicRequest, ownerRequest].filter(Boolean));
     }
   });
+
+  it("projects non-confirmed creation receipts and managed views consistently", async () => {
+    const helpers = (await testAuth.$context).test;
+    const owner = await helpers.saveUser(
+      helpers.createUser({
+        email: `receipt-${randomUUID()}@example.test`,
+        name: "Receipt Owner",
+      }),
+    );
+    ownerIds.push(owner.id);
+    const context = await readOwnerContext(
+      (await helpers.login({ userId: owner.id })).headers,
+    );
+    const shop = await createShop(
+      context,
+      shopInput({
+        subdomain: `receipt-${randomUUID().slice(0, 8)}`,
+        timeZone: "UTC",
+      }),
+    );
+    if (!shop.success) throw new Error("Shop fixture failed.");
+    const barber = await saveBarber(context, { name: "Sam", serviceIds: [] });
+    if (!barber.success) throw new Error("Barber fixture failed.");
+    const service = await saveService(context, {
+      name: "Cut",
+      priceUsd: "25",
+      durationMinutes: "30",
+      offered: true,
+      barberIds: [barber.data.id],
+    });
+    if (!service.success) throw new Error("Service fixture failed.");
+    const schedule = await saveShopSchedule(context, { week, revision: 0 });
+    if (!schedule.success) throw new Error("Schedule fixture failed.");
+    const publication = await setOwnShopPublication(context, {
+      published: true,
+      expectedPublished: false,
+    });
+    if (!publication.success) throw new Error("Publication fixture failed.");
+
+    const input = {
+      serviceId: service.data.id,
+      barberId: barber.data.id,
+      startAt: "2026-11-09T10:00:00.000Z",
+      reviewedOffer: {
+        name: "Cut",
+        priceUsd: "25.00",
+        durationMinutes: "30",
+      },
+      contact: {
+        name: "Ada Lovelace",
+        email: `customer-${randomUUID()}@example.test`,
+        whatsappOptIn: false,
+      },
+      recoveryKey: randomBytes(32).toString("base64url"),
+    };
+    const publicContext = { shopId: shop.data.id };
+    trackCreateEmailRateKey(rateKeys, publicContext, input);
+    const created = await createPublicBooking(publicContext, input);
+    if (!created.success)
+      throw new Error(`Booking fixture failed: ${created.error.message}`);
+    expect(created.data.booking.changeCutoffPassed).toBe(false);
+    const token = created.data.manageUrl.split("/").at(-1)!;
+    const { getManagedBooking } = await import("../queries");
+
+    for (const status of ["cancelled", "completed", "no_show"] as const) {
+      await database.pool.query("UPDATE bookings SET status=$2 WHERE id=$1", [
+        created.data.bookingId,
+        status,
+      ]);
+
+      const replay = await createPublicBooking(publicContext, input);
+      expect(replay).toMatchObject({
+        success: true,
+        data: {
+          bookingId: created.data.bookingId,
+          booking: { status, changeCutoffPassed: true },
+        },
+      });
+      await expect(
+        getManagedBooking(publicContext, token),
+      ).resolves.toMatchObject({
+        success: true,
+        data: { status, changeCutoffPassed: true },
+      });
+    }
+  });
 });

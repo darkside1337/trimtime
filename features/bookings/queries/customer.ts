@@ -6,6 +6,7 @@ import { shops } from "@/db/schema/shops";
 import { barbers, barberServices, services } from "@/db/schema/catalog";
 import { getRetainedBookingOfferings } from "../booking-offerings";
 import { queryValidatedSlots } from "@/features/availability/queries";
+import { toManagedBookingView } from "../managed-booking-view";
 import { latestEmailNotification } from "./latest-notification";
 import type { ActionResult } from "@/lib/action-result";
 import { hashSecret } from "../capabilities";
@@ -76,46 +77,25 @@ export async function getManagedBooking(
       return unavailable;
     return {
       success: true,
-      data: {
-        revision: row.revision,
-        status: row.status as BookingStatus,
-        startAt: row.startAt.toISOString(),
-        endAt: row.endAt.toISOString(),
-        service: {
-          name: row.serviceName,
-          priceUsd: row.servicePriceUsd,
-          durationMinutes: row.serviceDurationMinutes,
+      data: toManagedBookingView(
+        {
+          ...row,
+          status: row.status as BookingStatus,
+          notifications: {
+            email: customerEmailSummary(
+              {
+                status: row.emailStatus as
+                  ManagedBookingView["notifications"]["email"]["status"] | null,
+                reason: row.emailReason,
+                claimedAt: row.emailClaimedAt,
+                updatedAt: row.emailUpdatedAt,
+              },
+              now,
+            ),
+          },
         },
-        barber: { name: row.barberName },
-        customer: {
-          name: row.customerName,
-          email: row.customerEmail,
-          phone: row.customerPhone,
-          whatsappOptIn: row.whatsappOptIn,
-        },
-        shop: {
-          name: row.shopName,
-          publicContact: row.publicContact,
-          address: row.address,
-          timeZone: row.timeZone,
-        },
-        notifications: {
-          email: customerEmailSummary(
-            {
-              status: row.emailStatus as
-                ManagedBookingView["notifications"]["email"]["status"] | null,
-              reason: row.emailReason,
-              claimedAt: row.emailClaimedAt,
-              updatedAt: row.emailUpdatedAt,
-            },
-            now,
-          ),
-        },
-        past: row.endAt.getTime() <= now.getTime(),
-        changeCutoffPassed:
-          row.status !== "confirmed" ||
-          isCustomerChangeCutoffPassed(row.startAt, now),
-      },
+        now,
+      ),
     };
   } catch {
     return unavailable;

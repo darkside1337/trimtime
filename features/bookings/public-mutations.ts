@@ -17,9 +17,10 @@ import {
   persistBookingCreation,
   resolveCreationOffer,
 } from "./creation-primitives";
+import { toManagedBookingView } from "./managed-booking-view";
 import type {
   BookingFailureCode,
-  ManagedBookingView,
+  BookingStatus,
   PublicBookingContext,
   PublicBookingInput,
   PublicBookingReceipt,
@@ -71,61 +72,6 @@ export async function recordRateEvent(
   return Number(result.rows[0]?.count ?? 0) <= limit;
 }
 
-function savedView(
-  row: {
-    revision: number;
-    status: "confirmed" | "cancelled";
-    startAt: Date | string;
-    endAt: Date | string;
-    serviceName: string;
-    servicePriceUsd: string;
-    serviceDurationMinutes: number;
-    barberName: string;
-    customerName: string;
-    customerEmail: string | null;
-    customerPhone: string | null;
-    whatsappOptIn: boolean;
-    shopName: string;
-    publicContact: string;
-    address: string;
-    timeZone: string;
-    notifications: ManagedBookingView["notifications"];
-  },
-  now: Date,
-): ManagedBookingView {
-  const startAt = new Date(row.startAt);
-  const endAt = new Date(row.endAt);
-  return {
-    revision: row.revision,
-    status: row.status,
-    startAt: startAt.toISOString(),
-    endAt: endAt.toISOString(),
-    service: {
-      name: row.serviceName,
-      priceUsd: row.servicePriceUsd,
-      durationMinutes: row.serviceDurationMinutes,
-    },
-    barber: { name: row.barberName },
-    customer: {
-      name: row.customerName,
-      email: row.customerEmail,
-      phone: row.customerPhone,
-      whatsappOptIn: row.whatsappOptIn,
-    },
-    shop: {
-      name: row.shopName,
-      publicContact: row.publicContact,
-      address: row.address,
-      timeZone: row.timeZone,
-    },
-    notifications: row.notifications,
-    past: endAt.getTime() <= now.getTime(),
-    changeCutoffPassed:
-      row.status !== "confirmed" ||
-      startAt.getTime() - now.getTime() < 12 * 60 * 60_000,
-  };
-}
-
 async function receiptFor(
   tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
   bookingId: string,
@@ -137,14 +83,30 @@ async function receiptFor(
       FROM bookings b JOIN shops s ON s.id = b.shop_id LEFT JOIN notification_work w ON w.booking_id=b.id AND w.kind='customer_confirmation' AND w.channel='email' WHERE b.id = ${bookingId}`,
   );
   const row = result.rows[0] as
-    | (Parameters<typeof savedView>[0] & {
+    | {
         id: string;
+        revision: number;
+        status: BookingStatus;
+        startAt: Date | string;
+        endAt: Date | string;
+        serviceName: string;
+        servicePriceUsd: string;
+        serviceDurationMinutes: number;
+        barberName: string;
+        customerName: string;
+        customerEmail: string | null;
+        customerPhone: string | null;
+        whatsappOptIn: boolean;
+        shopName: string;
+        publicContact: string;
+        address: string;
+        timeZone: string;
         emailStatus:
           PublicBookingReceipt["notifications"]["email"]["status"] | null;
         emailReason: string | null;
         emailClaimedAt: Date | null;
         emailUpdatedAt: Date | null;
-      })
+      }
     | undefined;
   if (!row) return null;
   const email = customerEmailSummary(
@@ -159,7 +121,7 @@ async function receiptFor(
   return {
     bookingId: row.id,
     manageUrl,
-    booking: savedView({ ...row, notifications: { email } }, now),
+    booking: toManagedBookingView({ ...row, notifications: { email } }, now),
     notifications: {
       email,
       whatsapp: "unavailable",
