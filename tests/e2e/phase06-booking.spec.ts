@@ -387,3 +387,739 @@ test("allows three bookings for the same email and rejects the fourth", async ({
     ).rows[0].n,
   ).toBe(3);
 });
+
+test("recovers a committed booking with the identical payload after a lost response", async ({
+  page,
+  context,
+  owners,
+  database,
+}) => {
+  const owner = await owners(context, { shop: true });
+  const { serviceId, barberId } = await addReadyCatalog(database.pool, owner);
+  await page.goto(`${ownerOrigin}/settings`);
+  await page.getByRole("button", { name: "Publish shop" }).click();
+  await expect(
+    page.getByText("Published · Public preview available"),
+  ).toBeVisible();
+  await page.goto(`http://${owner.subdomain}.localhost:3100/`);
+
+  await chooseBookingOptions(page, {
+    serviceId,
+    barberId,
+    date: "2026-11-02",
+  });
+  const email = `phase06-lost-${randomUUID()}@example.test`;
+  await page.getByLabel("Name").fill("Ada Lovelace");
+  await page.getByLabel("Email").fill(email);
+
+  const actionBodies: string[] = [];
+  let lost = false;
+  await page.route("**/*", async (route) => {
+    const request = route.request();
+    if (request.method() !== "POST" || !request.headers()["next-action"])
+      return route.continue();
+    const body = request.postData();
+    if (!body || !body.includes('"recoveryKey"')) return route.continue();
+    actionBodies.push(body);
+    if (lost) return route.continue();
+    lost = true;
+    await route.fetch();
+    await route.abort();
+  });
+
+  await page.getByRole("button", { name: /Confirm booking/ }).click();
+  await expect(page.locator("form").getByRole("alert")).toContainText(
+    "couldn’t confirm whether this booking was saved",
+  );
+  await expect(
+    page.getByRole("heading", { name: "We couldn’t confirm your booking" }),
+  ).toBeVisible();
+  await expect(page.getByText(/Saved request: Cut/)).toBeVisible();
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS n FROM bookings WHERE shop_id = $1",
+        [owner.shopId],
+      )
+    ).rows[0].n,
+  ).toBe(1);
+
+  await page.getByRole("button", { name: "Check earlier request" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Your chair is reserved." }),
+  ).toBeVisible();
+  expect(actionBodies).toHaveLength(2);
+  expect(actionBodies[1]).toBe(actionBodies[0]);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS n FROM bookings WHERE shop_id = $1",
+        [owner.shopId],
+      )
+    ).rows[0].n,
+  ).toBe(1);
+  expect(
+    await page.evaluate(() =>
+      sessionStorage.getItem("trimtime:pending-booking-recovery"),
+    ),
+  ).toBeNull();
+});
+
+test("reload restores the original request for recovery instead of booking again", async ({
+  page,
+  context,
+  owners,
+  database,
+}) => {
+  const owner = await owners(context, { shop: true });
+  const { serviceId, barberId } = await addReadyCatalog(database.pool, owner);
+  await page.goto(`${ownerOrigin}/settings`);
+  await page.getByRole("button", { name: "Publish shop" }).click();
+  await expect(
+    page.getByText("Published · Public preview available"),
+  ).toBeVisible();
+  await page.goto(`http://${owner.subdomain}.localhost:3100/`);
+
+  await chooseBookingOptions(page, {
+    serviceId,
+    barberId,
+    date: "2026-11-02",
+  });
+  const email = `phase06-reload-${randomUUID()}@example.test`;
+  await page.getByLabel("Name").fill("Ada Lovelace");
+  await page.getByLabel("Email").fill(email);
+
+  let lost = false;
+  await page.route("**/*", async (route) => {
+    const request = route.request();
+    if (request.method() !== "POST" || !request.headers()["next-action"])
+      return route.continue();
+    const body = request.postData();
+    if (!body || !body.includes('"recoveryKey"')) return route.continue();
+    if (lost) return route.continue();
+    lost = true;
+    await route.fetch();
+    await route.abort();
+  });
+
+  await page.getByRole("button", { name: /Confirm booking/ }).click();
+  await expect(page.locator("form").getByRole("alert")).toContainText(
+    "couldn’t confirm whether this booking was saved",
+  );
+  await page.reload();
+
+  await expect(
+    page.getByRole("heading", { name: "Check your earlier booking request" }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Name")).toHaveValue("Ada Lovelace");
+  await expect(page.getByLabel("Email")).toHaveValue(email);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS n FROM bookings WHERE shop_id = $1",
+        [owner.shopId],
+      )
+    ).rows[0].n,
+  ).toBe(1);
+
+  await page.getByRole("button", { name: "Check earlier request" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Your chair is reserved." }),
+  ).toBeVisible();
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS n FROM bookings WHERE shop_id = $1",
+        [owner.shopId],
+      )
+    ).rows[0].n,
+  ).toBe(1);
+  expect(
+    await page.evaluate(() =>
+      sessionStorage.getItem("trimtime:pending-booking-recovery"),
+    ),
+  ).toBeNull();
+});
+
+test("requires an explicit choice before a separate booking after a lost response", async ({
+  page,
+  context,
+  owners,
+  database,
+}) => {
+  const owner = await owners(context, { shop: true });
+  const { serviceId, barberId } = await addReadyCatalog(database.pool, owner);
+  const week = Array.from({ length: 7 }, () => ({
+    working: [{ start: 540, end: 1020 }],
+    breaks: [],
+  }));
+  await database.pool.query(
+    "UPDATE shop_schedules SET week = $2::jsonb WHERE shop_id = $1",
+    [owner.shopId, JSON.stringify(week)],
+  );
+  await database.pool.query(
+    "UPDATE barber_schedules SET week = $2::jsonb WHERE shop_id = $1",
+    [owner.shopId, JSON.stringify(week)],
+  );
+  await page.goto(`${ownerOrigin}/settings`);
+  await page.getByRole("button", { name: "Publish shop" }).click();
+  await expect(
+    page.getByText("Published · Public preview available"),
+  ).toBeVisible();
+  await page.goto(`http://${owner.subdomain}.localhost:3100/`);
+
+  await chooseBookingOptions(page, {
+    serviceId,
+    barberId,
+    date: "2026-11-02",
+  });
+  const firstEmail = `phase06-separate-first-${randomUUID()}@example.test`;
+  const secondEmail = `phase06-separate-second-${randomUUID()}@example.test`;
+  await page.getByLabel("Name").fill("Ada Lovelace");
+  await page.getByLabel("Email").fill(firstEmail);
+
+  const actionBodies: string[] = [];
+  let lost = false;
+  await page.route("**/*", async (route) => {
+    const request = route.request();
+    if (request.method() !== "POST" || !request.headers()["next-action"])
+      return route.continue();
+    const body = request.postData();
+    if (!body || !body.includes('"recoveryKey"')) return route.continue();
+    actionBodies.push(body);
+    if (lost) return route.continue();
+    lost = true;
+    await route.fetch();
+    await route.abort();
+  });
+
+  await page.getByRole("button", { name: /Confirm booking/ }).click();
+  await expect(page.locator("form").getByRole("alert")).toContainText(
+    "couldn’t confirm whether this booking was saved",
+  );
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS n FROM bookings WHERE shop_id = $1",
+        [owner.shopId],
+      )
+    ).rows[0].n,
+  ).toBe(1);
+
+  await page.getByLabel("Email").fill(secondEmail);
+  await page.getByRole("button", { name: /Confirm booking/ }).click();
+  await expect(
+    page.getByRole("heading", { name: "Check the earlier request first" }),
+  ).toBeVisible();
+  expect(actionBodies).toHaveLength(1);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS n FROM bookings WHERE shop_id = $1",
+        [owner.shopId],
+      )
+    ).rows[0].n,
+  ).toBe(1);
+
+  await page.getByRole("button", { name: "Start a separate booking" }).click();
+  await expect(
+    page.getByRole("heading", {
+      name: "This may create a second appointment.",
+    }),
+  ).toBeVisible();
+  const startSeparate = page.getByRole("button", {
+    name: "Start separate booking anyway",
+  });
+  await expect(startSeparate).toBeDisabled();
+  await page
+    .getByLabel("I understand a second appointment may be created")
+    .check();
+  await startSeparate.click();
+  await expect(
+    page.getByRole("heading", { name: "Check the earlier request first" }),
+  ).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Back to time" }).click();
+  await page.locator('input[name="startAt"]').last().check();
+  await page.getByRole("button", { name: "Your details", exact: true }).click();
+  await page.getByRole("button", { name: /Confirm booking/ }).click();
+  await expect(
+    page.getByRole("heading", { name: "Your chair is reserved." }),
+  ).toBeVisible();
+  await expect(page.getByText(secondEmail, { exact: true })).toBeVisible();
+  expect(actionBodies).toHaveLength(2);
+  expect(actionBodies[1]).not.toBe(actionBodies[0]);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS n FROM bookings WHERE shop_id = $1",
+        [owner.shopId],
+      )
+    ).rows[0].n,
+  ).toBe(2);
+});
+
+test("warns about a legacy key-only entry and starts only after explicit confirmation", async ({
+  page,
+  context,
+  owners,
+  database,
+}) => {
+  const owner = await owners(context, { shop: true });
+  const { serviceId, barberId } = await addReadyCatalog(database.pool, owner);
+  await page.addInitScript(() => {
+    sessionStorage.setItem("trimtime:pending-booking-recovery", "A".repeat(43));
+  });
+  await page.goto(`${ownerOrigin}/settings`);
+  await page.getByRole("button", { name: "Publish shop" }).click();
+  await expect(
+    page.getByText("Published · Public preview available"),
+  ).toBeVisible();
+  await page.goto(`http://${owner.subdomain}.localhost:3100/`);
+
+  await expect(
+    page.getByRole("heading", {
+      name: "An earlier request may already be booked",
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/recovery code from an earlier version/),
+  ).toBeVisible();
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS n FROM bookings WHERE shop_id = $1",
+        [owner.shopId],
+      )
+    ).rows[0].n,
+  ).toBe(0);
+
+  await page.getByRole("button", { name: "Start a separate booking" }).click();
+  await page
+    .getByLabel("I understand a second appointment may be created")
+    .check();
+  await page
+    .getByRole("button", { name: "Start separate booking anyway" })
+    .click();
+  await expect(
+    page.getByRole("heading", {
+      name: "An earlier request may already be booked",
+    }),
+  ).toHaveCount(0);
+  expect(
+    await page.evaluate(() =>
+      sessionStorage.getItem("trimtime:pending-booking-recovery"),
+    ),
+  ).toBeNull();
+
+  await chooseBookingOptions(page, {
+    serviceId,
+    barberId,
+    date: "2026-11-02",
+  });
+  await page.getByLabel("Name").fill("Ada Lovelace");
+  await page
+    .getByLabel("Email")
+    .fill(`phase06-legacy-${randomUUID()}@example.test`);
+  await page.getByRole("button", { name: /Confirm booking/ }).click();
+  await expect(
+    page.getByRole("heading", { name: "Your chair is reserved." }),
+  ).toBeVisible();
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS n FROM bookings WHERE shop_id = $1",
+        [owner.shopId],
+      )
+    ).rows[0].n,
+  ).toBe(1);
+});
+
+const RECOVERY_STORAGE_KEY = "trimtime:pending-booking-recovery";
+const WARNING_STORAGE_KEY = "trimtime:pending-booking-warning";
+
+test("keeps the original request through a shop pause and recovers it after reopening", async ({
+  page,
+  context,
+  owners,
+  database,
+}) => {
+  const owner = await owners(context, { shop: true });
+  const { serviceId, barberId } = await addReadyCatalog(database.pool, owner);
+  await page.goto(`${ownerOrigin}/settings`);
+  await page.getByRole("button", { name: "Publish shop" }).click();
+  await expect(
+    page.getByText("Published · Public preview available"),
+  ).toBeVisible();
+  await page.goto(`http://${owner.subdomain}.localhost:3100/`);
+
+  await chooseBookingOptions(page, {
+    serviceId,
+    barberId,
+    date: "2026-11-02",
+  });
+  await page.getByLabel("Name").fill("Ada Lovelace");
+  await page
+    .getByLabel("Email")
+    .fill(`phase06-paused-${randomUUID()}@example.test`);
+
+  const actionBodies: string[] = [];
+  let lost = false;
+  await page.route("**/*", async (route) => {
+    const request = route.request();
+    if (request.method() !== "POST" || !request.headers()["next-action"])
+      return route.continue();
+    const body = request.postData();
+    if (!body || !body.includes('"recoveryKey"')) return route.continue();
+    actionBodies.push(body);
+    if (lost) return route.continue();
+    lost = true;
+    await route.fetch();
+    await route.abort();
+  });
+
+  await page.getByRole("button", { name: /Confirm booking/ }).click();
+  await expect(page.locator("form").getByRole("alert")).toContainText(
+    "couldn’t confirm whether this booking was saved",
+  );
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS n FROM bookings WHERE shop_id = $1",
+        [owner.shopId],
+      )
+    ).rows[0].n,
+  ).toBe(1);
+
+  await database.pool.query(
+    "UPDATE shops SET published = false WHERE id = $1",
+    [owner.shopId],
+  );
+
+  await page.getByRole("button", { name: "Check earlier request" }).click();
+  await expect(page.locator("form").getByRole("alert")).toContainText(
+    "isn’t accepting bookings right now",
+  );
+  await expect(
+    page.getByRole("heading", { name: "We couldn’t confirm your booking" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Check earlier request" }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      (key) => sessionStorage.getItem(key) !== null,
+      RECOVERY_STORAGE_KEY,
+    ),
+  ).toBe(true);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS n FROM bookings WHERE shop_id = $1",
+        [owner.shopId],
+      )
+    ).rows[0].n,
+  ).toBe(1);
+
+  await database.pool.query("UPDATE shops SET published = true WHERE id = $1", [
+    owner.shopId,
+  ]);
+
+  await page.getByRole("button", { name: "Check earlier request" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Your chair is reserved." }),
+  ).toBeVisible();
+  expect(actionBodies).toHaveLength(3);
+  expect(actionBodies[2]).toBe(actionBodies[0]);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS n FROM bookings WHERE shop_id = $1",
+        [owner.shopId],
+      )
+    ).rows[0].n,
+  ).toBe(1);
+  expect(
+    await page.evaluate(
+      (keys) => keys.map((key) => sessionStorage.getItem(key)),
+      [RECOVERY_STORAGE_KEY, WARNING_STORAGE_KEY],
+    ),
+  ).toEqual([null, null]);
+});
+
+test("keeps the expiry warning across reloads and gates a fresh booking", async ({
+  page,
+  context,
+  owners,
+  database,
+}) => {
+  const owner = await owners(context, { shop: true });
+  const { serviceId, barberId } = await addReadyCatalog(database.pool, owner);
+  await page.goto(`${ownerOrigin}/settings`);
+  await page.getByRole("button", { name: "Publish shop" }).click();
+  await expect(
+    page.getByText("Published · Public preview available"),
+  ).toBeVisible();
+  await page.goto(`http://${owner.subdomain}.localhost:3100/`);
+
+  const email = `phase06-expired-${randomUUID()}@example.test`;
+  await page.evaluate(
+    ({ key, savedAt, email }) => {
+      sessionStorage.setItem(
+        key,
+        JSON.stringify({
+          version: 1,
+          recoveryKey: "A".repeat(43),
+          payload: {
+            serviceId: "00000000-0000-4000-8000-000000000001",
+            barberId: "00000000-0000-4000-8000-000000000002",
+            startAt: "2026-11-02T14:00:00.000Z",
+            reviewedOffer: {
+              name: "Cut",
+              priceUsd: "35.00",
+              durationMinutes: "35",
+            },
+            contact: {
+              name: "Ada Lovelace",
+              email,
+              phone: "+12025550142",
+              whatsappOptIn: false,
+            },
+          },
+          savedAt,
+        }),
+      );
+    },
+    {
+      key: RECOVERY_STORAGE_KEY,
+      savedAt: Date.now() - 2 * 60 * 60_000,
+      email,
+    },
+  );
+
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "The earlier request details expired" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Check earlier request" }),
+  ).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      (keys) => keys.map((key) => sessionStorage.getItem(key)),
+      [RECOVERY_STORAGE_KEY, WARNING_STORAGE_KEY],
+    ),
+  ).toEqual([null, expect.stringContaining('"expired"')]);
+  expect(
+    await page.evaluate(
+      (key) => sessionStorage.getItem(key),
+      WARNING_STORAGE_KEY,
+    ),
+  ).not.toContain(email);
+
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "The earlier request details expired" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/contact details are removed when you return or retry/),
+  ).toBeVisible();
+
+  await chooseBookingOptions(page, {
+    serviceId,
+    barberId,
+    date: "2026-11-02",
+  });
+  const freshEmail = `phase06-expired-fresh-${randomUUID()}@example.test`;
+  await page.getByLabel("Name").fill("Ada Lovelace");
+  await page.getByLabel("Email").fill(freshEmail);
+  await page.getByRole("button", { name: /Confirm booking/ }).click();
+  await expect(page.locator("form").getByRole("alert")).toContainText(
+    "Review the earlier request notice",
+  );
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS n FROM bookings WHERE shop_id = $1",
+        [owner.shopId],
+      )
+    ).rows[0].n,
+  ).toBe(0);
+
+  await page.getByRole("button", { name: "Start a separate booking" }).click();
+  await page
+    .getByLabel("I understand a second appointment may be created")
+    .check();
+  await page
+    .getByRole("button", { name: "Start separate booking anyway" })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "The earlier request details expired" }),
+  ).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      (keys) => keys.map((key) => sessionStorage.getItem(key)),
+      [RECOVERY_STORAGE_KEY, WARNING_STORAGE_KEY],
+    ),
+  ).toEqual([null, null]);
+
+  await page.getByRole("button", { name: /Confirm booking/ }).click();
+  await expect(
+    page.getByRole("heading", { name: "Your chair is reserved." }),
+  ).toBeVisible();
+  await expect(page.getByText(freshEmail, { exact: true })).toBeVisible();
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS n FROM bookings WHERE shop_id = $1",
+        [owner.shopId],
+      )
+    ).rows[0].n,
+  ).toBe(1);
+});
+
+test("retains the original request context and warning through a recovery mismatch", async ({
+  page,
+  context,
+  owners,
+  database,
+}) => {
+  const owner = await owners(context, { shop: true });
+  const { serviceId, barberId } = await addReadyCatalog(database.pool, owner);
+  const week = Array.from({ length: 7 }, () => ({
+    working: [{ start: 540, end: 1020 }],
+    breaks: [],
+  }));
+  await database.pool.query(
+    "UPDATE shop_schedules SET week = $2::jsonb WHERE shop_id = $1",
+    [owner.shopId, JSON.stringify(week)],
+  );
+  await database.pool.query(
+    "UPDATE barber_schedules SET week = $2::jsonb WHERE shop_id = $1",
+    [owner.shopId, JSON.stringify(week)],
+  );
+  await page.goto(`${ownerOrigin}/settings`);
+  await page.getByRole("button", { name: "Publish shop" }).click();
+  await expect(
+    page.getByText("Published · Public preview available"),
+  ).toBeVisible();
+  await page.goto(`http://${owner.subdomain}.localhost:3100/`);
+
+  await chooseBookingOptions(page, {
+    serviceId,
+    barberId,
+    date: "2026-11-02",
+  });
+  const originalEmail = `phase06-mismatch-original-${randomUUID()}@example.test`;
+  const mismatchedEmail = `phase06-mismatch-saved-${randomUUID()}@example.test`;
+  const freshEmail = `phase06-mismatch-fresh-${randomUUID()}@example.test`;
+  await page.getByLabel("Name").fill("Ada Lovelace");
+  await page.getByLabel("Email").fill(originalEmail);
+
+  let lost = false;
+  await page.route("**/*", async (route) => {
+    const request = route.request();
+    if (request.method() !== "POST" || !request.headers()["next-action"])
+      return route.continue();
+    const body = request.postData();
+    if (!body || !body.includes('"recoveryKey"')) return route.continue();
+    if (lost) return route.continue();
+    lost = true;
+    await route.fetch();
+    await route.abort();
+  });
+
+  await page.getByRole("button", { name: /Confirm booking/ }).click();
+  await expect(page.locator("form").getByRole("alert")).toContainText(
+    "couldn’t confirm whether this booking was saved",
+  );
+
+  await page.evaluate(
+    ({ key, email }) => {
+      const raw = JSON.parse(sessionStorage.getItem(key) ?? "{}");
+      raw.payload.contact.email = email;
+      sessionStorage.setItem(key, JSON.stringify(raw));
+    },
+    { key: RECOVERY_STORAGE_KEY, email: mismatchedEmail },
+  );
+
+  await page.reload();
+  await expect(page.getByLabel("Email")).toHaveValue(mismatchedEmail);
+  await page.getByRole("button", { name: "Check earlier request" }).click();
+  await expect(
+    page.getByRole("heading", {
+      name: "An earlier request may already be booked",
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Check earlier request" }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      (keys) => keys.map((key) => sessionStorage.getItem(key)),
+      [RECOVERY_STORAGE_KEY, WARNING_STORAGE_KEY],
+    ),
+  ).toEqual([expect.any(String), expect.stringContaining('"mismatch"')]);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS n FROM bookings WHERE shop_id = $1",
+        [owner.shopId],
+      )
+    ).rows[0].n,
+  ).toBe(1);
+
+  await page.reload();
+  await expect(
+    page.getByRole("heading", {
+      name: "An earlier request may already be booked",
+    }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Email")).toHaveValue(mismatchedEmail);
+  await expect(page.getByText(/Saved request: Cut/)).toBeVisible();
+
+  await page.getByLabel("Email").fill(freshEmail);
+  await page.getByRole("button", { name: /Confirm booking/ }).click();
+  await expect(
+    page.getByRole("heading", { name: "Check the earlier request first" }),
+  ).toBeVisible();
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS n FROM bookings WHERE shop_id = $1",
+        [owner.shopId],
+      )
+    ).rows[0].n,
+  ).toBe(1);
+
+  await page.getByRole("button", { name: "Start a separate booking" }).click();
+  await page
+    .getByLabel("I understand a second appointment may be created")
+    .check();
+  await page
+    .getByRole("button", { name: "Start separate booking anyway" })
+    .click();
+  expect(
+    await page.evaluate(
+      (keys) => keys.map((key) => sessionStorage.getItem(key)),
+      [RECOVERY_STORAGE_KEY, WARNING_STORAGE_KEY],
+    ),
+  ).toEqual([null, null]);
+
+  await page.getByRole("button", { name: "Back to time" }).click();
+  await page.locator('input[name="startAt"]').last().check();
+  await page.getByRole("button", { name: "Your details", exact: true }).click();
+  await page.getByRole("button", { name: /Confirm booking/ }).click();
+  await expect(
+    page.getByRole("heading", { name: "Your chair is reserved." }),
+  ).toBeVisible();
+  await expect(page.getByText(freshEmail, { exact: true })).toBeVisible();
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS n FROM bookings WHERE shop_id = $1",
+        [owner.shopId],
+      )
+    ).rows[0].n,
+  ).toBe(2);
+});

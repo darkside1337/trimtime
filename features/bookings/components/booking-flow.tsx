@@ -2,16 +2,37 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import type { ActionError } from "@/lib/action-result";
 import { createPublicBookingAction, getBookingSlotsAction } from "../actions";
 import type { PublicBookingReceipt } from "../types";
 import { bookingStyles as styles } from "./shop-styles";
+import { createRecoveryKey } from "./recovery-key";
 import { BookingReceipt } from "./booking-flow/booking-receipt";
+import { BookingRecoveryNotice } from "./booking-flow/booking-recovery-notice";
 import { BookingSummary } from "./booking-flow/booking-summary";
 import { BookingStepServices } from "./booking-flow/booking-step-services";
 import { BookingStepBarbers } from "./booking-flow/booking-step-barbers";
 import { BookingStepSlots } from "./booking-flow/booking-step-slots";
 import { BookingStepContact } from "./booking-flow/booking-step-contact";
 import { addDays, shopToday } from "./booking-flow/format";
+import {
+  browserSessionStorage,
+  classifyBookingFailure,
+  clearPendingAttempt,
+  clearPendingRecovery,
+  isPendingAttemptExpired,
+  readPendingAttempt,
+  readPendingWarning,
+  resolveRecoveryRestore,
+  sameBookingPayload,
+  savePendingAttempt,
+  savePendingWarning,
+  shopDateForStart,
+  type BookingPayload,
+  type PendingBookingAttempt,
+  type RecoveryWarningKind,
+} from "./booking-flow/recovery";
+import type { RecoveryNoticeKind } from "./booking-flow/booking-recovery-notice";
 import type {
   BookingContact,
   BookingService,
@@ -19,14 +40,6 @@ import type {
 } from "./booking-flow/types";
 
 const stepNames = ["Service", "Barber", "Date & time", "Your details"];
-
-function recoveryKey() {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  return btoa(String.fromCharCode(...bytes))
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replaceAll("=", "");
-}
 
 export function BookingFlow({
   services,
@@ -68,7 +81,15 @@ export function BookingFlow({
   const [message, setMessage] = useState("");
   const [messageKind, setMessageKind] = useState<"error" | "info">("info");
   const [receipt, setReceipt] = useState<PublicBookingReceipt | null>(null);
-  const [recovery, setRecovery] = useState("");
+  const [recoveryNotice, setRecoveryNotice] =
+    useState<RecoveryNoticeKind | null>(null);
+  const [storageUnavailable, setStorageUnavailable] = useState(false);
+  const [attemptView, setAttemptView] = useState<PendingBookingAttempt | null>(
+    null,
+  );
+  const attemptRef = useRef<PendingBookingAttempt | null>(null);
+  const recoveryHydratedRef = useRef(false);
+  const inFlightRef = useRef(false);
   const focusHeadingRef = useRef(false);
   const headingRef = useRef<HTMLHeadingElement>(null);
 
@@ -77,6 +98,65 @@ export function BookingFlow({
     headingRef.current?.focus();
     focusHeadingRef.current = false;
   }, [step]);
+
+  useEffect(() => {
+    if (recoveryHydratedRef.current) return;
+    recoveryHydratedRef.current = true;
+    const storage = browserSessionStorage();
+    const restore = resolveRecoveryRestore(
+      readPendingAttempt(storage),
+      readPendingWarning(storage),
+    );
+    if (restore.status === "none" && !restore.degraded) return;
+    void Promise.resolve().then(() => {
+      if (restore.degraded || restore.status === "unavailable")
+        setStorageUnavailable(true);
+      if (restore.status === "none" || restore.status === "unavailable") return;
+      if (restore.status === "warning") {
+        setRecoveryNotice(restore.notice);
+        return;
+      }
+      const attempt = restore.attempt;
+      attemptRef.current = attempt;
+      setAttemptView(attempt);
+      const restoredService = services.find(
+        (service) => service.id === attempt.payload.serviceId,
+      );
+      const restoredBarber = restoredService?.barbers.find(
+        (barber) => barber.id === attempt.payload.barberId,
+      );
+      setServiceId(restoredService?.id ?? "");
+      setBarberId(restoredBarber?.id ?? "");
+      setContact({
+        name: attempt.payload.contact.name,
+        email: attempt.payload.contact.email,
+        phone: attempt.payload.contact.phone ?? "",
+        whatsappOptIn: attempt.payload.contact.whatsappOptIn,
+      });
+      if (restoredService && restoredBarber) {
+        const restoredDate = shopDateForStart(
+          attempt.payload.startAt,
+          timeZone,
+        );
+        setDate(restoredDate);
+        setStartAt(attempt.payload.startAt);
+        setSelectedStartIsWithinChangeWindow(
+          new Date(attempt.payload.startAt).getTime() - Date.now() <
+            12 * 60 * 60 * 1000,
+        );
+        const firstDate = shopToday(timeZone);
+        const dayIndex = Math.round(
+          (Date.parse(`${restoredDate}T00:00:00Z`) -
+            Date.parse(`${firstDate}T00:00:00Z`)) /
+            86_400_000,
+        );
+        if (dayIndex >= 0 && dayIndex < 31)
+          setDateRailPage(Math.floor(dayIndex / 7));
+        setStep(3);
+      }
+      setRecoveryNotice(restore.notice);
+    });
+  }, [services, timeZone]);
 
   useEffect(() => {
     if (!selectedService || !selectedBarber || !date) return;
@@ -108,6 +188,7 @@ export function BookingFlow({
   }, [barberId, date, selectedBarber, selectedService, serviceId, slotRetry]);
 
   function goTo(nextStep: number) {
+    if (inFlightRef.current) return;
     setStep(nextStep);
     focusHeadingRef.current = true;
     setMessage("");
@@ -119,6 +200,7 @@ export function BookingFlow({
   }
 
   function selectService(service: BookingService) {
+    if (inFlightRef.current) return;
     if (serviceId !== service.id) {
       setBarberId("");
       setDate("");
@@ -131,6 +213,7 @@ export function BookingFlow({
   }
 
   function selectBarber(nextBarberId: string) {
+    if (inFlightRef.current) return;
     setBarberId(nextBarberId);
     setDate("");
     clearStartAt();
@@ -140,14 +223,175 @@ export function BookingFlow({
   }
 
   function selectStartAt(slot: BookingSlot) {
+    if (inFlightRef.current) return;
     setStartAt(slot.start);
     setSelectedStartIsWithinChangeWindow(
       new Date(slot.start).getTime() - Date.now() < 12 * 60 * 60 * 1000,
     );
   }
 
+  function updateContact(nextContact: BookingContact) {
+    if (inFlightRef.current) return;
+    setContact(nextContact);
+  }
+
+  function persistWarning(kind: RecoveryWarningKind) {
+    const saved = savePendingWarning(browserSessionStorage(), kind);
+    if (!saved) setStorageUnavailable(true);
+    return saved;
+  }
+
+  function clearRecovery() {
+    attemptRef.current = null;
+    setAttemptView(null);
+    clearPendingRecovery(browserSessionStorage());
+  }
+
+  function expireAttempt() {
+    // The payload is past its privacy window; drop it but keep an anonymous
+    // warning so later reloads stay gated.
+    if (persistWarning("expired")) clearPendingAttempt(browserSessionStorage());
+    attemptRef.current = null;
+    setAttemptView(null);
+  }
+
+  function currentPayload(): BookingPayload | null {
+    if (!selectedService || !selectedBarber || !startAt) return null;
+    return {
+      serviceId: selectedService.id,
+      barberId: selectedBarber.id,
+      startAt,
+      reviewedOffer: {
+        name: selectedService.name,
+        priceUsd: Number(selectedService.priceUsd).toFixed(2),
+        durationMinutes: String(selectedService.durationMinutes),
+      },
+      contact: { ...contact, phone: contact.phone || undefined },
+    };
+  }
+
+  function handleFailure(error: ActionError, recovering: boolean) {
+    const disposition = classifyBookingFailure(error.code, recovering);
+
+    if (disposition === "mismatch") {
+      // The attempt may have committed even when its saved receipt could not
+      // be produced. Keep the original context and warning instead of
+      // silently forgetting that an unknown request may exist.
+      persistWarning("mismatch");
+      setRecoveryNotice("mismatch");
+      setMessage(
+        "The shop couldn’t confirm this earlier request. It may already be booked. Check it again, or check with the shop before starting a separate booking.",
+      );
+      setMessageKind("error");
+      return;
+    }
+
+    if (disposition === "unknown") {
+      persistWarning("uncertain");
+      setRecoveryNotice("uncertain");
+      setMessage(
+        error.code === "SHOP_PAUSED"
+          ? "The shop isn’t accepting bookings right now. That response doesn’t confirm whether your earlier request was saved. Check the earlier request when the shop reopens."
+          : `${error.message} We couldn’t confirm whether this request was saved. Check the same request before starting over.`,
+      );
+      setMessageKind("error");
+      return;
+    }
+
+    clearRecovery();
+    setRecoveryNotice(null);
+    if (error.code === "STALE_OFFER") {
+      setServiceId("");
+      setBarberId("");
+      setDate("");
+      clearStartAt();
+      setSlots([]);
+      setLoadingSlots(false);
+      setStep(0);
+      focusHeadingRef.current = true;
+      setMessage(
+        "The service details changed. Review the current options and choose again.",
+      );
+      setMessageKind("error");
+      router.refresh();
+    } else if (error.code === "UNAVAILABLE_INTERVAL") {
+      setSlots((current) => current.filter((slot) => slot.start !== startAt));
+      clearStartAt();
+      setMessage(
+        "That time was just taken. No booking was created; your details are still here. Choose another available time.",
+      );
+      setMessageKind("error");
+    } else {
+      setMessage(error.message);
+      setMessageKind("error");
+    }
+  }
+
+  async function sendAttempt(
+    payload: BookingPayload,
+    key: string,
+    recovering = false,
+  ) {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    setPending(true);
+    setMessage(
+      recovering ? "Checking your saved request…" : "Confirming your booking…",
+    );
+    setMessageKind("info");
+    try {
+      const result = await createPublicBookingAction({
+        ...payload,
+        recoveryKey: key,
+      });
+      if (result.success) {
+        clearRecovery();
+        setRecoveryNotice(null);
+        setReceipt(result.data);
+      } else {
+        handleFailure(result.error, recovering);
+      }
+    } catch {
+      persistWarning("uncertain");
+      setRecoveryNotice("uncertain");
+      setMessage(
+        "We couldn’t confirm whether this booking was saved. Check the same request before starting over.",
+      );
+      setMessageKind("error");
+    } finally {
+      inFlightRef.current = false;
+      setPending(false);
+    }
+  }
+
+  async function recoverSavedAttempt() {
+    const attempt = attemptRef.current;
+    if (!attempt || inFlightRef.current) return;
+    if (isPendingAttemptExpired(attempt)) {
+      expireAttempt();
+      setRecoveryNotice("expired");
+      setMessage(
+        "The recovery copy saved in this tab expired. If the earlier request was saved, it may still exist. Check with the shop before booking again.",
+      );
+      setMessageKind("error");
+      return;
+    }
+    await sendAttempt(attempt.payload, attempt.recoveryKey, true);
+  }
+
+  function startSeparateBooking() {
+    clearRecovery();
+    setRecoveryNotice(null);
+    setMessage(
+      "Recovery warning cleared. If you’re unsure whether the earlier request was saved, check with the shop before booking the same time.",
+    );
+    setMessageKind("info");
+    headingRef.current?.focus();
+  }
+
   function resetFlow() {
-    sessionStorage.removeItem("trimtime:pending-booking-recovery");
+    clearRecovery();
+    setRecoveryNotice(null);
     setReceipt(null);
     setServiceId("");
     setBarberId("");
@@ -155,7 +399,6 @@ export function BookingFlow({
     clearStartAt();
     setSlots([]);
     setLoadingSlots(false);
-    setRecovery("");
     setMessage("");
     setMessageKind("info");
     setContact({ name: "", email: "", phone: "", whatsappOptIn: false });
@@ -171,73 +414,56 @@ export function BookingFlow({
       !selectedService ||
       !selectedBarber ||
       !startAt ||
-      pending
+      inFlightRef.current
     )
       return;
-    setPending(true);
-    setMessage("Confirming your booking…");
-    setMessageKind("info");
-    try {
-      const recoveryKeyValue =
-        recovery ||
-        sessionStorage.getItem("trimtime:pending-booking-recovery") ||
-        recoveryKey();
-      setRecovery(recoveryKeyValue);
-      sessionStorage.setItem(
-        "trimtime:pending-booking-recovery",
-        recoveryKeyValue,
-      );
-      const result = await createPublicBookingAction({
-        serviceId,
-        barberId,
-        startAt,
-        reviewedOffer: {
-          name: selectedService.name,
-          priceUsd: Number(selectedService.priceUsd).toFixed(2),
-          durationMinutes: String(selectedService.durationMinutes),
-        },
-        contact: { ...contact, phone: contact.phone || undefined },
-        recoveryKey: recoveryKeyValue,
-      });
-      if (result.success) {
-        sessionStorage.removeItem("trimtime:pending-booking-recovery");
-        setReceipt(result.data);
-      } else if (result.error.code === "STALE_OFFER") {
-        setServiceId("");
-        setBarberId("");
-        setDate("");
-        clearStartAt();
-        setSlots([]);
-        setLoadingSlots(false);
-        setStep(0);
-        focusHeadingRef.current = true;
+    const payload = currentPayload();
+    if (!payload) return;
+
+    const existing = attemptRef.current;
+    if (existing) {
+      if (isPendingAttemptExpired(existing)) {
+        expireAttempt();
+        setRecoveryNotice("expired");
         setMessage(
-          "The service details changed. Review the current options and choose again.",
+          "The recovery copy saved in this tab expired. If the earlier request was saved, it may still exist. Check with the shop before booking again.",
         );
         setMessageKind("error");
-        router.refresh();
-      } else if (result.error.code === "UNAVAILABLE_INTERVAL") {
-        setSlots((current) => current.filter((slot) => slot.start !== startAt));
-        clearStartAt();
-        setMessage(
-          "That time was just taken. No booking was created; your details are still here. Choose another available time.",
-        );
-        setMessageKind("error");
-      } else if (result.error.code === "RATE_LIMITED") {
-        setMessage(result.error.message);
-        setMessageKind("error");
+        return;
+      }
+      if (sameBookingPayload(existing.payload, payload)) {
+        await sendAttempt(existing.payload, existing.recoveryKey, true);
       } else {
-        setMessage(result.error.message);
+        setRecoveryNotice("changed");
+        setMessage(
+          "The form details changed after the earlier request. Check the earlier request before starting over.",
+        );
         setMessageKind("error");
       }
-    } catch {
+      return;
+    }
+
+    if (recoveryNotice) {
       setMessage(
-        "The request could not be confirmed. Your details are still here; retry to check the same request.",
+        "Review the earlier request notice and choose whether to start a separate booking.",
       );
       setMessageKind("error");
-    } finally {
-      setPending(false);
+      return;
     }
+
+    const attempt: PendingBookingAttempt = {
+      recoveryKey: createRecoveryKey(),
+      payload,
+      savedAt: Date.now(),
+    };
+    attemptRef.current = attempt;
+    setAttemptView(attempt);
+    // Write the anonymous warning first: if the payload copy cannot be stored,
+    // a reload still shows the warning instead of silently allowing a retry.
+    persistWarning("uncertain");
+    if (!savePendingAttempt(browserSessionStorage(), attempt))
+      setStorageUnavailable(true);
+    await sendAttempt(attempt.payload, attempt.recoveryKey);
   }
 
   const selectedStartLocal = slots.find(
@@ -255,6 +481,29 @@ export function BookingFlow({
     />
   );
 
+  const recoveryBanner = recoveryNotice ? (
+    <BookingRecoveryNotice
+      kind={recoveryNotice}
+      attempt={attemptView}
+      timeZone={timeZone}
+      publicContact={publicContact}
+      pending={pending}
+      onRecover={() => void recoverSavedAttempt()}
+      onStartNew={startSeparateBooking}
+    />
+  ) : null;
+
+  const storageBanner = storageUnavailable ? (
+    <p
+      className="col-span-full bg-[#f7f7f5] px-4 py-3.5 text-[13px] leading-[1.6] text-[#242424]"
+      role="status"
+    >
+      This browser isn’t keeping a recovery copy in this tab. If the booking
+      response is lost, keep this tab open and retry here; recovery after reload
+      won’t be available.
+    </p>
+  ) : null;
+
   if (receipt)
     return (
       <BookingReceipt
@@ -267,6 +516,8 @@ export function BookingFlow({
   if (services.length === 0)
     return (
       <div className={styles.bookingLayout}>
+        {recoveryBanner}
+        {storageBanner}
         <section className={styles.stepContent}>
           <div className={styles.emptyState}>
             <h3 className={styles.stepHeading}>
@@ -288,6 +539,7 @@ export function BookingFlow({
   );
 
   function changeDate(value: string) {
+    if (inFlightRef.current) return;
     setDate(value);
     const index = dateOptions.indexOf(value);
     if (index >= 0) setDateRailPage(Math.floor(index / 7));
@@ -300,6 +552,8 @@ export function BookingFlow({
 
   return (
     <div className={styles.bookingLayout}>
+      {recoveryBanner}
+      {storageBanner}
       <div className={styles.stepper} aria-label="Booking steps">
         {stepNames.map((name, index) => (
           <button
@@ -401,7 +655,7 @@ export function BookingFlow({
             }
             publicContact={publicContact}
             contact={contact}
-            onContactChange={setContact}
+            onContactChange={updateContact}
             onBackToTime={() => goTo(2)}
           />
         ) : null}

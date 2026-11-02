@@ -246,7 +246,7 @@ export function BookingStepSlots({
         <button
           type="button"
           className={styles.primaryButton}
-          disabled={!startAt}
+          disabled={pending || !startAt}
           onClick={onContinue}
         >
           Your details <span aria-hidden="true">→</span>

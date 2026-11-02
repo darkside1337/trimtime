@@ -78,7 +78,7 @@ export function BookingStepServices({
         <button
           type="button"
           className={styles.primaryButton}
-          disabled={!selectedService}
+          disabled={pending || !selectedService}
           onClick={onContinue}
         >
           Choose your barber <span aria-hidden="true">→</span>

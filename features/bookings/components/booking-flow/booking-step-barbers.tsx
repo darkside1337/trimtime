@@ -79,7 +79,7 @@ export function BookingStepBarbers({
         <button
           type="button"
           className={styles.primaryButton}
-          disabled={!selectedBarber}
+          disabled={pending || !selectedBarber}
           onClick={onContinue}
         >
           Choose date and time <span aria-hidden="true">→</span>
