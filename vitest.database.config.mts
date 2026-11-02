@@ -15,7 +15,9 @@ export default defineConfig({
       "features/**/tests/*.integration.test.ts",
       "server/tests/*.integration.test.ts",
     ],
-    fileParallelism: true,
+    // Database integration files share global fixtures and allocations; run
+    // them one at a time so production-selector coverage cannot overlap them.
+    fileParallelism: false,
     maxWorkers: 3,
     passWithNoTests: false,
   },

@@ -59,7 +59,14 @@ describe("catalog migrations", () => {
         "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ANY(ARRAY['shops', 'services', 'barbers', 'barber_services']) ORDER BY table_name",
       ),
       database.pool.query(
-        "SELECT conname FROM pg_constraint WHERE conname IN ('services_shop_id_id_key', 'barbers_shop_id_id_key', 'barber_services_barber_fkey', 'barber_services_service_fkey') ORDER BY conname",
+        `SELECT c.conname FROM pg_constraint c
+         JOIN pg_class r ON r.oid=c.conrelid
+         JOIN pg_namespace n ON n.oid=r.relnamespace
+         WHERE n.nspname='public'
+           AND r.relname IN ('services','barbers','barber_services')
+           AND c.conname IN ('services_shop_id_id_key','barbers_shop_id_id_key',
+             'barber_services_barber_fkey','barber_services_service_fkey')
+         ORDER BY c.conname`,
       ),
       readAppliedMigrations(database.pool, "drizzle"),
       database.pool.query(

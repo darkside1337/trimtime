@@ -7,7 +7,8 @@ const allDevices =
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: true,
-  workers: process.env.TRIMTIME_E2E_EMAIL_MODE?.startsWith("mailpit-") ? 1 : 2,
+  // Retry-job tests scan global work, so browser fixtures must not overlap.
+  workers: 1,
   reporter: "list",
   use: {
     baseURL: "http://localhost:3100",

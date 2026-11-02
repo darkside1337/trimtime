@@ -51,12 +51,14 @@ test("catalog cards show named eligibility and the responsive reference grid @de
       route === "services" ? "Barber 1" : "Classic cut 35m $35.00";
     await expect(cards.filter({ hasText: expected })).toHaveCount(1);
     if (route === "barbers") {
-      await expect(cards.first()).toContainText(
+      const scheduledBarber = cards.filter({ hasText: "Barber 1" });
+      await expect(scheduledBarber).toHaveCount(1);
+      await expect(scheduledBarber).toContainText(
         "Mon–Sat · 09:00–18:00 · Break 13:00–13:30",
       );
-      await expect(cards.first()).toContainText("America/New_York");
+      await expect(scheduledBarber).toContainText("America/New_York");
       await expect(
-        cards.first().getByRole("link", { name: "Edit hours" }),
+        scheduledBarber.getByRole("link", { name: "Edit hours" }),
       ).toHaveAttribute("href", "/availability");
     }
     const first = (await cards.nth(0).boundingBox())!;
