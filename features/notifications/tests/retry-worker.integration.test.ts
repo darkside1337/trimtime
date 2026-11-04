@@ -285,8 +285,9 @@ describe("notification retry worker", () => {
     const result = await database.pool.query(
       `SELECT id,booking_id AS "bookingId",status FROM notification_work
        WHERE booking_id=ANY($1::uuid[]) AND channel='email'
+         AND (kind <> 'customer_reminder' OR due_at <= $2)
        ORDER BY CASE WHEN kind='customer_confirmation' THEN 0 ELSE 1 END,created_at,id`,
-      [bookingIds],
+      [bookingIds, new Date()],
     );
     return result.rows as { id: string; bookingId: string; status: string }[];
   }
@@ -322,7 +323,7 @@ describe("notification retry worker", () => {
     expect(result.attempted).toBe(2);
     expect(send).toHaveBeenCalledTimes(2);
     const rows = await database.pool.query(
-      "SELECT status FROM notification_work WHERE booking_id=$1 AND channel='email' ORDER BY kind",
+      "SELECT status FROM notification_work WHERE booking_id=$1 AND channel='email' AND kind <> 'customer_reminder' ORDER BY kind",
       [created.bookingId],
     );
     expect(rows.rows.map((row) => row.status)).toEqual([
@@ -372,7 +373,7 @@ describe("notification retry worker", () => {
         'Failed query: update "notification_work"',
       );
       const statuses = await database.pool.query(
-        "SELECT kind,status FROM notification_work WHERE booking_id=$1 AND channel='email' ORDER BY kind",
+        "SELECT kind,status FROM notification_work WHERE booking_id=$1 AND channel='email' AND kind <> 'customer_reminder' ORDER BY kind",
         [created.bookingId],
       );
       expect(statuses.rows).toEqual([
@@ -415,7 +416,7 @@ describe("notification retry worker", () => {
     }
     expect(result.attempted).toBeGreaterThanOrEqual(2);
     const rows = await database.pool.query(
-      "SELECT status FROM notification_work WHERE booking_id=$1 AND channel='email'",
+      "SELECT status FROM notification_work WHERE booking_id=$1 AND channel='email' AND kind <> 'customer_reminder'",
       [created.bookingId],
     );
     expect(rows.rows).toHaveLength(2);
@@ -602,7 +603,7 @@ describe("notification retry worker", () => {
       (await processOwned([created.bookingId], { send: reject })).attempted,
     ).toBe(2);
     const scheduled = await database.pool.query(
-      "SELECT next_attempt_at FROM notification_work WHERE booking_id=$1 AND channel='email' ORDER BY kind",
+      "SELECT next_attempt_at FROM notification_work WHERE booking_id=$1 AND channel='email' AND kind <> 'customer_reminder' ORDER BY kind",
       [created.bookingId],
     );
     expect(scheduled.rows).toEqual([
@@ -621,7 +622,8 @@ describe("notification retry worker", () => {
     const exhausted = await database.pool.query(
       `SELECT w.next_attempt_at,count(a.id)::int AS attempts
        FROM notification_work w JOIN notification_attempts a ON a.work_id=w.id
-       WHERE w.booking_id=$1 GROUP BY w.id ORDER BY w.kind`,
+       WHERE w.booking_id=$1 AND w.kind <> 'customer_reminder'
+       GROUP BY w.id ORDER BY w.kind`,
       [created.bookingId],
     );
     expect(exhausted.rows).toEqual([
@@ -1315,6 +1317,7 @@ describe("notification retry worker", () => {
     const work = await database.pool.query(
       `SELECT w.id,w.booking_id AS "bookingId",w.recipient
        FROM notification_work w WHERE w.booking_id=ANY($1::uuid[]) AND w.channel='email'
+         AND w.kind <> 'customer_reminder'
        ORDER BY w.id`,
       [bookings.map((booking) => booking.bookingId)],
     );

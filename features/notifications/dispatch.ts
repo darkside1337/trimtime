@@ -88,6 +88,7 @@ async function authorize(input: {
     const workResult = await tx.execute(sql`
       SELECT w.id, w.kind, w.status, w.recipient, w.booking_revision AS "bookingRevision",
         w.content_identity AS "contentIdentity", w.next_attempt_at AS "nextAttemptAt",
+        w.due_at AS "dueAt",
         c.before_snapshot AS "beforeSnapshot",
         c.kind AS "changeKind", c.actor_type AS "changeActor",
         c.applied_revision AS "changeRevision"
@@ -100,6 +101,14 @@ async function authorize(input: {
     if (!rawBooking || !rawWork) return null;
 
     const now = input.dependencies.now();
+    const kind = String(rawWork.kind) as NotificationKind;
+    if (
+      kind === "customer_reminder" &&
+      rawWork.dueAt &&
+      new Date(rawWork.dueAt as Date | string).getTime() > now.getTime()
+    ) {
+      return null;
+    }
     const priorAttempts = await tx.execute(sql`
       SELECT id, attempt_number AS "attemptNumber", outcome, reason
       FROM notification_attempts WHERE work_id=${input.workId}
@@ -156,7 +165,6 @@ async function authorize(input: {
     const emailAvailable = config.mode === "mailpit";
     const emailOrigin = emailAvailable ? config.origin : "";
     const emailUnavailableReason = emailAvailable ? "" : config.reason;
-    const kind = String(rawWork.kind) as NotificationKind;
     const workRevision = Number(rawWork.bookingRevision);
     const changeKind = rawWork.changeKind as string | null;
     const changeActor = rawWork.changeActor as string | null;
@@ -203,11 +211,77 @@ async function authorize(input: {
       await suppress(tx, input.workId, rendering.status, rendering.reason, now);
       return { suppressed: true as const, result: rendering.status };
     }
-    const authorizedAt = input.dependencies.now();
+    let authorizedAt = input.dependencies.now();
+    let day = authorizedAt.toISOString().slice(0, 10);
+    let allocation = await tx.execute(sql`
+      INSERT INTO outbound_budget (day, allocation_count) VALUES (${day}, 1)
+      ON CONFLICT (day) DO UPDATE
+      SET allocation_count = outbound_budget.allocation_count + 1
+      WHERE outbound_budget.allocation_count < 100
+      RETURNING allocation_count
+    `);
+
+    // The upsert can wait on another transaction. Authorization time is the
+    // first clock sample after that wait, including when the day is exhausted.
+    authorizedAt = input.dependencies.now();
+    let authorizedDay = authorizedAt.toISOString().slice(0, 10);
+    while (authorizedDay !== day) {
+      if (allocation.rows.length) {
+        await tx.execute(sql`
+          UPDATE outbound_budget SET allocation_count=allocation_count-1
+          WHERE day=${day} AND allocation_count > 0
+        `);
+      }
+      day = authorizedDay;
+      allocation = await tx.execute(sql`
+        INSERT INTO outbound_budget (day, allocation_count) VALUES (${day}, 1)
+        ON CONFLICT (day) DO UPDATE
+        SET allocation_count = outbound_budget.allocation_count + 1
+        WHERE outbound_budget.allocation_count < 100
+        RETURNING allocation_count
+      `);
+      authorizedAt = input.dependencies.now();
+      authorizedDay = authorizedAt.toISOString().slice(0, 10);
+    }
+
+    if (kind === "customer_reminder") {
+      const dueAt = new Date(rawWork.dueAt as Date | string).getTime();
+      if (dueAt > authorizedAt.getTime()) {
+        if (allocation.rows.length) {
+          await tx.execute(sql`
+            UPDATE outbound_budget SET allocation_count=allocation_count-1
+            WHERE day=${day} AND allocation_count > 0
+          `);
+        }
+        return null;
+      }
+      if (new Date(booking.startAt).getTime() <= authorizedAt.getTime()) {
+        if (allocation.rows.length) {
+          await tx.execute(sql`
+            UPDATE outbound_budget SET allocation_count=allocation_count-1
+            WHERE day=${day} AND allocation_count > 0
+          `);
+        }
+        await suppress(
+          tx,
+          input.workId,
+          "suppressed",
+          "work_no_longer_eligible",
+          authorizedAt,
+        );
+        return { suppressed: true as const, result: "suppressed" as const };
+      }
+    }
     if (
       new Date(booking.endAt).getTime() + 7 * 24 * 60 * 60_000 <=
       authorizedAt.getTime()
     ) {
+      if (allocation.rows.length) {
+        await tx.execute(sql`
+          UPDATE outbound_budget SET allocation_count=allocation_count-1
+          WHERE day=${day} AND allocation_count > 0
+        `);
+      }
       await suppress(
         tx,
         input.workId,
@@ -217,14 +291,6 @@ async function authorize(input: {
       );
       return { suppressed: true as const, result: "suppressed" as const };
     }
-    const day = authorizedAt.toISOString().slice(0, 10);
-    const allocation = await tx.execute(sql`
-      INSERT INTO outbound_budget (day, allocation_count) VALUES (${day}, 1)
-      ON CONFLICT (day) DO UPDATE
-      SET allocation_count = outbound_budget.allocation_count + 1
-      WHERE outbound_budget.allocation_count < 100
-      RETURNING allocation_count
-    `);
     if (!allocation.rows.length) {
       await suppress(
         tx,

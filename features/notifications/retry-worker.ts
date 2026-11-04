@@ -34,7 +34,8 @@ async function selectCandidates(now: Date): Promise<RetryCandidate[]> {
     SELECT w.id, w.booking_id AS "bookingId", w.status
     FROM notification_work w
     WHERE w.channel='email'
-      AND (w.status='not_attempted'
+      AND ((w.status='not_attempted'
+        AND (w.kind <> 'customer_reminder' OR w.due_at <= ${now}))
         OR (w.status='failed' AND w.next_attempt_at <= ${now})
         OR (w.status='sending' AND w.claimed_at < ${staleBefore})
         OR (w.status='accepted' AND EXISTS (

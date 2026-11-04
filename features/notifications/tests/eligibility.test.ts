@@ -143,6 +143,27 @@ describe("notification eligibility", () => {
     },
   );
 
+  it("rejects a reminder linked to a customer-authored restoration event", () => {
+    expect(
+      evaluateNotificationEligibility(
+        input({
+          kind: "customer_reminder",
+          booking: { status: "confirmed", revision: 2 },
+          workRevision: 2,
+          changeKind: "restore",
+          changeActor: "customer",
+          changeRevision: 2,
+          recipient: "ari@example.test",
+          now: new Date("2026-01-14T14:00:00.000Z"),
+        }),
+      ),
+    ).toEqual({
+      eligible: false,
+      status: "suppressed",
+      reason: "work_no_longer_eligible",
+    });
+  });
+
   it("preserves unavailable and missing-recipient outcomes before eligibility checks", () => {
     expect(
       evaluateNotificationEligibility(
@@ -160,6 +181,57 @@ describe("notification eligibility", () => {
         reason: "recipient_missing",
       },
     );
+  });
+
+  it.each([
+    ["creation", 0, null, null, null],
+    ["move generation", 2, "move", "customer", 2],
+    ["restored generation", 3, "restore", "owner", 3],
+  ] as const)(
+    "accepts a current confirmed %s reminder while its appointment is future",
+    (_label, revision, changeKind, changeActor, changeRevision) => {
+      expect(
+        evaluateNotificationEligibility(
+          input({
+            kind: "customer_reminder",
+            booking: { status: "confirmed", revision },
+            workRevision: revision,
+            changeKind,
+            changeActor,
+            changeRevision,
+            recipient: "ari@example.test",
+            now: new Date("2026-01-14T14:00:00.000Z"),
+          }),
+        ),
+      ).toEqual({ eligible: true, recipient: "ari@example.test" });
+    },
+  );
+
+  it.each([
+    [
+      "appointment start equality",
+      { now: new Date("2026-01-15T14:00:00.000Z") },
+    ],
+    ["cancelled schedule", { booking: { status: "cancelled" } }],
+    ["obsolete generation", { booking: { revision: 1 } }],
+    [
+      "revoked manage capability",
+      { booking: { capabilityRevokedAt: new Date() } },
+    ],
+  ])("suppresses a reminder for %s", (_label, overrides) => {
+    expect(
+      evaluateNotificationEligibility(
+        input({
+          kind: "customer_reminder",
+          recipient: "ari@example.test",
+          ...overrides,
+        } as Parameters<typeof input>[0]),
+      ),
+    ).toEqual({
+      eligible: false,
+      status: "suppressed",
+      reason: "work_no_longer_eligible",
+    });
   });
 
   it.each([

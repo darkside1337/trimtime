@@ -7,6 +7,7 @@ export type NotificationKind =
   | "customer_move"
   | "customer_cancellation"
   | "customer_restoration"
+  | "customer_reminder"
   | "owner_cancellation"
   | "owner_move";
 
@@ -44,6 +45,7 @@ const customerKinds = new Set<string>([
   "customer_move",
   "customer_cancellation",
   "customer_restoration",
+  "customer_reminder",
 ]);
 
 export function evaluateNotificationEligibility(
@@ -95,12 +97,25 @@ export function evaluateNotificationEligibility(
                 input.changeKind === "restore" &&
                 input.changeRevision === input.workRevision &&
                 input.changeActor === "owner"
-              : input.kind === "owner_cancellation"
-                ? input.booking.status === "cancelled" &&
+              : input.kind === "customer_reminder"
+                ? input.booking.status === "confirmed" &&
                   input.booking.revision === input.workRevision &&
-                  currentCancellation &&
-                  input.changeActor === "customer"
-                : false;
+                  new Date(input.booking.startAt).getTime() >
+                    input.now.getTime() &&
+                  (input.workRevision === 0
+                    ? input.changeKind === null && input.changeRevision === null
+                    : input.changeRevision === input.workRevision &&
+                      (input.changeKind === "move"
+                        ? input.changeActor === "owner" ||
+                          input.changeActor === "customer"
+                        : input.changeKind === "restore" &&
+                          input.changeActor === "owner"))
+                : input.kind === "owner_cancellation"
+                  ? input.booking.status === "cancelled" &&
+                    input.booking.revision === input.workRevision &&
+                    currentCancellation &&
+                    input.changeActor === "customer"
+                  : false;
 
   const contentIdentity = notificationContentIdentity({
     id: input.bookingId,

@@ -116,4 +116,38 @@ describe("notification message building", () => {
       },
     });
   });
+
+  it("renders a reminder with current appointment details, manage link, and demo disclosures", () => {
+    const securedBooking = configureCapability();
+    const result = buildNotificationMessage({
+      kind: "customer_reminder",
+      booking: securedBooking,
+      recipient: "ari@example.test",
+      beforeSnapshot: null,
+      changeActor: null,
+      activityUrl: "https://northside.trimtime.test/activity",
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      message: {
+        to: "ari@example.test",
+        subject: "Reminder: your upcoming booking — Northside Barber",
+      },
+    });
+    if (result.ok) {
+      expect(result.message.text).toContain(
+        "This is a reminder about your upcoming booking:",
+      );
+      expect(result.message.text).toContain(
+        "Manage your booking: http://northside.localhost:3100/manage/booking-capability-token",
+      );
+      expect(result.message.text).toContain(
+        "Fictional TrimTime demo. This message is captured locally in Mailpit; inbox delivery is not enabled.",
+      );
+      expect(result.message.text).toContain(
+        "this message does not confirm a cancellation or reschedule.",
+      );
+    }
+  });
 });

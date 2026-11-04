@@ -26,7 +26,7 @@ export async function getOwnNotificationActivity(
       CASE WHEN w.status = 'sending' AND w.claimed_at < ${now}::timestamptz - INTERVAL '30 seconds'
         THEN 'dispatch_interrupted' ELSE w.reason END AS reason,
       w.created_at AS "createdAt", w.updated_at AS "updatedAt",
-      w.next_attempt_at AS "nextAttemptAt",
+      w.due_at AS "dueAt", w.next_attempt_at AS "nextAttemptAt",
       a.id AS "attemptId", a.attempt_number AS "attemptNumber",
       a.budget_day::text AS "budgetDay", a.reserved_at AS "reservedAt",
       a.invoked_at AS "invokedAt",
@@ -62,6 +62,7 @@ export async function getOwnNotificationActivity(
         reason: item.reason as string | null,
         createdAt: new Date(item.createdAt as Date).toISOString(),
         updatedAt: new Date(item.updatedAt as Date).toISOString(),
+        dueAt: item.dueAt ? new Date(item.dueAt as Date).toISOString() : null,
         nextAttemptAt: item.nextAttemptAt
           ? new Date(item.nextAttemptAt as Date).toISOString()
           : null,

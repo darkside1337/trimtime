@@ -6,6 +6,7 @@ import {
 import {
   renderCustomerConfirmation,
   renderCustomerRestoration,
+  renderCustomerReminder,
   renderCustomerUpdate,
   renderOwnerAlert,
   renderOwnerCancellationAlert,
@@ -43,6 +44,7 @@ const customerKinds = new Set<NotificationKind>([
   "customer_move",
   "customer_cancellation",
   "customer_restoration",
+  "customer_reminder",
 ]);
 
 export function buildNotificationMessage(
@@ -93,6 +95,16 @@ export function buildNotificationMessage(
       return {
         ok: true,
         message: renderCustomerRestoration({
+          booking: input.booking,
+          recipient: input.recipient,
+          manageUrl: manageUrl!,
+        }),
+      };
+    }
+    if (input.kind === "customer_reminder") {
+      return {
+        ok: true,
+        message: renderCustomerReminder({
           booking: input.booking,
           recipient: input.recipient,
           manageUrl: manageUrl!,

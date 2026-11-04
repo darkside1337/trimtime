@@ -1178,6 +1178,7 @@ describe("initial notification dispatch", () => {
     ).toEqual([
       { kind: "customer_cancellation", status: "captured" },
       { kind: "customer_confirmation", status: "suppressed" },
+      { kind: "customer_reminder", status: "suppressed" },
       { kind: "owner_alert", status: "suppressed" },
       { kind: "owner_cancellation", status: "captured" },
     ]);
@@ -1255,6 +1256,8 @@ describe("initial notification dispatch", () => {
     ).toEqual([
       { kind: "customer_confirmation", status: "suppressed" },
       { kind: "customer_move", status: "captured" },
+      { kind: "customer_reminder", status: "suppressed" },
+      { kind: "customer_reminder", status: "suppressed" },
       { kind: "owner_alert", status: "suppressed" },
       { kind: "owner_move", status: "captured" },
     ]);
