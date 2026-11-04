@@ -744,12 +744,13 @@ test("interrupted restoration refreshes the confirmed revision before an identic
   expect(
     (
       await database.pool.query(
-        "SELECT kind, booking_revision FROM notification_work WHERE booking_id=$1 AND booking_revision>0 ORDER BY booking_revision",
+        "SELECT kind, booking_revision FROM notification_work WHERE booking_id=$1 AND booking_revision>0 ORDER BY booking_revision, kind",
         [bookingId],
       )
     ).rows,
   ).toEqual([
     { kind: "customer_cancellation", booking_revision: 1 },
+    { kind: "customer_reminder", booking_revision: 2 },
     { kind: "customer_restoration", booking_revision: 2 },
   ]);
 });

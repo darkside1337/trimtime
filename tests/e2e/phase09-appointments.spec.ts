@@ -411,11 +411,15 @@ test("owner move recovers a lost response and shows the latest saved details", a
     "2026-11-03T17:07:00.000Z",
   );
   const work = await database.pool.query(
-    "SELECT booking_revision, kind FROM notification_work WHERE booking_id=$1 AND booking_revision > 0 ORDER BY booking_revision",
+    "SELECT booking_revision, kind FROM notification_work WHERE booking_id=$1 AND booking_revision > 0 ORDER BY booking_revision, kind",
     [bookingId],
   );
-  expect(work.rows).toHaveLength(2);
-  expect(work.rows.map((row) => row.booking_revision)).toEqual([1, 2]);
+  expect(work.rows).toEqual([
+    { booking_revision: 1, kind: "customer_move" },
+    { booking_revision: 1, kind: "customer_reminder" },
+    { booking_revision: 2, kind: "customer_move" },
+    { booking_revision: 2, kind: "customer_reminder" },
+  ]);
 });
 
 test("owner keeps the uncertain operation payload fixed until recovery", async ({

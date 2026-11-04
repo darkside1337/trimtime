@@ -139,11 +139,15 @@ test("a guest whose selected start was just booked keeps contact details and cre
   expect(
     (
       await database.pool.query(
-        "SELECT count(*)::int AS n FROM notification_work w JOIN bookings b ON b.id = w.booking_id WHERE b.shop_id = $1",
+        "SELECT w.kind, w.booking_revision FROM notification_work w JOIN bookings b ON b.id = w.booking_id WHERE b.shop_id = $1 ORDER BY w.kind",
         [owner.shopId],
       )
-    ).rows[0].n,
-  ).toBe(2);
+    ).rows,
+  ).toEqual([
+    { kind: "customer_confirmation", booking_revision: 0 },
+    { kind: "customer_reminder", booking_revision: 0 },
+    { kind: "owner_alert", booking_revision: 0 },
+  ]);
   await secondPage.close();
 });
 

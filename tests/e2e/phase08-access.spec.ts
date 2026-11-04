@@ -133,11 +133,14 @@ test("owner appointment action replay rejects changed authority without writes",
     expect(
       (
         await database.pool.query(
-          "SELECT count(*)::int AS count FROM notification_work WHERE booking_id = $1",
+          "SELECT kind, booking_revision FROM notification_work WHERE booking_id = $1 ORDER BY kind",
           [baselineRows[0].id],
         )
-      ).rows[0].count,
-    ).toBe(1);
+      ).rows,
+    ).toEqual([
+      { kind: "customer_confirmation", booking_revision: 0 },
+      { kind: "customer_reminder", booking_revision: 0 },
+    ]);
     const foreignRead = await request.get(
       `${ownerOrigin}/appointments/${baselineRows[0].id}`,
       { headers: { cookie: other.cookie } },

@@ -723,10 +723,13 @@ test("a conflict keeps the form values and an interrupted response retries the s
   );
   expect(rows[0].count).toBe(2);
   const work = await database.pool.query(
-    "SELECT count(*)::int AS count FROM notification_work w JOIN bookings b ON b.id=w.booking_id WHERE b.shop_id=$1",
+    "SELECT w.kind, w.booking_revision, count(*)::int AS count FROM notification_work w JOIN bookings b ON b.id=w.booking_id WHERE b.shop_id=$1 GROUP BY w.kind, w.booking_revision ORDER BY w.kind, w.booking_revision",
     [owner.shopId],
   );
-  expect(work.rows[0].count).toBe(2);
+  expect(work.rows).toEqual([
+    { kind: "customer_confirmation", booking_revision: 0, count: 2 },
+    { kind: "customer_reminder", booking_revision: 0, count: 2 },
+  ]);
 });
 
 test("server validation feedback stays attached to its field and keeps the entered value", async ({
