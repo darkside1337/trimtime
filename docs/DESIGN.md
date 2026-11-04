@@ -455,7 +455,9 @@ Break labels and dated reasons retain read-only sample fields with explicit no-s
 
 **Phase 15 reference context:** Activity and the existing appointment message-status presentation for current-schedule reminders.
 
-**Coverage and evidence limits:** The linked local simulation is illustrative. Due, suppressed/obsolete, too-late and rescheduled reminder states need confirmation after identity decisions. No timing preferences or actual cron/provider success may be inferred from the fixture.
+**Phase 15 local presentation selection (2026-11-04):** Reuse one Activity row per reminder work item. Label a pending item “Scheduled reminder,” show its original due time separately from any retry time, and keep captured-local, suppressed, skipped, unavailable, and unknown semantics tied to persisted work/attempt evidence. The existing confirmation/update summary remains restricted to its existing customer message kinds. No reminder status enum, resend control, timing preference, or inbox-delivery claim is added.
+
+**Coverage and evidence limits:** The linked local simulation is illustrative. Focused automated coverage passes for due/suppressed/captured presentation, owner isolation, protected worker authorization, keyboard dismissal/focus return and 320px overflow. The local executor walkthrough inspected Activity captures at 1440, 768, 390 and 320px and checked keyboard scrolling and focus return. Hosted cadence, external inbox, physical-device and dedicated screen-reader evidence remain unverified; no cron/provider success may be inferred from a fixture.
 
 **Phase 16 reference context:** Customer booking for channel disclosure/consent and Activity for independent channel outcomes.
 
