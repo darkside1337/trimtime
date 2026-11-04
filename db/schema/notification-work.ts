@@ -41,6 +41,7 @@ export const notificationWork = pgTable(
       withTimezone: true,
       mode: "date",
     }),
+    dueAt: timestamp("due_at", { withTimezone: true, mode: "date" }),
   },
   (table) => [
     unique("notification_work_booking_kind_channel_key").on(
@@ -56,11 +57,11 @@ export const notificationWork = pgTable(
     }).onDelete("cascade"),
     check(
       "notification_work_change_kind_check",
-      sql`(${table.kind} IN ('customer_move', 'customer_cancellation', 'customer_restoration') AND ${table.changeId} IS NOT NULL AND ${table.bookingRevision} > 0) OR (${table.kind} IN ('owner_cancellation', 'owner_move') AND ${table.changeId} IS NOT NULL AND ${table.bookingRevision} > 0 AND ${table.channel} = 'email') OR (${table.kind} IN ('customer_confirmation', 'owner_alert') AND ${table.changeId} IS NULL AND ${table.bookingRevision} = 0)`,
+      sql`(${table.kind} IN ('customer_move', 'customer_cancellation', 'customer_restoration') AND ${table.changeId} IS NOT NULL AND ${table.bookingRevision} > 0) OR (${table.kind} IN ('owner_cancellation', 'owner_move') AND ${table.changeId} IS NOT NULL AND ${table.bookingRevision} > 0 AND ${table.channel} = 'email') OR (${table.kind} IN ('customer_confirmation', 'owner_alert', 'customer_reminder') AND ${table.changeId} IS NULL AND ${table.bookingRevision} = 0) OR (${table.kind} = 'customer_reminder' AND ${table.changeId} IS NOT NULL AND ${table.bookingRevision} > 0)`,
     ),
     check(
       "notification_work_kind_check",
-      sql`${table.kind} IN ('customer_confirmation', 'owner_alert', 'customer_move', 'customer_cancellation', 'owner_cancellation', 'owner_move', 'customer_restoration')`,
+      sql`${table.kind} IN ('customer_confirmation', 'owner_alert', 'customer_move', 'customer_cancellation', 'owner_cancellation', 'owner_move', 'customer_restoration', 'customer_reminder')`,
     ),
     check(
       "notification_work_channel_check",
@@ -70,6 +71,10 @@ export const notificationWork = pgTable(
       "notification_work_status_check",
       sql`${table.status} IN ('unavailable', 'not_attempted', 'sending', 'accepted', 'captured', 'failed', 'skipped', 'suppressed', 'unknown')`,
     ),
+    check(
+      "notification_work_due_at_check",
+      sql`(${table.kind} = 'customer_reminder' AND ${table.dueAt} IS NOT NULL) OR (${table.kind} <> 'customer_reminder' AND ${table.dueAt} IS NULL)`,
+    ),
     index("notification_work_booking_created_idx").on(
       table.bookingId,
       table.createdAt,
@@ -77,6 +82,11 @@ export const notificationWork = pgTable(
     index("notification_work_next_attempt_at_idx")
       .on(table.nextAttemptAt, table.id)
       .where(sql`${table.nextAttemptAt} IS NOT NULL`),
+    index("notification_work_customer_reminder_due_idx")
+      .on(table.dueAt, table.id)
+      .where(
+        sql`${table.kind} = 'customer_reminder' AND ${table.channel} = 'email' AND ${table.status} = 'not_attempted'`,
+      ),
     uniqueIndex("notification_work_claim_id_key")
       .on(table.claimId)
       .where(sql`${table.claimId} IS NOT NULL`),
