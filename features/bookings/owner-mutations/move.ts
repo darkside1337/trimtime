@@ -18,6 +18,7 @@ import { resolveChangeOffer } from "../change-primitives";
 import { hashSecret } from "../capabilities";
 import { findOccupyingInterval } from "../creation-primitives";
 import {
+  stageCustomerReminder,
   stageCustomerChangeNotifications,
   suppressSupersededNotificationWork,
 } from "../notification-staging";
@@ -279,6 +280,18 @@ export async function moveOwnerBooking(
         changeId: eventId,
         kind: "customer_move",
         contentIdentity: identity,
+        customerEmail: booking.customerEmail,
+        customerPhone: booking.customerPhone,
+        whatsappOptIn: booking.whatsappOptIn,
+        emailConfig,
+      });
+      await stageCustomerReminder(tx, {
+        bookingId: booking.id,
+        revision,
+        changeId: eventId,
+        contentIdentity: identity,
+        startAt: start,
+        now,
         customerEmail: booking.customerEmail,
         customerPhone: booking.customerPhone,
         whatsappOptIn: booking.whatsappOptIn,

@@ -3091,7 +3091,7 @@ describe("customer replacement integration", () => {
       status: "confirmed",
       revision: 1,
       changes: initialBookingState.changes + 1,
-      work: initialBookingState.work + 2,
+      work: initialBookingState.work + 3,
     });
     expect(await rateEventCount(ids.shopId, booking.token)).toBe(1);
 
@@ -3713,7 +3713,7 @@ describe("customer replacement integration", () => {
         status: "confirmed",
         revision: 1,
         changes: 1,
-        work: stateBefore.work + 2,
+        work: stateBefore.work + 3,
         original_occupancy: 1,
       });
 
@@ -3839,7 +3839,7 @@ describe("customer replacement integration", () => {
         status: "confirmed",
         revision: 1,
         changes: 1,
-        work: state1Before.work + 2,
+        work: state1Before.work + 3,
         original_occupancy: 1,
       });
 
@@ -4058,7 +4058,7 @@ describe("customer replacement integration", () => {
         revision: 1,
         start_at: new Date("2026-11-02T11:00:00.000Z"),
         changes: 1,
-        work: state3Before.work + 2,
+        work: state3Before.work + 3,
         original_occupancy: 1,
       });
 
@@ -4184,7 +4184,7 @@ describe("customer replacement integration", () => {
         revision: 1,
         start_at: new Date("2026-11-02T12:00:00.000Z"),
         changes: 1,
-        work: state4Before.work + 1,
+        work: state4Before.work + 2,
         original_occupancy: 1,
       });
 
@@ -4441,7 +4441,7 @@ describe("customer replacement integration", () => {
         status: "confirmed",
         revision: 1,
         changes: 1,
-        work: state2Before.work + 2,
+        work: state2Before.work + 3,
         original_occupancy: 1,
       });
 
@@ -4817,7 +4817,7 @@ describe("customer replacement integration", () => {
 
     const workWithWhatsapp = (
       await database.pool.query(
-        "SELECT kind, channel, status, recipient, reason, booking_revision FROM notification_work WHERE booking_id = $1 AND booking_revision = 1 ORDER BY channel",
+        "SELECT kind, channel, status, recipient, reason, booking_revision FROM notification_work WHERE booking_id = $1 AND booking_revision = 1 ORDER BY channel, kind",
         [withWhatsapp.bookingId],
       )
     ).rows;
@@ -4825,6 +4825,14 @@ describe("customer replacement integration", () => {
     expect(workWithWhatsapp).toEqual([
       {
         kind: "customer_move",
+        channel: "email",
+        status: "unavailable",
+        recipient: "ada@example.test",
+        reason: "disabled",
+        booking_revision: 1,
+      },
+      {
+        kind: "customer_reminder",
         channel: "email",
         status: "unavailable",
         recipient: "ada@example.test",
@@ -4841,6 +4849,14 @@ describe("customer replacement integration", () => {
       },
       {
         kind: "customer_move",
+        channel: "whatsapp",
+        status: "unavailable",
+        recipient: "+15551234567",
+        reason: "channel_unavailable",
+        booking_revision: 1,
+      },
+      {
+        kind: "customer_reminder",
         channel: "whatsapp",
         status: "unavailable",
         recipient: "+15551234567",
@@ -4935,6 +4951,14 @@ describe("customer replacement integration", () => {
         booking_revision: 1,
       },
       {
+        kind: "customer_reminder",
+        channel: "email",
+        status: "skipped",
+        recipient: null,
+        reason: "recipient_missing",
+        booking_revision: 1,
+      },
+      {
         kind: "owner_move",
         channel: "email",
         status: "unavailable",
@@ -5000,13 +5024,19 @@ describe("customer replacement integration", () => {
       )
     ).rows;
 
-    // Completed work retained its captured status; unattempted work was suppressed
+    // Completed work is retained; unavailable reminders and obsolete pending work remain truthful.
     expect(rev0Work).toEqual([
       {
         id: confirmationWork.id,
         kind: "customer_confirmation",
         status: "captured",
         reason: null,
+      },
+      {
+        id: workItems.find((work) => work.kind === "customer_reminder")!.id,
+        kind: "customer_reminder",
+        status: "unavailable",
+        reason: "disabled",
       },
       {
         id: alertWork.id,

@@ -17,6 +17,7 @@ import { restoreOwnerBookingSchema } from "../schemas";
 import { hashSecret } from "../capabilities";
 import { findOccupyingInterval } from "../creation-primitives";
 import {
+  stageCustomerReminder,
   stageCustomerChangeNotifications,
   suppressSupersededNotificationWork,
 } from "../notification-staging";
@@ -251,6 +252,18 @@ export async function restoreOwnerBooking(
         changeId: eventId,
         kind: "customer_restoration",
         contentIdentity: identity,
+        customerEmail: booking.customerEmail,
+        customerPhone: booking.customerPhone,
+        whatsappOptIn: booking.whatsappOptIn,
+        emailConfig,
+      });
+      await stageCustomerReminder(tx, {
+        bookingId: booking.id,
+        revision,
+        changeId: eventId,
+        contentIdentity: identity,
+        startAt: booking.startAt,
+        now,
         customerEmail: booking.customerEmail,
         customerPhone: booking.customerPhone,
         whatsappOptIn: booking.whatsappOptIn,

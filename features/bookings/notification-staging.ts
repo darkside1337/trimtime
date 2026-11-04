@@ -2,6 +2,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { notificationWork } from "@/db/schema/notification-work";
+import { getReminderDueAt } from "@/features/notifications/reminder-policy";
 import type { EmailConfig } from "@/features/notifications/config";
 import type { BookingTransaction } from "./creation-primitives";
 
@@ -42,6 +43,57 @@ function channelState(emailConfig: EmailConfig, recipient: string | null) {
         ? emailConfig.reason
         : null,
   };
+}
+
+export async function stageCustomerReminder(
+  tx: BookingTransaction,
+  params: {
+    bookingId: string;
+    revision: number;
+    changeId: string | null;
+    contentIdentity: string;
+    startAt: Date;
+    now: Date;
+    customerEmail: string | null;
+    customerPhone: string | null;
+    whatsappOptIn: boolean;
+    emailConfig: EmailConfig;
+  },
+) {
+  const dueAt = getReminderDueAt({ startAt: params.startAt, now: params.now });
+  if (!dueAt) return;
+
+  const email = channelState(params.emailConfig, params.customerEmail);
+  const work: (typeof notificationWork.$inferInsert)[] = [
+    {
+      id: randomUUID(),
+      bookingId: params.bookingId,
+      bookingRevision: params.revision,
+      changeId: params.changeId,
+      kind: "customer_reminder",
+      channel: "email",
+      status: email.status,
+      recipient: params.customerEmail,
+      contentIdentity: params.contentIdentity,
+      reason: email.reason,
+      dueAt,
+    },
+  ];
+  if (params.whatsappOptIn && params.customerPhone)
+    work.push({
+      id: randomUUID(),
+      bookingId: params.bookingId,
+      bookingRevision: params.revision,
+      changeId: params.changeId,
+      kind: "customer_reminder",
+      channel: "whatsapp",
+      status: "unavailable",
+      recipient: params.customerPhone,
+      contentIdentity: params.contentIdentity,
+      reason: "channel_unavailable",
+      dueAt,
+    });
+  await tx.insert(notificationWork).values(work);
 }
 
 export async function stageCustomerChangeNotifications(

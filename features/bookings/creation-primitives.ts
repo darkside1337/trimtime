@@ -8,6 +8,7 @@ import { notificationWork } from "@/db/schema/notification-work";
 import { occupiedIntervals } from "@/db/schema/occupancy";
 import { shops } from "@/db/schema/shops";
 import { notificationContentIdentity } from "@/features/notifications/content-identity";
+import { resolveEmailConfig } from "@/features/notifications/config";
 import {
   createBearerSecret,
   decryptCapability,
@@ -15,6 +16,7 @@ import {
   hashSecret,
 } from "./capabilities";
 import { fixedBookingPrice } from "./money";
+import { stageCustomerReminder } from "./notification-staging";
 
 export type BookingTransaction = Parameters<
   Parameters<typeof db.transaction>[0]
@@ -266,6 +268,18 @@ export async function persistBookingCreation(
       ...notification,
     })),
   );
+  await stageCustomerReminder(tx, {
+    bookingId,
+    revision: 0,
+    changeId: null,
+    contentIdentity,
+    startAt: params.start,
+    now: params.now,
+    customerEmail: params.contact.email,
+    customerPhone: params.contact.phone,
+    whatsappOptIn: params.contact.whatsappOptIn,
+    emailConfig: resolveEmailConfig(process.env),
+  });
   if (!params.shop.timeZoneLockedAt)
     await tx
       .update(shops)
