@@ -19,6 +19,7 @@ export type NotificationActivityRow = {
     | "customer_move"
     | "customer_cancellation"
     | "customer_restoration"
+    | "customer_reminder"
     | "owner_cancellation"
     | "owner_move";
   channel: "email" | "whatsapp";
@@ -27,6 +28,7 @@ export type NotificationActivityRow = {
   reason: string | null;
   createdAt: string;
   updatedAt: string;
+  dueAt: string | null;
   nextAttemptAt: string | null;
   attempt: null | {
     id: string;

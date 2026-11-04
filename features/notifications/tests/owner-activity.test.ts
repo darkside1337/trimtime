@@ -29,6 +29,7 @@ function notification(
     createdAt: "2026-11-02T10:00:00.000Z",
     updatedAt: "2026-11-02T10:00:00.000Z",
     nextAttemptAt: null,
+    dueAt: null,
     attempt: null,
     attempts: [],
     ...overrides,
@@ -36,7 +37,7 @@ function notification(
 }
 
 describe("owner Activity read states", () => {
-  it("distinguishes empty upcoming, change, and message records and unavailable reminders", () => {
+  it("distinguishes empty upcoming, change, and notification records", () => {
     const markup = renderToStaticMarkup(
       createElement(OwnerActivity, {
         shop,
@@ -49,8 +50,8 @@ describe("owner Activity read states", () => {
     expect(markup).toContain("No upcoming confirmed bookings.");
     expect(markup).toContain("No appointment changes recorded for this shop.");
     expect(markup).toContain("No notification records yet for this shop.");
-    expect(markup).toMatch(/<button[^>]*disabled[^>]*>Reminders unavailable/);
-    expect(markup).toContain("Reminders are not available in this phase.");
+    expect(markup).not.toContain("Reminders unavailable");
+    expect(markup).toContain("Records shown here belong to this shop.");
     expect(markup).not.toContain("Activity could not be loaded.");
   });
 
@@ -192,5 +193,47 @@ describe("owner Activity read states", () => {
       "Captured locally · inbox delivery is not enabled",
     );
     expect(markup).not.toContain("delivered");
+  });
+
+  it("shows reminder due time separately from retry time and preserves confirmation labels", () => {
+    const markup = renderToStaticMarkup(
+      createElement(OwnerActivity, {
+        shop,
+        activity: {
+          rows: [
+            notification({
+              kind: "customer_reminder",
+              status: "not_attempted",
+              dueAt: "2026-11-03T12:00:00.000Z",
+              nextAttemptAt: null,
+            }),
+            notification({
+              id: "retry-reminder",
+              kind: "customer_reminder",
+              status: "failed",
+              dueAt: "2026-11-03T12:00:00.000Z",
+              nextAttemptAt: "2026-11-03T12:10:00.000Z",
+            }),
+            notification({
+              id: "confirmation",
+              kind: "customer_confirmation",
+              status: "captured",
+            }),
+          ],
+        },
+        changes: { rows: [] },
+        upcoming: [],
+      }),
+    );
+
+    expect(markup).toContain("Customer reminder");
+    expect(markup).toContain("Scheduled reminder");
+    expect(markup).toContain("Due Nov 3, 2026, 7:00 AM");
+    expect(markup).toContain("Retry Nov 3, 2026, 7:10 AM");
+    expect(markup).toContain("Customer confirmation");
+    expect(markup).toContain(
+      "Captured locally · inbox delivery is not enabled",
+    );
+    expect(markup).not.toContain("Reminders are not available in this phase.");
   });
 });

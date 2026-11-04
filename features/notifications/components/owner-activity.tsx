@@ -85,6 +85,7 @@ const channels = ["All", "Email", "WhatsApp"] as const;
 type Row = NotificationActivityRow;
 
 function title(row: Row) {
+  if (row.kind === "customer_reminder") return "Customer reminder";
   if (row.kind === "customer_confirmation") return "Customer confirmation";
   if (row.kind === "owner_alert") return "Owner alert";
   if (row.kind === "owner_cancellation") return "Owner cancellation alert";
@@ -96,6 +97,8 @@ function title(row: Row) {
 }
 
 function statusLabel(row: Row) {
+  if (row.kind === "customer_reminder" && row.status === "not_attempted")
+    return "Scheduled reminder";
   if (row.status === "unknown") return "Unknown · invocation/result uncertain";
   if (row.status === "failed" && row.reason === "permanent_rejection")
     return "Permanent failure";
@@ -250,13 +253,6 @@ export function OwnerActivity({
               title="Resend is unavailable in this phase"
             >
               Resend unavailable
-            </Button>
-            <Button
-              variant="outline"
-              disabled
-              title="Reminders are unavailable in this phase"
-            >
-              Reminders unavailable
             </Button>
           </div>
           <div className={c.filterLine}>
@@ -435,6 +431,13 @@ export function OwnerActivity({
                         Updated {date(event.updatedAt, shop.timeZone)} ·{" "}
                         {event.recipient ?? "No authorized recipient"}
                       </small>
+                      {event.kind === "customer_reminder" && event.dueAt && (
+                        <small>
+                          Due {date(event.dueAt, shop.timeZone)}
+                          {event.nextAttemptAt &&
+                            ` · Retry ${date(event.nextAttemptAt, shop.timeZone)}`}
+                        </small>
+                      )}
                       {event.creationSource === "owner" && !event.recipient && (
                         <small>
                           No email recipient was provided; no notification
@@ -463,10 +466,7 @@ export function OwnerActivity({
       </div>
       <aside className={c.retention}>
         <strong>Activity</strong>
-        <p>
-          Reminders are not available in this phase. Records shown here belong
-          to this shop.
-        </p>
+        <p>Records shown here belong to this shop.</p>
         <span>Own-shop records</span>
       </aside>
       <Dialog
@@ -524,6 +524,22 @@ export function OwnerActivity({
                   <dt>Updated</dt>
                   <dd>{date(row.updatedAt, shop.timeZone)}</dd>
                 </div>
+                {row.kind === "customer_reminder" && (
+                  <div>
+                    <dt>Reminder due</dt>
+                    <dd>
+                      {row.dueAt
+                        ? date(row.dueAt, shop.timeZone)
+                        : "Not scheduled"}
+                    </dd>
+                  </div>
+                )}
+                {row.nextAttemptAt && (
+                  <div>
+                    <dt>Retry scheduled</dt>
+                    <dd>{date(row.nextAttemptAt, shop.timeZone)}</dd>
+                  </div>
+                )}
                 <div>
                   <dt>Budget reservation</dt>
                   <dd>

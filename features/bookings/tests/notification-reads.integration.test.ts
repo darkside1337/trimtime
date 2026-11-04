@@ -5,6 +5,7 @@ import { hashSecret } from "../capabilities";
 
 type WorkKind =
   | "customer_confirmation"
+  | "customer_reminder"
   | "customer_move"
   | "customer_cancellation"
   | "customer_restoration"
@@ -20,6 +21,7 @@ describe("booking notification reads", () => {
   let database: Awaited<ReturnType<typeof openTestDatabase>>;
   let getManagedBooking: typeof import("../queries").getManagedBooking;
   let getOwnAppointment: typeof import("../queries").getOwnAppointment;
+  let getOwnNotificationActivity: typeof import("@/features/notifications/queries").getOwnNotificationActivity;
 
   beforeAll(async () => {
     database = await openTestDatabase();
@@ -27,6 +29,8 @@ describe("booking notification reads", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-11-02T08:00:00Z"));
     ({ getManagedBooking, getOwnAppointment } = await import("../queries"));
+    ({ getOwnNotificationActivity } =
+      await import("@/features/notifications/queries"));
     await database.pool.query(
       "INSERT INTO \"user\" (id,name,email) VALUES ($1,'Read Owner',$2)",
       [ids.user, `${ids.user}@example.test`],
@@ -112,12 +116,13 @@ describe("booking notification reads", () => {
     createdAt: Date;
     updatedAt?: Date;
     claimedAt?: Date | null;
+    dueAt?: Date | null;
   }) {
     await database.pool.query(
       `INSERT INTO notification_work (
         id, booking_id, booking_revision, change_id, kind, channel, status,
-        reason, created_at, updated_at, claimed_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        reason, due_at, created_at, updated_at, claimed_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
       [
         randomUUID(),
         input.bookingId,
@@ -127,6 +132,7 @@ describe("booking notification reads", () => {
         input.channel ?? "email",
         input.status,
         input.reason ?? null,
+        input.dueAt ?? null,
         input.createdAt,
         input.updatedAt ?? input.createdAt,
         input.claimedAt ?? null,
@@ -201,6 +207,48 @@ describe("booking notification reads", () => {
       createdAt: new Date("2026-11-02T08:03:00Z"),
     });
 
+    await expectEmail(bookingId, token, {
+      status: "captured",
+      reason: null,
+      updatedAt: "2026-11-02T08:01:00.000Z",
+    });
+  });
+
+  it("projects reminder due time without replacing the customer confirmation summary", async () => {
+    const { bookingId, token } = await createBooking();
+    const confirmationAt = new Date("2026-11-02T08:01:00Z");
+    const dueAt = new Date("2026-11-03T12:00:00Z");
+    await addWork({
+      bookingId,
+      revision: 0,
+      kind: "customer_confirmation",
+      status: "captured",
+      createdAt: confirmationAt,
+    });
+    await addWork({
+      bookingId,
+      revision: 0,
+      kind: "customer_reminder",
+      status: "not_attempted",
+      dueAt,
+      createdAt: new Date("2026-11-02T08:02:00Z"),
+    });
+
+    const activity = await getOwnNotificationActivity({ userId: ids.user });
+    expect(activity).toMatchObject({
+      success: true,
+      data: {
+        rows: expect.any(Array),
+      },
+    });
+    if (!activity.success) throw new Error("Own notification Activity failed.");
+    expect(
+      activity.data.rows.find((row) => row.kind === "customer_reminder"),
+    ).toMatchObject({
+      dueAt: "2026-11-03T12:00:00.000Z",
+      nextAttemptAt: null,
+      status: "not_attempted",
+    });
     await expectEmail(bookingId, token, {
       status: "captured",
       reason: null,
